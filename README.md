@@ -42,14 +42,7 @@ Warframe Companion App is an Electron-based desktop utility focused on quality-o
 
 ## Application Preview
 
-> Add release screenshots to improve presentation and submission quality.
-
-Recommended screenshot set:
-
-- Main item grid view
-- Item details modal view
-- Prime Resurgence dashboard
-- Market panel view
+<img src="warframe companion app screenshot.png"></img>
 
 ## Tech Stack
 
