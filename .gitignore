@@ -1,0 +1,23 @@
+node_modules/
+
+# Build output
+dist/
+dist-*/
+.protected-app/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Local environment files
+.env
+.env.*

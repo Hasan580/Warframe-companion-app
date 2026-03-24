@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Warframe Companion App</title>
+  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+</head>
+<body>
+
+  <!-- Custom Titlebar -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-drag">
+      <div class="titlebar-logo">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="#E4A83C">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+        <span>WARFRAME COMPANION</span>
+      </div>
+    </div>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn" id="btn-minimize" title="Minimize">
+        <span class="material-icons-round">remove</span>
+      </button>
+      <button class="titlebar-btn" id="btn-maximize" title="Maximize">
+        <span class="material-icons-round">crop_square</span>
+      </button>
+      <button class="titlebar-btn titlebar-btn-close" id="btn-close" title="Close">
+        <span class="material-icons-round">close</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Main App Container -->
+  <div class="app-container">
+
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="mastery-badge" id="mastery-badge">
+          <div class="mastery-ring">
+            <svg viewBox="0 0 100 100">
+              <circle class="ring-bg" cx="50" cy="50" r="42"/>
+              <circle class="ring-progress" id="ring-progress" cx="50" cy="50" r="42"/>
+            </svg>
+            <span class="mastery-number" id="mastery-rank-display">0</span>
+          </div>
+          <div class="mastery-info">
+            <span class="mastery-label">MASTERY RANK</span>
+            <span class="mastery-xp" id="mastery-xp-display">0 / 2,500 XP</span>
+          </div>
+        </div>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section-label">CATEGORIES</div>
+        <button class="nav-item active" data-category="all" id="nav-all">
+          <span class="material-icons-round">apps</span>
+          <span class="nav-text">All Items</span>
+          <span class="nav-count" id="count-all">0</span>
+        </button>
+        <button class="nav-item" data-category="Warframes" id="nav-warframes">
+          <span class="material-icons-round">person</span>
+          <span class="nav-text">Warframes</span>
+          <span class="nav-count" id="count-warframes">0</span>
+        </button>
+        <button class="nav-item" data-category="Primary" id="nav-primary">
+          <span class="material-icons-round">gps_fixed</span>
+          <span class="nav-text">Primary</span>
+          <span class="nav-count" id="count-primary">0</span>
+        </button>
+        <button class="nav-item" data-category="Secondary" id="nav-secondary">
+          <span class="material-icons-round">radio_button_checked</span>
+          <span class="nav-text">Secondary</span>
+          <span class="nav-count" id="count-secondary">0</span>
+        </button>
+        <button class="nav-item" data-category="Melee" id="nav-melee">
+          <span class="material-icons-round">sports_kabaddi</span>
+          <span class="nav-text">Melee</span>
+          <span class="nav-count" id="count-melee">0</span>
+        </button>
+        <button class="nav-item" data-category="Companions" id="nav-companions">
+          <span class="material-icons-round">pets</span>
+          <span class="nav-text">Companions</span>
+          <span class="nav-count" id="count-companions">0</span>
+        </button>
+        <button class="nav-item" data-category="Vehicles" id="nav-vehicles">
+          <span class="material-icons-round">flight</span>
+          <span class="nav-text">Vehicles</span>
+          <span class="nav-count" id="count-vehicles">0</span>
+        </button>
+        <button class="nav-item" data-category="Sentinels" id="nav-sentinels">
+          <span class="material-icons-round">smart_toy</span>
+          <span class="nav-text">Sentinels</span>
+          <span class="nav-count" id="count-sentinels">0</span>
+        </button>
+        <button class="nav-item" data-category="Mods" id="nav-mods">
+          <span class="material-icons-round">auto_awesome</span>
+          <span class="nav-text">Mods</span>
+          <span class="nav-count" id="count-mods">0</span>
+        </button>
+
+        <div class="nav-section-label" style="margin-top: 16px;">TRADING</div>
+        <button class="nav-item" id="nav-market" data-panel="market">
+          <span class="material-icons-round">storefront</span>
+          <span class="nav-text">Market</span>
+        </button>
+        <button class="nav-item" id="nav-prime-resurgence" data-panel="prime-resurgence">
+          <span class="material-icons-round">workspace_premium</span>
+          <span class="nav-text">Prime Resurgence</span>
+        </button>
+        <button class="nav-item" id="nav-cycles" data-panel="cycles">
+          <span class="material-icons-round">schedule</span>
+          <span class="nav-text">Worldstate</span>
+        </button>
+
+        <div class="nav-section-label" style="margin-top: 16px;">TOOLS</div>
+        <button class="nav-item nav-tool" id="btn-trade-mode" aria-pressed="false">
+          <span class="material-icons-round">picture_in_picture_alt</span>
+          <span class="nav-text">Trade Mode: Disabled</span>
+        </button>
+        <button class="nav-item nav-tool" id="btn-calculator">
+          <span class="material-icons-round">calculate</span>
+          <span class="nav-text">MR Calculator</span>
+        </button>
+        <button class="nav-item nav-tool" id="btn-reset">
+          <span class="material-icons-round">restart_alt</span>
+          <span class="nav-text">Reset All</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="stats-row">
+          <span class="stat-label">Mastered</span>
+          <span class="stat-value" id="total-mastered">0</span>
+        </div>
+        <div class="stats-row">
+          <span class="stat-label">Total Items</span>
+          <span class="stat-value" id="total-items">0</span>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar" id="overall-progress"></div>
+        </div>
+        <span class="progress-text" id="progress-percent">0% Complete</span>
+      </div>
+    </aside>
+
+    <button class="sidebar-toggle-btn" id="btn-sidebar-toggle" type="button" aria-label="Hide left panel" title="Hide left panel" aria-pressed="false">
+      <span class="material-icons-round" id="sidebar-toggle-icon">chevron_left</span>
+    </button>
+
+    <!-- Main Content -->
+    <main class="content" id="content">
+      <!-- Top Bar -->
+      <div class="content-topbar">
+        <div class="search-container">
+          <span class="material-icons-round search-icon">search</span>
+          <input type="text" class="search-input" id="search-input" placeholder="Search items..." autocomplete="off">
+          <button class="search-clear hidden" id="search-clear">
+            <span class="material-icons-round">close</span>
+          </button>
+        </div>
+        <div class="topbar-actions">
+          <div class="update-status-pill is-checking" id="update-status-pill" title="Checking for updates...">
+            <span class="material-icons-round">update</span>
+            <span id="update-status-text">checking...</span>
+          </div>
+          <button class="news-btn" id="btn-news" title="Latest Warframe News" aria-label="Open Latest Warframe News">
+            <span class="material-icons-round">notifications</span>
+          </button>
+          <div class="filter-group">
+            <button class="filter-btn active" data-filter="all" id="filter-all">All</button>
+            <button class="filter-btn" data-filter="mastered" id="filter-mastered">Mastered</button>
+            <button class="filter-btn" data-filter="unmastered" id="filter-unmastered">Unmastered</button>
+          </div>
+          <button class="settings-btn" id="btn-open-settings" title="Settings" aria-label="Open Settings">
+            <span class="material-icons-round">settings</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Category Header -->
+      <div class="category-header">
+        <div class="category-header-left">
+          <h1 class="category-title" id="category-title">All Items</h1>
+          <span class="category-count" id="category-item-count">0 items</span>
+        </div>
+        <div class="category-header-actions">
+          <button class="btn btn-mark-all" id="btn-mark-all">
+            <span class="material-icons-round">done_all</span>
+            Mark All Complete
+          </button>
+          <button class="btn btn-unmark-all" id="btn-unmark-all">
+            <span class="material-icons-round">remove_done</span>
+            Unmark All
+          </button>
+        </div>
+      </div>
+
+      <!-- Items Grid -->
+      <div class="items-grid" id="items-grid">
+        <!-- Loading skeleton -->
+        <div class="loading-container" id="loading-container">
+          <div class="loader">
+            <div class="loader-ring"></div>
+            <div class="loader-ring"></div>
+            <div class="loader-ring"></div>
+          </div>
+          <p class="loading-text">Fetching Warframe items...</p>
+          <p class="loading-subtext">Connecting to the Origin System</p>
+        </div>
+      </div>
+
+      <!-- Empty State -->
+      <div class="empty-state hidden" id="empty-state">
+        <span class="material-icons-round empty-icon">search_off</span>
+        <p class="empty-text">No items found</p>
+        <p class="empty-subtext">Try adjusting your search or filter</p>
+      </div>
+    </main>
+
+    <!-- Market Panel (hidden by default) -->
+    <div class="market-panel hidden" id="market-panel">
+      <!-- Market Top Bar -->
+      <div class="content-topbar">
+        <div class="search-container">
+          <span class="material-icons-round search-icon">search</span>
+          <input type="text" class="search-input" id="market-search-input" placeholder="Search market items..." autocomplete="off">
+          <button class="search-clear hidden" id="market-search-clear">
+            <span class="material-icons-round">close</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Market Categories -->
+      <div class="market-categories">
+        <button class="market-cat-btn active" data-market-cat="all">All <span class="market-cat-count">0</span></button>
+        <button class="market-cat-btn" data-market-cat="prime_sets">Prime Sets <span class="market-cat-count">0</span></button>
+        <button class="market-cat-btn" data-market-cat="prime_parts">Prime Parts <span class="market-cat-count">0</span></button>
+        <button class="market-cat-btn" data-market-cat="mods">Mods <span class="market-cat-count">0</span></button>
+        <button class="market-cat-btn" data-market-cat="arcanes">Arcanes <span class="market-cat-count">0</span></button>
+        <button class="market-cat-btn" data-market-cat="weapons">Weapons <span class="market-cat-count">0</span></button>
+        <button class="market-cat-btn" data-market-cat="resources">Resources <span class="market-cat-count">0</span></button>
+        <button class="market-cat-btn" data-market-cat="misc">Misc <span class="market-cat-count">0</span></button>
+      </div>
+
+      <!-- Market Header -->
+      <div class="category-header">
+        <div class="category-header-left">
+          <h1 class="category-title">Warframe Market</h1>
+          <span class="category-count" id="market-item-count">0 items</span>
+        </div>
+      </div>
+
+      <!-- Market Grid -->
+      <div class="market-grid" id="market-grid">
+        <div class="loading-container" id="market-loading">
+          <div class="loader">
+            <div class="loader-ring"></div>
+            <div class="loader-ring"></div>
+            <div class="loader-ring"></div>
+          </div>
+          <p class="loading-text">Fetching market data...</p>
+          <p class="loading-subtext">Connecting to warframe.market</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Prime Resurgence Panel (hidden by default) -->
+    <div class="prime-panel hidden" id="prime-panel">
+      <div class="content-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Prime Resurgence</h1>
+          <span class="category-count" id="prime-location-text">Varzia rotation</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" id="btn-prime-refresh" type="button">
+            <span class="material-icons-round">refresh</span>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="prime-content" id="prime-content">
+        <section class="prime-hero" id="prime-hero">
+          <div class="prime-hero-backdrop" id="prime-hero-backdrop"></div>
+          <div class="prime-hero-inner">
+            <div class="prime-hero-current">
+              <div class="prime-chip">Current Rotation</div>
+              <h2 class="prime-current-title" id="prime-current-title">Loading current rotation...</h2>
+              <div class="prime-frame-showcase" id="prime-frame-showcase">
+                <div class="prime-frame-slot">
+                  <img id="prime-frame-a-img" src="" alt="Current frame A" class="prime-frame-img hidden">
+                </div>
+                <div class="prime-frame-slot">
+                  <img id="prime-frame-b-img" src="" alt="Current frame B" class="prime-frame-img hidden">
+                </div>
+              </div>
+              <div class="prime-weapon-showcase" id="prime-weapon-showcase">
+                <div class="prime-weapon-slot">
+                  <img id="prime-weapon-a-img" src="" alt="Current weapon A" class="prime-weapon-img hidden">
+                </div>
+                <div class="prime-weapon-slot">
+                  <img id="prime-weapon-b-img" src="" alt="Current weapon B" class="prime-weapon-img hidden">
+                </div>
+                <div class="prime-weapon-slot">
+                  <img id="prime-weapon-c-img" src="" alt="Current weapon C" class="prime-weapon-img hidden">
+                </div>
+              </div>
+            </div>
+
+            <div class="prime-hero-right">
+              <div class="prime-next-wrap">
+                <span class="prime-next-label">Next Rotation</span>
+                <span class="prime-next-value" id="prime-next-title">Loading...</span>
+                <span class="prime-next-date" id="prime-next-date"></span>
+              </div>
+              <div class="prime-next-frames" id="prime-next-frames">
+                <div class="prime-frame-slot prime-next-frame-slot">
+                  <img id="prime-next-frame-a-img" src="" alt="Next frame A" class="prime-frame-img hidden">
+                </div>
+                <div class="prime-frame-slot prime-next-frame-slot">
+                  <img id="prime-next-frame-b-img" src="" alt="Next frame B" class="prime-frame-img hidden">
+                </div>
+              </div>
+              <div class="prime-timer-wrap">
+                <span class="prime-timer-label">Next rotation in</span>
+                <span class="prime-timer-value" id="prime-countdown">--:--:--</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="prime-relics-section">
+          <div class="prime-section-head">
+            <h3 class="prime-section-title">Current Rotation Relics</h3>
+            <span class="prime-section-sub" id="prime-relics-sub">Hover a relic to see rewards</span>
+          </div>
+          <div class="prime-relics-grid" id="prime-relics-grid">
+            <div class="prime-loading">Loading relics...</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Cycles Panel (hidden by default) -->
+    <div class="cycles-panel hidden" id="cycles-panel">
+      <div class="content-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Worldstate Hub</h1>
+          <span class="category-count" id="cycles-location-text">Live cycles and activities</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" id="btn-cycles-refresh" type="button">
+            <span class="material-icons-round">refresh</span>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="cycles-content" id="cycles-content">
+        <div class="cycles-nav" id="cycles-nav" role="tablist" aria-label="Worldstate Views">
+          <button class="cycles-nav-btn active" data-cycle-tab="overview" role="tab" aria-selected="true">Overview</button>
+          <button class="cycles-nav-btn" data-cycle-tab="cetus" role="tab" aria-selected="false">Cetus Day/Night</button>
+          <button class="cycles-nav-btn" data-cycle-tab="fortuna" role="tab" aria-selected="false">Fortuna Warm/Cold</button>
+          <button class="cycles-nav-btn" data-cycle-tab="deimos" role="tab" aria-selected="false">Deimos Fass/Vome</button>
+          <button class="cycles-nav-btn" data-cycle-tab="duviri-normal" role="tab" aria-selected="false">Duviri Normal</button>
+          <button class="cycles-nav-btn" data-cycle-tab="duviri-steel" role="tab" aria-selected="false">Duviri Steel Path</button>
+        </div>
+
+        <section class="cycle-view" data-cycle-view="overview">
+          <div class="worldstate-summary-grid" id="worldstate-summary-grid">
+            <div class="worldstate-summary-card">
+              <div class="worldstate-summary-label">Loading</div>
+              <div class="worldstate-summary-value">Worldstate</div>
+              <div class="worldstate-summary-meta">Fetching live activities...</div>
+            </div>
+          </div>
+
+          <div class="worldstate-grid">
+            <article class="worldstate-card worldstate-card-wide">
+              <div class="worldstate-card-head">
+                <div>
+                  <h2 class="worldstate-card-title">Void Fissures</h2>
+                  <p class="worldstate-card-sub">Active relic cracks and their next rollover.</p>
+                </div>
+              </div>
+              <div class="worldstate-list" id="worldstate-fissures-list">
+                <div class="worldstate-empty">Loading fissures...</div>
+              </div>
+            </article>
+
+            <article class="worldstate-card">
+              <div class="worldstate-card-head">
+                <div>
+                  <h2 class="worldstate-card-title">Invasions</h2>
+                  <p class="worldstate-card-sub">Reward battles worth checking before they flip.</p>
+                </div>
+              </div>
+              <div class="worldstate-list" id="worldstate-invasions-list">
+                <div class="worldstate-empty">Loading invasions...</div>
+              </div>
+            </article>
+
+            <article class="worldstate-card">
+              <div class="worldstate-card-head">
+                <div>
+                  <h2 class="worldstate-card-title">Nightwave</h2>
+                  <p class="worldstate-card-sub">Current acts and quick standing gains.</p>
+                </div>
+              </div>
+              <div class="worldstate-list" id="worldstate-nightwave-list">
+                <div class="worldstate-empty">Loading Nightwave...</div>
+              </div>
+            </article>
+
+            <article class="worldstate-card">
+              <div class="worldstate-card-head">
+                <div>
+                  <h2 class="worldstate-card-title">Weekly Operations</h2>
+                  <p class="worldstate-card-sub">Archon Hunt and Sortie rotations at a glance.</p>
+                </div>
+              </div>
+              <div class="worldstate-list" id="worldstate-weekly-list">
+                <div class="worldstate-empty">Loading weekly operations...</div>
+              </div>
+            </article>
+
+            <article class="worldstate-card">
+              <div class="worldstate-card-head">
+                <div>
+                  <h2 class="worldstate-card-title">Specials</h2>
+                  <p class="worldstate-card-sub">Baro, arbitration, Steel Path honors, alerts, and active events.</p>
+                </div>
+              </div>
+              <div class="worldstate-list" id="worldstate-specials-list">
+                <div class="worldstate-empty">Loading specials...</div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="cycle-view hidden" data-cycle-view="cetus">
+          <article class="cycle-card cycle-card-cetus" id="cycle-card-cetus">
+            <div class="cycle-card-header">
+              <h2 class="cycle-card-title">Cetus</h2>
+              <span class="cycle-card-chip" id="cycle-cetus-state">Loading...</span>
+            </div>
+            <div class="cycle-center-timer" id="cycle-cetus-timer">00d 00h 00m 00s</div>
+            <p class="cycle-card-sub" id="cycle-cetus-expiry">--</p>
+          </article>
+        </section>
+
+        <section class="cycle-view hidden" data-cycle-view="fortuna">
+          <article class="cycle-card cycle-card-fortuna" id="cycle-card-fortuna">
+            <div class="cycle-card-header">
+              <h2 class="cycle-card-title">Fortuna</h2>
+              <span class="cycle-card-chip" id="cycle-fortuna-state">Loading...</span>
+            </div>
+            <div class="cycle-center-timer" id="cycle-fortuna-timer">00d 00h 00m 00s</div>
+            <p class="cycle-card-sub" id="cycle-fortuna-expiry">--</p>
+          </article>
+        </section>
+
+        <section class="cycle-view hidden" data-cycle-view="deimos">
+          <article class="cycle-card cycle-card-deimos" id="cycle-card-deimos">
+            <div class="cycle-card-header">
+              <h2 class="cycle-card-title">Deimos</h2>
+              <span class="cycle-card-chip" id="cycle-deimos-state">Loading...</span>
+            </div>
+            <div class="cycle-center-timer" id="cycle-deimos-timer">00d 00h 00m 00s</div>
+            <p class="cycle-card-sub" id="cycle-deimos-expiry">--</p>
+          </article>
+        </section>
+
+        <section class="cycle-view hidden" data-cycle-view="duviri-normal">
+          <article class="cycle-card cycle-card-duviri" id="cycle-card-duviri-normal">
+            <div class="cycle-card-header">
+              <h2 class="cycle-card-title">Duviri (Normal)</h2>
+              <span class="cycle-card-chip" id="cycle-duviri-state">Loading...</span>
+            </div>
+            <div class="cycle-center-timer-wrap">
+              <div class="cycle-center-timer-label">Mood Cycle</div>
+              <div class="cycle-center-timer" id="cycle-duviri-normal-mood-timer">00d 00h 00m 00s</div>
+              <div class="cycle-center-timer-label">Circuit Rotation</div>
+              <div class="cycle-center-timer" id="cycle-duviri-normal-circuit-timer">00d 00h 00m 00s</div>
+            </div>
+            <p class="cycle-card-sub" id="cycle-duviri-expiry">--</p>
+            <div class="cycle-items-grid cycle-items-grid-duviri" id="cycle-duviri-normal-items"></div>
+          </article>
+        </section>
+
+        <section class="cycle-view hidden" data-cycle-view="duviri-steel">
+          <article class="cycle-card cycle-card-duviri-steel" id="cycle-card-duviri-steel">
+            <div class="cycle-card-header">
+              <h2 class="cycle-card-title">Duviri (Steel Path)</h2>
+              <span class="cycle-card-chip" id="cycle-duviri-steel-chip">Weekly Choices</span>
+            </div>
+            <div class="cycle-center-timer-wrap">
+              <div class="cycle-center-timer-label">Mood Cycle</div>
+              <div class="cycle-center-timer" id="cycle-duviri-steel-mood-timer">00d 00h 00m 00s</div>
+              <div class="cycle-center-timer-label">Circuit Rotation</div>
+              <div class="cycle-center-timer" id="cycle-duviri-steel-circuit-timer">00d 00h 00m 00s</div>
+            </div>
+            <p class="cycle-card-sub" id="cycle-duviri-steel-sub">Current hard-mode reward rotation</p>
+            <div class="cycle-items-grid cycle-items-grid-duviri" id="cycle-duviri-hard-items"></div>
+          </article>
+        </section>
+      </div>
+    </div>
+
+    <!-- Settings Page -->
+    <div class="settings-page hidden" id="settings-page">
+      <div class="content-topbar settings-topbar">
+        <div class="settings-topbar-left">
+          <button class="btn btn-secondary settings-back" id="btn-settings-back">
+            <span class="material-icons-round">arrow_back</span>
+            Back
+          </button>
+          <h1 class="category-title">Settings</h1>
+        </div>
+      </div>
+
+      <div class="settings-content">
+        <div class="settings-card">
+          <h2 class="settings-card-title">Window</h2>
+          <label class="settings-toggle-row" for="setting-always-on-top">
+            <div>
+              <div class="settings-toggle-title">Always On Top</div>
+              <div class="settings-toggle-subtitle">Keep the app above other windows.</div>
+            </div>
+            <input type="checkbox" id="setting-always-on-top" class="settings-toggle-input">
+            <span class="settings-toggle-switch" aria-hidden="true">
+              <span class="settings-toggle-knob"></span>
+            </span>
+          </label>
+        </div>
+
+        <div class="settings-card">
+          <h2 class="settings-card-title">Updates</h2>
+          <label class="settings-toggle-row" for="setting-auto-update-check">
+            <div>
+              <div class="settings-toggle-title">Auto Check For Updates</div>
+              <div class="settings-toggle-subtitle">Automatically check GitHub for updates when the app launches.</div>
+            </div>
+            <input type="checkbox" id="setting-auto-update-check" class="settings-toggle-input">
+            <span class="settings-toggle-switch" aria-hidden="true">
+              <span class="settings-toggle-knob"></span>
+            </span>
+          </label>
+
+          <div class="settings-update-row">
+            <div class="settings-toggle-subtitle" id="settings-update-details">Update status will appear here.</div>
+            <div class="settings-update-actions">
+              <button class="btn btn-primary hidden" id="btn-download-update" type="button">Download Update</button>
+              <button class="btn btn-secondary" id="btn-check-updates-now" type="button">Check Now</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h2 class="settings-card-title">Project</h2>
+          <div class="settings-action-row">
+            <div>
+              <div class="settings-toggle-title">GitHub Repository</div>
+              <div class="settings-toggle-subtitle">Open the source code and releases for this app.</div>
+            </div>
+            <button class="btn btn-secondary settings-link-btn" id="btn-open-github-repo" type="button">
+              <span class="material-icons-round">open_in_new</span>
+              <span>GitHub</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="settings-footer">
+          <div class="settings-version" id="settings-app-version">Version -</div>
+          <div class="settings-credit">Made with&#10084;&#65039; by Hassan F.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Market Orders Modal -->
+  <div class="modal-overlay hidden" id="market-orders-modal">
+    <div class="modal market-modal">
+      <div class="modal-header">
+        <div class="orders-header-info">
+          <img id="orders-item-img" src="" alt="" class="orders-item-img">
+          <h2 class="modal-title" id="orders-item-name">Item</h2>
+        </div>
+        <button class="modal-close" id="orders-modal-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body" id="orders-body">
+        <div class="orders-loading">Loading orders...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Warframe News Modal -->
+  <div class="modal-overlay hidden" id="news-modal">
+    <div class="modal news-modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Latest Warframe News</h2>
+        <button class="modal-close" id="news-modal-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body news-modal-body">
+        <div class="news-list" id="news-list">
+          <div class="news-loading">Loading latest news...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Item Info Modal (Checklist) -->
+  <div class="modal-overlay hidden" id="item-info-modal">
+    <div class="modal item-info-modal">
+      <div class="modal-header">
+        <div class="item-info-header-wrap">
+          <div class="item-info-header-media">
+            <img id="item-info-img" src="" alt="" class="item-info-main-img">
+          </div>
+          <div class="item-info-header-summary">
+            <div class="item-info-header-top">
+              <h2 class="modal-title" id="item-info-name">Item</h2>
+              <button class="btn btn-secondary item-info-wiki-btn hidden" id="item-info-wiki-btn" type="button">
+                <span class="material-icons-round">open_in_new</span>
+                Wiki
+              </button>
+            </div>
+            <div class="item-info-summary-grid" id="item-info-summary"></div>
+          </div>
+        </div>
+        <button class="modal-close" id="item-info-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body item-info-body">
+        <div class="item-info-tabs" role="tablist" aria-label="Item Info Sections">
+          <button class="item-info-tab active" id="item-info-tab-info" data-tab="info" role="tab" aria-selected="true">Info</button>
+          <button class="item-info-tab" id="item-info-tab-mission" data-tab="mission" role="tab" aria-selected="false">Mission &amp; Drops</button>
+          <button class="item-info-tab" id="item-info-tab-resources" data-tab="resources" role="tab" aria-selected="false">Resources</button>
+        </div>
+
+        <div class="item-info-pane" id="item-info-pane-info">
+          <p class="item-info-description" id="item-info-description"></p>
+          <button class="btn btn-secondary item-info-market-btn hidden" id="item-info-market-btn" type="button">
+            See Item In Market
+          </button>
+        </div>
+
+        <div class="item-info-pane hidden" id="item-info-pane-mission">
+          <div class="item-info-section">
+            <h3 class="item-info-section-title">Mission And Drop Chance</h3>
+            <div class="item-info-list" id="item-info-farm-list"></div>
+          </div>
+        </div>
+
+        <div class="item-info-pane hidden" id="item-info-pane-resources">
+          <div class="item-info-section">
+            <h3 class="item-info-section-title">Resources Required</h3>
+            <div class="item-info-list" id="item-info-craft-list"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- MR Calculator Modal -->
+  <div class="modal-overlay hidden" id="calculator-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Mastery Rank Calculator</h2>
+        <button class="modal-close" id="modal-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="calc-current">
+          <div class="calc-label">Your Current Mastery XP</div>
+          <div class="calc-value" id="calc-current-xp">0 XP</div>
+          <div class="calc-sublabel">Mastery Rank <span id="calc-current-rank">0</span></div>
+        </div>
+        <div class="calc-divider"></div>
+        <div class="calc-extras-section">
+          <div class="calc-section-title">Account Mastery Sources</div>
+          <div class="calc-section-subtitle">Add mastery from Star Chart progress and Intrinsics.</div>
+          <div class="calc-extras-grid">
+            <div class="calc-extra-card">
+              <label class="calc-label" for="calc-normal-star-chart-xp">Normal Star Chart XP</label>
+              <div class="calc-extra-input-row">
+                <input type="number" class="calc-input calc-input-compact" id="calc-normal-star-chart-xp" min="0" max="27519" step="1" value="0">
+                <button class="btn btn-secondary calc-mini-btn" id="calc-normal-star-chart-max" type="button">Max</button>
+              </div>
+              <div class="calc-extra-note">Nodes + Junctions | Max 27,519 XP</div>
+            </div>
+            <div class="calc-extra-card">
+              <label class="calc-label" for="calc-steel-path-xp">Steel Path XP</label>
+              <div class="calc-extra-input-row">
+                <input type="number" class="calc-input calc-input-compact" id="calc-steel-path-xp" min="0" max="27519" step="1" value="0">
+                <button class="btn btn-secondary calc-mini-btn" id="calc-steel-path-max" type="button">Max</button>
+              </div>
+              <div class="calc-extra-note">Steel Path nodes + Junctions | Max 27,519 XP</div>
+            </div>
+            <div class="calc-extra-card">
+              <label class="calc-label" for="calc-railjack-ranks">Railjack Intrinsic Ranks</label>
+              <div class="calc-extra-input-row">
+                <input type="number" class="calc-input calc-input-compact" id="calc-railjack-ranks" min="0" max="50" step="1" value="0">
+                <div class="calc-inline-value" id="calc-railjack-xp">0 XP</div>
+              </div>
+              <div class="calc-extra-note">1,500 XP per rank | 5 trees x 10 ranks | Max 75,000 XP</div>
+            </div>
+            <div class="calc-extra-card">
+              <label class="calc-label" for="calc-duviri-ranks">Duviri Intrinsic Ranks</label>
+              <div class="calc-extra-input-row">
+                <input type="number" class="calc-input calc-input-compact" id="calc-duviri-ranks" min="0" max="40" step="1" value="0">
+                <div class="calc-inline-value" id="calc-duviri-xp">0 XP</div>
+              </div>
+              <div class="calc-extra-note">1,500 XP per rank | 4 trees x 10 ranks | Max 60,000 XP</div>
+            </div>
+          </div>
+        </div>
+        <div class="calc-target">
+          <label class="calc-label" for="target-rank">Target Mastery Rank</label>
+          <input type="number" class="calc-input" id="target-rank" min="0" value="10" placeholder="Enter target MR / Legendary rank (31 = L1)">
+        </div>
+        <div class="calc-result">
+          <div class="calc-result-row">
+            <span>Item Mastery XP</span>
+            <span class="calc-result-value" id="calc-item-xp">0 XP</span>
+          </div>
+          <div class="calc-result-row">
+            <span>Account Bonus XP</span>
+            <span class="calc-result-value" id="calc-bonus-xp">0 XP</span>
+          </div>
+          <div class="calc-result-row">
+            <span>Tracked Total XP</span>
+            <span class="calc-result-value" id="calc-tracked-total-xp">0 XP</span>
+          </div>
+          <div class="calc-result-row">
+            <span>XP Required for Target</span>
+            <span class="calc-result-value" id="calc-target-xp">0 XP</span>
+          </div>
+          <div class="calc-result-row">
+            <span>XP Still Needed</span>
+            <span class="calc-result-value highlight" id="calc-xp-needed">0 XP</span>
+          </div>
+          <div class="calc-result-row">
+            <span>Items Still Needed (approx.)</span>
+            <span class="calc-result-value" id="calc-items-needed">0</span>
+          </div>
+        </div>
+        <div class="calc-progress-section">
+          <div class="calc-progress-label">
+            <span>Progress to Target</span>
+            <span id="calc-progress-percent">0%</span>
+          </div>
+          <div class="progress-bar-container large">
+            <div class="progress-bar gold" id="calc-progress-bar"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reset Confirm Modal -->
+  <div class="modal-overlay hidden" id="reset-modal">
+    <div class="modal small">
+      <div class="modal-header">
+        <h2 class="modal-title">Reset All Progress</h2>
+        <button class="modal-close" id="reset-modal-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="reset-warning">
+          <span class="material-icons-round">warning</span>
+          This will uncheck all mastered items. This action cannot be undone.
+        </p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="reset-cancel">Cancel</button>
+          <button class="btn btn-danger" id="reset-confirm">Reset All</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="market.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

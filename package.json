@@ -1,0 +1,51 @@
+{
+  "name": "warframe-companion-app",
+  "version": "1.6.0",
+  "description": "Warframe Companion App - Mastery Rank Checklist & Calculator",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "build": "electron-builder --win",
+    "package": "electron-builder --win --dir"
+  },
+  "author": "Hassan",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^41.0.3",
+    "electron-builder": "^26.8.1"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
+  "build": {
+    "appId": "com.warframe.companion",
+    "productName": "Warframe Companion App",
+    "asar": true,
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png",
+      "artifactName": "Warframe-Companion-App-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Hasan580",
+        "repo": "Warframe-companion-app"
+      }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "styles.css",
+      "renderer.js",
+      "market.js",
+      "assets/**/*"
+    ]
+  }
+}
