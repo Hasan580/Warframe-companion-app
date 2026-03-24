@@ -59,8 +59,8 @@ Warframe Companion App is an Electron desktop utility focused on quality-of-life
 
 This project uses public community and game-related APIs, including:
 
-- [WarframeStat](https://api.warframestat.us/)
-- [warframe.market](https://warframe.market/)
+- [WarframeStat](https://github.com/WFCD)
+- [warframe.market](https://warframe.market/api_docs)
 - GitHub Releases API for app updates
 
 ## Installation
