@@ -46,13 +46,6 @@ Warframe Companion App is an Electron desktop utility focused on quality-of-life
 
 ![Warframe Companion App Screenshot](./assets/warframe-companion-app.png)
 
-Recommended screenshots for the repository page:
-
-- Main item grid
-- Item details modal
-- Market orders modal
-- Prime Resurgence dashboard
-- Worldstate panel
 
 ## Tech Stack
 
