@@ -6,8 +6,8 @@
     <td valign="top">
       <h1>Warframe Companion App</h1>
       <p>
-        A desktop companion for tracking mastery progress, browsing item data, checking Prime Resurgence,
-        and navigating Warframe trading workflows from one place.
+        A complete free and open source program to track your mastery and see what is tradable or not with many
+        feature all in one app.
       </p>
     </td>
   </tr>
