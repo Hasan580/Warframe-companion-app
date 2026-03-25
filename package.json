@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "electron .",
     "build": "electron-builder --win",
+    "build:win": "electron-builder --win",
+    "build:linux": "electron-builder --linux AppImage",
+    "build:mac": "electron-builder --mac dmg",
     "package": "electron-builder --win --dir"
   },
   "author": "Hassan",
