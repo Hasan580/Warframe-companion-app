@@ -8,9 +8,21 @@
   const MARKET_API = 'https://api.warframe.market/v2/items';
   const ORDERS_API_V2 = 'https://api.warframe.market/v2/orders/item';
   const ORDERS_API_V1 = 'https://api.warframe.market/v1/items';
+  const STATS_API_V1 = 'https://api.warframe.market/v1/items';
   const CDN_BASE = 'https://warframe.market/static/assets/';
   const MARKET_CACHE_KEY = 'warframe_market_items_v3';
   const MARKET_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+  const ANALYTICS_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+  const ANALYTICS_DEFAULT_PICK_NAMES = [
+    'Arcane Energize',
+    'Arcane Grace',
+    'Primed Continuity',
+    'Glaive Prime Set',
+    'Harrow Prime Set',
+    'Nekros Prime Set',
+    'Aya',
+    'Legendary Core'
+  ];
 
   let marketItems = [];
   let filteredMarketItems = [];
@@ -22,6 +34,12 @@
   let ordersOnlineOnly = false;
   let ordersOnlineMode = 'all_online';
   let ordersRefreshInterval = null;
+  let marketInitialized = false;
+  let analyticsSearchQuery = '';
+  let analyticsSelectedSlug = '';
+  let analyticsCurrentItem = null;
+  let analyticsStatsCache = Object.create(null);
+  let analyticsRequestToken = 0;
 
   const $ = function (sel) { return document.querySelector(sel); };
 
@@ -161,6 +179,120 @@
     return 'misc';
   }
 
+  function findMarketItemBySlug(slug) {
+    var target = String(slug || '').trim();
+    if (!target) return null;
+
+    for (var i = 0; i < marketItems.length; i++) {
+      if (marketItems[i] && marketItems[i].slug === target) {
+        return marketItems[i];
+      }
+    }
+
+    return null;
+  }
+
+  function formatPlatValue(value) {
+    var num = Number(value);
+    if (!isFinite(num)) return '--';
+    var rounded = Math.round(num * 10) / 10;
+    return (rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1)) + 'p';
+  }
+
+  function formatSignedPlatValue(value) {
+    var num = Number(value);
+    if (!isFinite(num)) return '--';
+    var prefix = num > 0 ? '+' : '';
+    return prefix + formatPlatValue(num).replace(/p$/, '') + 'p';
+  }
+
+  function formatMetricNumber(value) {
+    var num = Number(value);
+    if (!isFinite(num)) return '--';
+    return Math.round(num).toLocaleString();
+  }
+
+  function formatAnalyticsDate(value) {
+    if (!value) return '--';
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return '--';
+    return date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric'
+    });
+  }
+
+  function formatAnalyticsTimestamp(value) {
+    if (!value) return 'Waiting for market data';
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return 'Waiting for market data';
+    return 'Updated ' + date.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+  }
+
+  function getAnalyticsQuickPickItems() {
+    var picks = [];
+    var seen = Object.create(null);
+    var i;
+
+    for (i = 0; i < ANALYTICS_DEFAULT_PICK_NAMES.length; i++) {
+      var exact = findMarketItemByName(ANALYTICS_DEFAULT_PICK_NAMES[i]);
+      if (exact && !seen[exact.slug]) {
+        seen[exact.slug] = true;
+        picks.push(exact);
+      }
+    }
+
+    if (picks.length >= 8) return picks.slice(0, 8);
+
+    var preferredCategories = ['prime_sets', 'arcanes', 'mods', 'weapons', 'resources'];
+    for (i = 0; i < marketItems.length; i++) {
+      var item = marketItems[i];
+      if (!item || seen[item.slug]) continue;
+      if (preferredCategories.indexOf(item.category) === -1) continue;
+      seen[item.slug] = true;
+      picks.push(item);
+      if (picks.length >= 8) break;
+    }
+
+    return picks.slice(0, 8);
+  }
+
+  function getAnalyticsSearchResults() {
+    var query = normalizeMarketName(analyticsSearchQuery);
+    if (!query) return getAnalyticsQuickPickItems();
+
+    return marketItems
+      .map(function(item) {
+        var normalized = normalizeMarketName(item.name);
+        var index = normalized.indexOf(query);
+        return {
+          item: item,
+          score: index === -1 ? Number.MAX_SAFE_INTEGER : index,
+          normalized: normalized
+        };
+      })
+      .filter(function(entry) { return entry.score !== Number.MAX_SAFE_INTEGER; })
+      .sort(function(a, b) {
+        if (a.score !== b.score) return a.score - b.score;
+        if (a.normalized.length !== b.normalized.length) return a.normalized.length - b.normalized.length;
+        return a.item.name.localeCompare(b.item.name);
+      })
+      .slice(0, 12)
+      .map(function(entry) { return entry.item; });
+  }
+
+  function createAnalyticsPlaceholder(text) {
+    var el = document.createElement('div');
+    el.className = 'trade-analytics-empty-message';
+    el.textContent = text;
+    return el;
+  }
+
   // ---------- Data Loading ----------
   async function loadMarketItems() {
     var cached = loadMarketCache();
@@ -239,13 +371,16 @@
     showMarketLoading(false);
     applyMarketFilters();
     updateMarketCategoryCounts();
+    renderTradeAnalyticsSearchResults();
   }
 
   // ---------- Filters ----------
   function applyMarketFilters() {
+    var normalizedQuery = String(marketSearchQuery || '').toLowerCase().trim();
+
     filteredMarketItems = marketItems.filter(function (item) {
       if (marketCategory !== 'all' && item.category !== marketCategory) return false;
-      if (marketSearchQuery && item.name.toLowerCase().indexOf(marketSearchQuery.toLowerCase()) === -1) return false;
+      if (normalizedQuery && String(item.name || '').toLowerCase().indexOf(normalizedQuery) === -1) return false;
       return true;
     });
     renderMarketItems();
@@ -520,6 +655,546 @@
     if (!legacyResp.ok) throw new Error('HTTP ' + legacyResp.status);
     var legacyJson = await legacyResp.json();
     return legacyJson.payload && legacyJson.payload.orders ? legacyJson.payload.orders : [];
+  }
+
+  async function fetchItemStatistics(slug, forceRefresh) {
+    var key = String(slug || '').trim();
+    if (!key) return null;
+
+    var cached = analyticsStatsCache[key];
+    if (!forceRefresh && cached && (Date.now() - cached.timestamp) < ANALYTICS_STATS_CACHE_TTL) {
+      return cached.data;
+    }
+
+    var resp = await fetch(STATS_API_V1 + '/' + key + '/statistics', {
+      headers: {
+        'Accept': 'application/json',
+        'Platform': 'pc',
+        'Language': 'en'
+      }
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+
+    var json = await resp.json();
+    var payload = json && json.payload ? json.payload : {};
+    analyticsStatsCache[key] = {
+      timestamp: Date.now(),
+      data: payload
+    };
+    return payload;
+  }
+
+  function getLatestEntryByType(entries, orderType) {
+    if (!Array.isArray(entries)) return null;
+
+    for (var i = entries.length - 1; i >= 0; i--) {
+      var entry = entries[i];
+      if (!entry) continue;
+      if (!orderType || entry.order_type === orderType) {
+        return entry;
+      }
+    }
+
+    return null;
+  }
+
+  function getWeightedAverage(entries, valueKey) {
+    if (!Array.isArray(entries) || entries.length === 0) return null;
+
+    var totalVolume = 0;
+    var totalValue = 0;
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (!entry) continue;
+
+      var value = Number(entry[valueKey]);
+      var volume = Number(entry.volume);
+      if (!isFinite(value)) continue;
+
+      var safeVolume = isFinite(volume) && volume > 0 ? volume : 1;
+      totalVolume += safeVolume;
+      totalValue += value * safeVolume;
+    }
+
+    if (totalVolume <= 0) return null;
+    return totalValue / totalVolume;
+  }
+
+  function getVolumeTotal(entries) {
+    if (!Array.isArray(entries)) return 0;
+
+    var total = 0;
+    for (var i = 0; i < entries.length; i++) {
+      var volume = Number(entries[i] && entries[i].volume);
+      if (isFinite(volume) && volume > 0) total += volume;
+    }
+    return total;
+  }
+
+  function getBestVisibleOrder(orders, orderType) {
+    var filtered = [];
+    var i;
+
+    for (i = 0; i < orders.length; i++) {
+      var order = orders[i];
+      if (!order || order.visible === false || order.order_type !== orderType) continue;
+      if (isOnlineSeller(order)) filtered.push(order);
+    }
+
+    if (filtered.length === 0) {
+      for (i = 0; i < orders.length; i++) {
+        var fallback = orders[i];
+        if (!fallback || fallback.visible === false || fallback.order_type !== orderType) continue;
+        filtered.push(fallback);
+      }
+    }
+
+    if (filtered.length === 0) return null;
+
+    filtered.sort(function(a, b) {
+      if (orderType === 'sell') return Number(a.platinum || 0) - Number(b.platinum || 0);
+      return Number(b.platinum || 0) - Number(a.platinum || 0);
+    });
+
+    return filtered[0] || null;
+  }
+
+  function buildTradeAnalyticsModel(item, statsPayload, orders) {
+    var closedHistory = Array.isArray(statsPayload && statsPayload.statistics_closed && statsPayload.statistics_closed['90days'])
+      ? statsPayload.statistics_closed['90days']
+      : [];
+    var liveHistory = Array.isArray(statsPayload && statsPayload.statistics_live && statsPayload.statistics_live['48hours'])
+      ? statsPayload.statistics_live['48hours']
+      : [];
+
+    var closed7 = closedHistory.slice(-7);
+    var closed30 = closedHistory.slice(-30);
+    var recentClosed = closed7.slice().reverse();
+
+    var latestClosed = closedHistory.length > 0 ? closedHistory[closedHistory.length - 1] : null;
+    var latestLiveSell = getLatestEntryByType(liveHistory, 'sell');
+    var latestLiveBuy = getLatestEntryByType(liveHistory, 'buy');
+    var bestSell = getBestVisibleOrder(orders, 'sell');
+    var bestBuy = getBestVisibleOrder(orders, 'buy');
+
+    var avg7 = getWeightedAverage(closed7, 'wa_price');
+    var avg30 = getWeightedAverage(closed30, 'wa_price');
+    var volume7 = getVolumeTotal(closed7);
+    var volume30 = getVolumeTotal(closed30);
+    var spread = bestSell && bestBuy ? Number(bestSell.platinum) - Number(bestBuy.platinum) : null;
+    var change7vs30 = isFinite(avg7) && isFinite(avg30) ? (avg7 - avg30) : null;
+
+    var visibleSellOrders = orders.filter(function(order) {
+      return order && order.visible !== false && order.order_type === 'sell';
+    });
+    var visibleBuyOrders = orders.filter(function(order) {
+      return order && order.visible !== false && order.order_type === 'buy';
+    });
+
+    return {
+      item: item,
+      latestClosed: latestClosed,
+      latestLiveSell: latestLiveSell,
+      latestLiveBuy: latestLiveBuy,
+      bestSell: bestSell,
+      bestBuy: bestBuy,
+      spread: spread,
+      avg7: avg7,
+      avg30: avg30,
+      change7vs30: change7vs30,
+      volume7: volume7,
+      volume30: volume30,
+      recentClosed: recentClosed,
+      visibleSellOrders: visibleSellOrders,
+      visibleBuyOrders: visibleBuyOrders
+    };
+  }
+
+  function renderTradeAnalyticsSearchResults() {
+    var container = $('#trade-analytics-search-results');
+    var summary = $('#trade-analytics-search-summary');
+    if (!container) return;
+
+    container.textContent = '';
+
+    if (!marketItems.length) {
+      container.appendChild(createAnalyticsPlaceholder('Unable to load the market catalog right now.'));
+      if (summary) summary.textContent = 'Market catalog unavailable.';
+      return;
+    }
+
+    var query = normalizeMarketName(analyticsSearchQuery);
+    var results = getAnalyticsSearchResults();
+
+    if (summary) {
+      if (query) {
+        summary.textContent = results.length > 0
+          ? ('Showing ' + results.length + ' match' + (results.length === 1 ? '' : 'es') + ' for "' + analyticsSearchQuery + '".')
+          : ('No market matches for "' + analyticsSearchQuery + '".');
+      } else {
+        summary.textContent = 'Quick picks from active public trading items.';
+      }
+    }
+
+    if (results.length === 0) {
+      container.appendChild(createAnalyticsPlaceholder('No matching items found. Try a different search term.'));
+      return;
+    }
+
+    for (var i = 0; i < results.length; i++) {
+      var item = results[i];
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'trade-analytics-result-item' + (item.slug === analyticsSelectedSlug ? ' active' : '');
+
+      var thumb = document.createElement('div');
+      thumb.className = 'trade-analytics-result-thumb';
+      var imagePath = getMarketDisplayImage(item);
+      if (imagePath) {
+        var img = document.createElement('img');
+        img.src = getMarketImageUrl(imagePath);
+        img.alt = item.name;
+        img.loading = 'lazy';
+        img.addEventListener('error', function() {
+          img.style.display = 'none';
+        });
+        thumb.appendChild(img);
+      } else {
+        var ph = document.createElement('span');
+        ph.className = 'material-icons-round';
+        ph.textContent = 'insights';
+        thumb.appendChild(ph);
+      }
+
+      var copy = document.createElement('div');
+      copy.className = 'trade-analytics-result-copy';
+      var name = document.createElement('div');
+      name.className = 'trade-analytics-result-name';
+      name.textContent = item.name;
+      var meta = document.createElement('div');
+      meta.className = 'trade-analytics-result-meta';
+      var tag = document.createElement('span');
+      tag.className = 'trade-analytics-result-tag';
+      tag.textContent = item.category.replace(/_/g, ' ');
+      meta.appendChild(tag);
+      copy.appendChild(name);
+      copy.appendChild(meta);
+
+      btn.appendChild(thumb);
+      btn.appendChild(copy);
+      btn.addEventListener('click', function(targetItem) {
+        return function() {
+          selectAnalyticsItem(targetItem, false);
+        };
+      }(item));
+      container.appendChild(btn);
+    }
+  }
+
+  function renderTradeAnalyticsOverview(model) {
+    var emptyState = $('#trade-analytics-empty-state');
+    var overview = $('#trade-analytics-overview');
+    var img = $('#trade-analytics-selected-img');
+    var placeholder = $('#trade-analytics-selected-placeholder');
+    var nameEl = $('#trade-analytics-selected-name');
+    var categoryEl = $('#trade-analytics-selected-category');
+    var updatedEl = $('#trade-analytics-selected-updated');
+    var statGrid = $('#trade-analytics-stat-grid');
+
+    if (!model) {
+      if (emptyState) emptyState.classList.remove('hidden');
+      if (overview) overview.classList.add('hidden');
+      return;
+    }
+
+    if (emptyState) emptyState.classList.add('hidden');
+    if (overview) overview.classList.remove('hidden');
+
+    if (img) {
+      var imagePath = getMarketDisplayImage(model.item);
+      img.src = imagePath ? getMarketImageUrl(imagePath) : '';
+      img.alt = model.item.name;
+      img.classList.toggle('hidden', !imagePath);
+      img.onerror = function() {
+        img.classList.add('hidden');
+        if (placeholder) placeholder.classList.remove('hidden');
+      };
+      img.onload = function() {
+        if (imagePath) {
+          img.classList.remove('hidden');
+          if (placeholder) placeholder.classList.add('hidden');
+        }
+      };
+    }
+    if (placeholder) placeholder.classList.toggle('hidden', !!getMarketDisplayImage(model.item));
+    if (nameEl) nameEl.textContent = model.item.name;
+    if (categoryEl) categoryEl.textContent = model.item.category.replace(/_/g, ' ');
+    if (updatedEl) {
+      var updatedFrom = (model.latestLiveSell && model.latestLiveSell.datetime) ||
+        (model.latestLiveBuy && model.latestLiveBuy.datetime) ||
+        (model.latestClosed && model.latestClosed.datetime) ||
+        '';
+      updatedEl.textContent = formatAnalyticsTimestamp(updatedFrom);
+    }
+
+    if (!statGrid) return;
+    statGrid.textContent = '';
+
+    var statItems = [
+      {
+        label: 'Lowest Sell',
+        value: formatPlatValue(model.bestSell && model.bestSell.platinum),
+        detail: model.visibleSellOrders.length + ' visible sell orders'
+      },
+      {
+        label: 'Highest Buy',
+        value: formatPlatValue(model.bestBuy && model.bestBuy.platinum),
+        detail: model.visibleBuyOrders.length + ' visible buy orders'
+      },
+      {
+        label: 'Spread',
+        value: formatPlatValue(model.spread),
+        detail: (model.bestSell && model.bestBuy) ? 'Lowest sell minus highest buy' : 'Need both live buy and sell orders'
+      },
+      {
+        label: '7D Closed Avg',
+        value: formatPlatValue(model.avg7),
+        detail: isFinite(model.change7vs30) ? ('vs 30D avg ' + formatSignedPlatValue(model.change7vs30)) : 'Compare against 30-day weighted average',
+        kind: isFinite(model.change7vs30) ? (model.change7vs30 > 0 ? 'is-positive' : (model.change7vs30 < 0 ? 'is-negative' : '')) : ''
+      },
+      {
+        label: '30D Closed Avg',
+        value: formatPlatValue(model.avg30),
+        detail: model.latestClosed ? ('Latest close ' + formatPlatValue(model.latestClosed.closed_price || model.latestClosed.avg_price) + ' on ' + formatAnalyticsDate(model.latestClosed.datetime)) : 'No recent closed history available'
+      },
+      {
+        label: '7D Volume',
+        value: formatMetricNumber(model.volume7),
+        detail: '30D volume ' + formatMetricNumber(model.volume30)
+      }
+    ];
+
+    for (var i = 0; i < statItems.length; i++) {
+      var card = document.createElement('div');
+      card.className = 'trade-analytics-stat-card';
+      var label = document.createElement('div');
+      label.className = 'trade-analytics-stat-label';
+      label.textContent = statItems[i].label;
+      var value = document.createElement('div');
+      value.className = 'trade-analytics-stat-value';
+      if (statItems[i].kind) value.classList.add(statItems[i].kind);
+      value.textContent = statItems[i].value;
+      var detail = document.createElement('div');
+      detail.className = 'trade-analytics-stat-detail';
+      detail.textContent = statItems[i].detail;
+      card.appendChild(label);
+      card.appendChild(value);
+      card.appendChild(detail);
+      statGrid.appendChild(card);
+    }
+  }
+
+  function renderTradeAnalyticsTable(targetId, headers, rows, emptyText) {
+    var container = $(targetId);
+    if (!container) return;
+    container.textContent = '';
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      container.appendChild(createAnalyticsPlaceholder(emptyText));
+      return;
+    }
+
+    var table = document.createElement('table');
+    table.className = 'trade-analytics-table';
+
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    for (var i = 0; i < headers.length; i++) {
+      var th = document.createElement('th');
+      th.textContent = headers[i];
+      headRow.appendChild(th);
+    }
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    for (var r = 0; r < rows.length; r++) {
+      var tr = document.createElement('tr');
+      for (var c = 0; c < rows[r].length; c++) {
+        var cell = rows[r][c] || {};
+        var td = document.createElement('td');
+        td.textContent = cell.text || '--';
+        if (cell.strong) td.classList.add('is-strong');
+        if (cell.accent) td.classList.add('is-accent');
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    container.appendChild(table);
+  }
+
+  function renderTradeAnalyticsHistory(model) {
+    if (!model) {
+      renderTradeAnalyticsTable('#trade-analytics-history', [], [], 'Choose an item to inspect its recent closed history.');
+      return;
+    }
+
+    var rows = model.recentClosed.map(function(entry) {
+      var low = isFinite(Number(entry.min_price)) ? Number(entry.min_price) : null;
+      var high = isFinite(Number(entry.max_price)) ? Number(entry.max_price) : null;
+      return [
+        { text: formatAnalyticsDate(entry.datetime), strong: true },
+        { text: formatPlatValue(entry.avg_price), accent: true },
+        { text: formatPlatValue(entry.closed_price) },
+        { text: formatMetricNumber(entry.volume) },
+        { text: (low !== null && high !== null) ? (formatPlatValue(low) + ' - ' + formatPlatValue(high)) : '--' }
+      ];
+    });
+
+    renderTradeAnalyticsTable(
+      '#trade-analytics-history',
+      ['Date', 'Avg', 'Close', 'Volume', 'Range'],
+      rows,
+      'No closed history available for this item yet.'
+    );
+  }
+
+  function renderTradeAnalyticsLive(model) {
+    if (!model) {
+      renderTradeAnalyticsTable('#trade-analytics-live', [], [], 'Choose an item to inspect its live buy and sell pressure.');
+      return;
+    }
+
+    var sell = model.latestLiveSell || {};
+    var buy = model.latestLiveBuy || {};
+    var rows = [
+      [
+        { text: 'Avg Price', strong: true },
+        { text: formatPlatValue(sell.avg_price), accent: true },
+        { text: formatPlatValue(buy.avg_price), accent: true }
+      ],
+      [
+        { text: 'Weighted Avg', strong: true },
+        { text: formatPlatValue(sell.wa_price) },
+        { text: formatPlatValue(buy.wa_price) }
+      ],
+      [
+        { text: 'Median', strong: true },
+        { text: formatPlatValue(sell.median) },
+        { text: formatPlatValue(buy.median) }
+      ],
+      [
+        { text: 'Volume', strong: true },
+        { text: formatMetricNumber(sell.volume) },
+        { text: formatMetricNumber(buy.volume) }
+      ],
+      [
+        { text: 'Moving Avg', strong: true },
+        { text: formatPlatValue(sell.moving_avg) },
+        { text: formatPlatValue(buy.moving_avg) }
+      ],
+      [
+        { text: 'Best Current Order', strong: true },
+        { text: formatPlatValue(model.bestSell && model.bestSell.platinum) },
+        { text: formatPlatValue(model.bestBuy && model.bestBuy.platinum) }
+      ],
+      [
+        { text: 'Visible Orders', strong: true },
+        { text: formatMetricNumber(model.visibleSellOrders.length) },
+        { text: formatMetricNumber(model.visibleBuyOrders.length) }
+      ]
+    ];
+
+    renderTradeAnalyticsTable(
+      '#trade-analytics-live',
+      ['Signal', 'Sell Side', 'Buy Side'],
+      rows,
+      'No live market data available for this item yet.'
+    );
+  }
+
+  function setTradeAnalyticsLoadingState(item) {
+    analyticsCurrentItem = item || analyticsCurrentItem;
+    renderTradeAnalyticsOverview({
+      item: analyticsCurrentItem || { name: 'Loading...', category: 'market' },
+      latestClosed: null,
+      latestLiveSell: null,
+      latestLiveBuy: null,
+      bestSell: null,
+      bestBuy: null,
+      spread: null,
+      avg7: null,
+      avg30: null,
+      change7vs30: null,
+      volume7: 0,
+      volume30: 0,
+      visibleSellOrders: [],
+      visibleBuyOrders: []
+    });
+    renderTradeAnalyticsTable('#trade-analytics-history', [], [], 'Loading recent closed history...');
+    renderTradeAnalyticsTable('#trade-analytics-live', [], [], 'Loading live market pressure...');
+  }
+
+  function renderTradeAnalyticsError(item, message) {
+    renderTradeAnalyticsOverview(null);
+    renderTradeAnalyticsTable('#trade-analytics-history', [], [], 'Failed to load analytics for ' + (item && item.name ? item.name : 'this item') + ': ' + message);
+    renderTradeAnalyticsTable('#trade-analytics-live', [], [], 'Try refreshing this item in a moment.');
+  }
+
+  async function selectAnalyticsItem(item, forceRefresh) {
+    if (!item || !item.slug) return;
+
+    analyticsSelectedSlug = item.slug;
+    analyticsCurrentItem = item;
+    renderTradeAnalyticsSearchResults();
+    setTradeAnalyticsLoadingState(item);
+
+    var token = ++analyticsRequestToken;
+    try {
+      var results = await Promise.all([
+        fetchItemStatistics(item.slug, !!forceRefresh),
+        fetchOrdersV2(item.slug)
+      ]);
+      if (token !== analyticsRequestToken) return;
+
+      var model = buildTradeAnalyticsModel(item, results[0], Array.isArray(results[1]) ? results[1] : []);
+      renderTradeAnalyticsOverview(model);
+      renderTradeAnalyticsHistory(model);
+      renderTradeAnalyticsLive(model);
+    } catch (err) {
+      if (token !== analyticsRequestToken) return;
+      renderTradeAnalyticsError(item, err && err.message ? err.message : 'Unknown error');
+    }
+  }
+
+  async function loadTradeAnalytics(forceRefresh) {
+    if (!marketItems.length) {
+      await loadMarketItems();
+    }
+
+    renderTradeAnalyticsSearchResults();
+
+    if (!marketItems.length) {
+      renderTradeAnalyticsOverview(null);
+      renderTradeAnalyticsHistory(null);
+      renderTradeAnalyticsLive(null);
+      return;
+    }
+
+    if (analyticsCurrentItem && analyticsCurrentItem.slug) {
+      await selectAnalyticsItem(analyticsCurrentItem, !!forceRefresh);
+      return;
+    }
+
+    var quickPicks = getAnalyticsQuickPickItems();
+    if (quickPicks.length > 0) {
+      await selectAnalyticsItem(quickPicks[0], !!forceRefresh);
+    } else {
+      renderTradeAnalyticsOverview(null);
+      renderTradeAnalyticsHistory(null);
+      renderTradeAnalyticsLive(null);
+    }
   }
 
   function renderOrdersContent(container, sellOrders, buyOrders, itemMeta) {
@@ -824,14 +1499,35 @@
 
   // ---------- Init on document ready ----------
   function initMarket() {
+    if (marketInitialized) return;
+    marketInitialized = true;
+
     // Market search
     var searchInput = $('#market-search-input');
     if (searchInput) {
       searchInput.addEventListener('input', function (e) {
-        marketSearchQuery = e.target.value.trim();
+        marketSearchQuery = String(e.target.value || '');
         var clearBtn = $('#market-search-clear');
         if (clearBtn) clearBtn.classList.toggle('hidden', !marketSearchQuery);
         applyMarketFilters();
+      });
+    }
+
+    var analyticsSearchInput = $('#trade-analytics-search-input');
+    if (analyticsSearchInput) {
+      analyticsSearchInput.addEventListener('input', function (e) {
+        analyticsSearchQuery = String(e.target.value || '');
+        var clearBtn = $('#trade-analytics-search-clear');
+        if (clearBtn) clearBtn.classList.toggle('hidden', !analyticsSearchQuery);
+        renderTradeAnalyticsSearchResults();
+      });
+
+      analyticsSearchInput.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        var results = getAnalyticsSearchResults();
+        if (results.length > 0) {
+          selectAnalyticsItem(results[0], false);
+        }
       });
     }
 
@@ -846,6 +1542,17 @@
       });
     }
 
+    var analyticsSearchClear = $('#trade-analytics-search-clear');
+    if (analyticsSearchClear) {
+      analyticsSearchClear.addEventListener('click', function () {
+        var inp = $('#trade-analytics-search-input');
+        if (inp) inp.value = '';
+        analyticsSearchQuery = '';
+        analyticsSearchClear.classList.add('hidden');
+        renderTradeAnalyticsSearchResults();
+      });
+    }
+
     // Category buttons
     document.querySelectorAll('.market-cat-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -855,6 +1562,22 @@
         applyMarketFilters();
       });
     });
+
+    var analyticsRefreshBtn = $('#btn-trade-analytics-refresh');
+    if (analyticsRefreshBtn) {
+      analyticsRefreshBtn.addEventListener('click', function () {
+        loadTradeAnalytics(true);
+      });
+    }
+
+    var analyticsOpenOrdersBtn = $('#btn-trade-analytics-open-orders');
+    if (analyticsOpenOrdersBtn) {
+      analyticsOpenOrdersBtn.addEventListener('click', function () {
+        if (analyticsCurrentItem) {
+          openOrdersModal(analyticsCurrentItem);
+        }
+      });
+    }
 
     // Close modal
     var closeBtn = $('#orders-modal-close');
@@ -876,6 +1599,7 @@
   window.warframeMarket = {
     init: initMarket,
     load: loadMarketItems,
+    loadAnalytics: loadTradeAnalytics,
     openItemByName: openItemByName,
     searchItemByName: searchItemByName,
   };

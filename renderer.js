@@ -12,14 +12,16 @@
   const MASTERED_STORAGE_KEY = 'warframe_mastered_items';
   const REMOVED_PROFILE_NAME_KEY = 'warframe_profile_name_v1';
   const REMOVED_AUTO_PROFILE_SYNC_KEY = 'warframe_auto_profile_sync_v1';
-  const ITEMS_CACHE_KEY = 'warframe_items_cache_v12';
+  const ITEMS_CACHE_KEY = 'warframe_items_cache_v14';
   const MARKET_TRADABLE_CACHE_KEY = 'warframe_market_tradable_names_v2';
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
   const MARKET_TRADABLE_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
   const ALWAYS_ON_TOP_KEY = 'warframe_always_on_top_enabled';
   const AUTO_UPDATE_CHECK_KEY = 'warframe_auto_update_check_enabled';
+  const APP_THEME_KEY = 'warframe_app_theme_v1';
   const SIDEBAR_COLLAPSED_KEY = 'warframe_sidebar_collapsed_v1';
   const REPO_URL = 'https://github.com/Hasan580/Warframe-companion-app.git';
+  const TELEGRAM_CONTACT_URL = 'https://t.me/HassanF0';
   const UPDATE_REPO_API = 'https://api.github.com/repos/Hasan580/Warframe-companion-app';
   const UPDATE_RELEASE_API = UPDATE_REPO_API + '/releases/latest';
   const UPDATE_TAGS_API = UPDATE_REPO_API + '/tags?per_page=1';
@@ -30,7 +32,11 @@
   const FISSURES_API = 'https://api.warframestat.us/pc/fissures';
   const ARBITRATION_API = 'https://api.warframestat.us/pc/arbitration';
   const OFFICIAL_WORLDSTATE_API = 'https://content.warframe.com/dynamic/worldState.php';
+  const WIKI_API_URL = 'https://warframe.fandom.com/api.php';
+  const WIKI_BASE_URL = 'https://warframe.fandom.com';
   const RELIC_LOOKUP_CACHE_KEY = 'warframe_relic_projection_lookup_v1';
+  const RELIC_DIRECTORY_CACHE_KEY = 'warframe_relic_directory_v2';
+  const ARCANE_DIRECTORY_CACHE_KEY = 'warframe_arcane_directory_v2';
   const NEWS_CACHE_KEY = 'warframe_news_cache_v1';
   const PRIME_RESURGENCE_CACHE_KEY = 'warframe_prime_resurgence_cache_v2';
   const CETUS_CYCLE_API = 'https://api.warframestat.us/pc/cetusCycle/';
@@ -41,8 +47,40 @@
   const NEWS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
   const PRIME_RESURGENCE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
   const RELIC_LOOKUP_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  const RELIC_DIRECTORY_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  const ARCANE_DIRECTORY_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  const RELIC_RENDER_BATCH_SIZE = 120;
+  const ARCANE_RENDER_BATCH_SIZE = 72;
+  const MOD_RENDER_BATCH_SIZE = 180;
+  const WIKI_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
+  const WIKI_ERROR_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
   const BUILD_SLOT_COUNT = 8;
   const BUILD_RANK_MAX = 16;
+  const DEFAULT_APP_THEME = 'origin';
+  const APP_THEMES = Object.freeze({
+    origin: {
+      label: 'Origin'
+    },
+    lotus: {
+      label: 'Lotus'
+    },
+    orokin: {
+      label: 'Orokin'
+    },
+    stalker: {
+      label: 'Stalker'
+    }
+  });
+
+  try {
+    var bootThemeId = String(localStorage.getItem(APP_THEME_KEY) || '').trim().toLowerCase();
+    document.documentElement.setAttribute(
+      'data-theme',
+      Object.prototype.hasOwnProperty.call(APP_THEMES, bootThemeId) ? bootThemeId : DEFAULT_APP_THEME
+    );
+  } catch (bootThemeErr) {
+    document.documentElement.setAttribute('data-theme', DEFAULT_APP_THEME);
+  }
 
   // Base mastery progression through MR30
   const MR_XP_MULTIPLIER = 2500;
@@ -67,6 +105,7 @@
   let searchQuery = '';
   let tradeModeEnabled = false;
   let currentItemInfo = null;
+  let wikiArticleCache = Object.create(null);
   let currentAppVersion = '';
   let latestNewsItems = [];
   let primeResurgenceData = null;
@@ -74,11 +113,23 @@
   let recipeIndexByUnique = null;
   let recipeIndexPromise = null;
   let relicProjectionLookup = Object.create(null);
+  let relicDirectory = [];
+  let arcaneDirectory = [];
   let relicLookupPromise = null;
+  let relicDirectoryPromise = null;
+  let arcaneDirectoryPromise = null;
+  let relicSearchQuery = '';
+  let arcaneSearchQuery = '';
+  let relicVisibleCount = RELIC_RENDER_BATCH_SIZE;
+  let arcaneVisibleCount = ARCANE_RENDER_BATCH_SIZE;
+  let modVisibleCount = MOD_RENDER_BATCH_SIZE;
+  let relicRenderFrame = 0;
+  let arcaneRenderFrame = 0;
   let primeRelicRewardsCache = Object.create(null);
   let primeCountdownTimer = null;
   let removeUpdateEventListener = null;
   let updateAvailableForDownload = false;
+  let updateMenuAction = 'check';
   let itemBuildsByKey = Object.create(null);
   let pendingBuildFromHash = null;
   let selectedBuildSlotIndex = 0;
@@ -94,6 +145,7 @@
   let cycleRetryDelayMs = 5000;
   let sidebarCollapsed = false;
   let masteryExtras = getDefaultMasteryExtras();
+  let currentThemeId = DEFAULT_APP_THEME;
 
   // ---------- DOM Elements ----------
   const $ = (sel) => document.querySelector(sel);
@@ -136,12 +188,19 @@
     calcProgressPercent: $('#calc-progress-percent'),
     calcProgressBar: $('#calc-progress-bar'),
     tradeModeBtn: $('#btn-trade-mode'),
+    mainMenuUpdateBtn: $('#btn-main-menu-update'),
+    mainMenuUpdateText: $('#main-menu-update-text'),
+    mainMenuUpdateDetails: $('#main-menu-update-details'),
+    mainMenuUpdateIcon: $('#main-menu-update-icon'),
     settingsOpenBtn: $('#btn-open-settings'),
     settingsPage: $('#settings-page'),
     settingsBackBtn: $('#btn-settings-back'),
     alwaysOnTopToggle: $('#setting-always-on-top'),
+    settingsThemeCurrent: $('#settings-theme-current'),
+    themeOptions: $$('.settings-theme-option'),
     autoUpdateCheckToggle: $('#setting-auto-update-check'),
     openGithubRepoBtn: $('#btn-open-github-repo'),
+    openTelegramContactBtn: $('#btn-open-telegram-contact'),
     updateStatusPill: $('#update-status-pill'),
     updateStatusText: $('#update-status-text'),
     appContainer: $('.app-container'),
@@ -169,6 +228,22 @@
     primeHeroBackdrop: $('#prime-hero-backdrop'),
     primeRelicsGrid: $('#prime-relics-grid'),
     primeRelicsSub: $('#prime-relics-sub'),
+    relicsPanel: $('#relics-panel'),
+    relicSearchInput: $('#relic-search-input'),
+    relicSearchClear: $('#relic-search-clear'),
+    relicsContent: $('#relics-content'),
+    relicsCountText: $('#relics-count-text'),
+    relicsTotalCount: $('#relics-total-count'),
+    relicsResultsCount: $('#relics-results-count'),
+    relicsSearchSummary: $('#relics-search-summary'),
+    relicsGrid: $('#relics-grid'),
+    arcanesPanel: $('#arcanes-panel'),
+    arcaneSearchInput: $('#arcane-search-input'),
+    arcaneSearchClear: $('#arcane-search-clear'),
+    arcanesContent: $('#arcanes-content'),
+    arcanesCountText: $('#arcanes-count-text'),
+    arcanesSearchSummary: $('#arcanes-search-summary'),
+    arcanesGrid: $('#arcanes-grid'),
     cyclesPanel: $('#cycles-panel'),
     cyclesLocationText: $('#cycles-location-text'),
     cyclesRefreshBtn: $('#btn-cycles-refresh'),
@@ -202,26 +277,29 @@
     cycleDuviriSteelSub: $('#cycle-duviri-steel-sub'),
     cycleDuviriNormalItems: $('#cycle-duviri-normal-items'),
     cycleDuviriHardItems: $('#cycle-duviri-hard-items'),
-    updateCheckNowBtn: $('#btn-check-updates-now'),
     updateDownloadBtn: $('#btn-download-update'),
     settingsUpdateDetails: $('#settings-update-details'),
     settingsAppVersion: $('#settings-app-version'),
     itemInfoModal: $('#item-info-modal'),
     itemInfoClose: $('#item-info-close'),
     itemInfoName: $('#item-info-name'),
+    itemInfoPrimeStatus: $('#item-info-prime-status'),
     itemInfoImg: $('#item-info-img'),
     itemInfoSummary: $('#item-info-summary'),
     itemInfoDescription: $('#item-info-description'),
-    itemInfoWikiBtn: $('#item-info-wiki-btn'),
     itemInfoMarketBtn: $('#item-info-market-btn'),
     itemInfoPaneResources: $('#item-info-pane-resources'),
     itemInfoTabInfo: $('#item-info-tab-info'),
     itemInfoTabMission: $('#item-info-tab-mission'),
     itemInfoTabResources: $('#item-info-tab-resources'),
+    itemInfoTabWiki: $('#item-info-tab-wiki'),
     itemInfoTabBuild: $('#item-info-tab-build'),
     itemInfoPaneInfo: $('#item-info-pane-info'),
     itemInfoPaneMission: $('#item-info-pane-mission'),
+    itemInfoPaneWiki: $('#item-info-pane-wiki'),
     itemInfoPaneBuild: $('#item-info-pane-build'),
+    itemInfoWikiState: $('#item-info-wiki-state'),
+    itemInfoWikiContent: $('#item-info-wiki-content'),
     itemInfoFarmList: $('#item-info-farm-list'),
     itemInfoCraftList: $('#item-info-craft-list'),
     itemBuildSlots: $('#item-build-slots'),
@@ -273,13 +351,47 @@
     return div.innerHTML;
   }
 
-  function buildWikiUrl(item) {
+  function getWikiPageTitle(item) {
     var direct = String(item && (item.wikiaUrl || item.wikiUrl) ? (item.wikiaUrl || item.wikiUrl) : '').trim();
-    if (direct) return direct;
+    if (direct) {
+      try {
+        var parsed = new URL(direct);
+        var marker = '/wiki/';
+        var index = parsed.pathname.indexOf(marker);
+        if (index !== -1) {
+          var slug = parsed.pathname.slice(index + marker.length).replace(/^\/+/, '').split('/')[0];
+          slug = decodeURIComponent(slug || '').replace(/_/g, ' ').trim();
+          if (slug) return slug;
+        }
+      } catch (err) {
+        // Ignore malformed URLs and fall back to the item name.
+      }
+    }
 
-    var name = String(item && item.name ? item.name : '').trim();
-    if (!name) return '';
-    return 'https://warframe.fandom.com/wiki/' + encodeURIComponent(name.replace(/\s+/g, '_'));
+    return String(item && item.name ? item.name : '').trim();
+  }
+
+  function buildWikiUrl(item) {
+    var title = getWikiPageTitle(item);
+    if (!title) return '';
+    return WIKI_BASE_URL + '/wiki/' + encodeURIComponent(title.replace(/\s+/g, '_'));
+  }
+
+  function buildWikiApiUrl(item) {
+    var title = getWikiPageTitle(item);
+    if (!title) return '';
+
+    var apiUrl = new URL(WIKI_API_URL);
+    apiUrl.searchParams.set('origin', '*');
+    apiUrl.searchParams.set('action', 'parse');
+    apiUrl.searchParams.set('page', title.replace(/\s+/g, '_'));
+    apiUrl.searchParams.set('prop', 'text');
+    apiUrl.searchParams.set('formatversion', '2');
+    apiUrl.searchParams.set('format', 'json');
+    apiUrl.searchParams.set('redirects', 'true');
+    apiUrl.searchParams.set('disableeditsection', 'true');
+    apiUrl.searchParams.set('disabletoc', 'true');
+    return apiUrl.toString();
   }
 
   function isVehicleItem(item) {
@@ -301,9 +413,17 @@
     return category === 'mods' || type.indexOf(' mod') !== -1 || type === 'mod';
   }
 
+  function isMasterableAmpItem(item) {
+    var type = String(item && item.type ? item.type : '').toLowerCase();
+    var name = String(item && item.name ? item.name : '').toLowerCase();
+    var uniqueName = String(item && (item.uniqueName || item.unique_name) ? (item.uniqueName || item.unique_name) : '').toLowerCase();
+    return type === 'amp' && (name.indexOf('prism') !== -1 || uniqueName.indexOf('/barrel') !== -1);
+  }
+
   function normalizeCategory(cat, item) {
     var itemName = String((item && item.name) || '').toLowerCase();
     if (item && isModItem(item)) return 'Mods';
+    if (item && isMasterableAmpItem(item)) return 'Amps';
     if (FORCED_SENTINEL_NAMES[itemName]) return 'Sentinels';
     if (item && isVehicleItem(item)) return 'Vehicles';
 
@@ -319,6 +439,12 @@
       'Arch-Melee': 'Vehicles',
     };
     return map[cat] || cat;
+  }
+
+  function parseBooleanFlag(value) {
+    if (value === true || value === false) return value;
+    var normalized = String(value || '').trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
   }
 
   function toTitleCaseFromSlug(text) {
@@ -337,13 +463,20 @@
     var fallbackName = uniqueName ? uniqueName.split('/').pop() : '';
     var name = item.name || item.itemName || toTitleCaseFromSlug(fallbackName);
     var category = normalizeCategory(item.category || item.type || 'Misc', item);
+    var hasVaultedStatus = Object.prototype.hasOwnProperty.call(item || {}, 'hasVaultedStatus')
+      ? parseBooleanFlag(item.hasVaultedStatus)
+      : (Object.prototype.hasOwnProperty.call(item || {}, 'vaulted') || Object.prototype.hasOwnProperty.call(item || {}, 'isVaulted'));
+    var vaultedValue = Object.prototype.hasOwnProperty.call(item || {}, 'vaulted')
+      ? item.vaulted
+      : item.isVaulted;
 
     return {
       uniqueName: uniqueName,
       name: name,
       category: category,
       type: item.type || item.category || category,
-      tradable: item.tradable === true || item.tradeable === true || String(item.tradable).toLowerCase() === 'true' || String(item.tradeable).toLowerCase() === 'true',
+      masterable: item.masterable === true || isMasterableAmpItem(item),
+      tradable: parseBooleanFlag(item.tradable) || parseBooleanFlag(item.tradeable),
       imageName: imageName,
       description: item.description || '',
       wikiaUrl: item.wikiaUrl || item.wikiUrl || '',
@@ -356,6 +489,8 @@
       tags: Array.isArray(item.tags) ? item.tags : [],
       productCategory: item.productCategory || '',
       isPrime: !!item.isPrime,
+      vaulted: hasVaultedStatus ? parseBooleanFlag(vaultedValue) : false,
+      hasVaultedStatus: hasVaultedStatus,
       masteryReq: item.masteryReq || 0,
     };
   }
@@ -367,6 +502,252 @@
       .replace(/[^a-z0-9+]+/g, ' ')
       .trim()
       .replace(/\s+/g, ' ');
+  }
+
+  function getWikiCacheKey(item) {
+    return toLookupKey(getWikiPageTitle(item));
+  }
+
+  function getWikiCacheEntry(item) {
+    var key = getWikiCacheKey(item);
+    if (!key) return null;
+
+    var entry = wikiArticleCache[key];
+    if (!entry) return null;
+    if (entry.status === 'loading') return entry;
+
+    var ttl = entry.status === 'error' ? WIKI_ERROR_CACHE_TTL : WIKI_CACHE_TTL;
+    if (typeof entry.fetchedAt === 'number' && (Date.now() - entry.fetchedAt) > ttl) {
+      delete wikiArticleCache[key];
+      return null;
+    }
+
+    return entry;
+  }
+
+  function absolutizeWikiUrl(url) {
+    var value = String(url || '').trim();
+    if (!value) return '';
+    if (/^javascript:/i.test(value)) return '';
+    if (/^(https?:|mailto:)/i.test(value)) return value;
+    if (value.indexOf('//') === 0) return 'https:' + value;
+    if (value.indexOf('/') === 0) return WIKI_BASE_URL + value;
+    if (value.indexOf('#') === 0) return '';
+    return WIKI_BASE_URL + '/' + value.replace(/^\.?\//, '');
+  }
+
+  function getAppTradeStatusMeta(item) {
+    var tradable = !!(item && item.tradable);
+    return {
+      tradable: tradable,
+      statusLabel: tradable ? 'Tradable' : 'Untradable',
+      summaryLabel: tradable ? 'Tradable in Trade Mode' : 'Untradable in Trade Mode',
+      detail: tradable
+        ? 'Verified using the same trade reference this app uses for Trade Mode and market matching.'
+        : 'Not present in the app trade reference used by Trade Mode and market matching.',
+      className: tradable ? 'is-tradable' : 'is-untradable'
+    };
+  }
+
+  function getPrimeVaultStatusMeta(item) {
+    if (!item || !item.isPrime || !item.hasVaultedStatus) {
+      return {
+        visible: false,
+        text: '',
+        detail: '',
+        className: ''
+      };
+    }
+
+    var vaulted = !!item.vaulted;
+    return {
+      visible: true,
+      text: vaulted ? 'Vaulted' : 'Not Vaulted',
+      detail: vaulted
+        ? 'Prime relics for this item are currently vaulted in the API data.'
+        : 'Prime relics for this item are currently available in the API data.',
+      className: vaulted ? 'is-vaulted' : 'is-unvaulted'
+    };
+  }
+
+  function updateItemInfoPrimeStatus(item) {
+    if (!els.itemInfoPrimeStatus) return;
+
+    var meta = getPrimeVaultStatusMeta(item);
+    els.itemInfoPrimeStatus.className = 'item-info-prime-status';
+    els.itemInfoPrimeStatus.textContent = '';
+    els.itemInfoPrimeStatus.title = '';
+
+    if (!meta.visible) {
+      els.itemInfoPrimeStatus.classList.add('hidden');
+      return;
+    }
+
+    els.itemInfoPrimeStatus.textContent = meta.text;
+    els.itemInfoPrimeStatus.title = meta.detail;
+    els.itemInfoPrimeStatus.classList.add(meta.className);
+    els.itemInfoPrimeStatus.classList.remove('hidden');
+  }
+
+  function isWikiTradeLabelText(text) {
+    var normalized = String(text || '')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+    return normalized === 'tradable' || normalized === 'tradeable';
+  }
+
+  function applyAppTradeStatusToWikiArticle(articleEl, item) {
+    if (!articleEl || !item) return;
+
+    var meta = getAppTradeStatusMeta(item);
+
+    var banner = document.createElement('div');
+    banner.className = 'item-info-wiki-app-trade ' + meta.className;
+
+    var bannerLabel = document.createElement('div');
+    bannerLabel.className = 'item-info-wiki-app-trade-label';
+    bannerLabel.textContent = 'App Trade Status';
+
+    var bannerStatus = document.createElement('div');
+    bannerStatus.className = 'item-info-wiki-app-trade-status';
+    bannerStatus.textContent = meta.summaryLabel;
+
+    var bannerDetail = document.createElement('div');
+    bannerDetail.className = 'item-info-wiki-app-trade-detail';
+    bannerDetail.textContent = meta.detail;
+
+    banner.appendChild(bannerLabel);
+    banner.appendChild(bannerStatus);
+    banner.appendChild(bannerDetail);
+    articleEl.insertBefore(banner, articleEl.firstChild);
+
+    var infobox = articleEl.querySelector('.portable-infobox');
+    if (!infobox) return;
+
+    var tradeRowFound = false;
+    var rows = infobox.querySelectorAll('.pi-item, .pi-data, tr');
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i];
+      var labelEl = row.querySelector('.pi-data-label') || row.querySelector('th');
+      var labelText = labelEl ? labelEl.textContent : '';
+      if (!isWikiTradeLabelText(labelText)) continue;
+
+      tradeRowFound = true;
+      row.classList.add('item-info-wiki-app-trade-row');
+
+      var valueEl = row.querySelector('.pi-data-value') || row.querySelector('td');
+      if (!valueEl) continue;
+
+      valueEl.textContent = meta.statusLabel;
+      valueEl.classList.remove('is-tradable', 'is-untradable');
+      valueEl.classList.add('item-info-wiki-app-trade-value', meta.className);
+    }
+
+    if (!tradeRowFound) {
+      var injectedRow = document.createElement('section');
+      injectedRow.className = 'pi-item pi-data item-info-wiki-app-trade-row';
+
+      var injectedLabel = document.createElement('h3');
+      injectedLabel.className = 'pi-data-label';
+      injectedLabel.textContent = 'Tradable';
+
+      var injectedValue = document.createElement('div');
+      injectedValue.className = 'pi-data-value item-info-wiki-app-trade-value ' + meta.className;
+      injectedValue.textContent = meta.statusLabel;
+
+      injectedRow.appendChild(injectedLabel);
+      injectedRow.appendChild(injectedValue);
+      infobox.appendChild(injectedRow);
+    }
+  }
+
+  function sanitizeWikiArticleHtml(rawHtml) {
+    var parser = new DOMParser();
+    var parsed = parser.parseFromString(String(rawHtml || ''), 'text/html');
+    var root = parsed.querySelector('.mw-parser-output') || parsed.body;
+    if (!root) return '';
+
+    root = root.cloneNode(true);
+
+    var removableSelectors = [
+      'script',
+      'style',
+      'link',
+      'noscript',
+      'iframe',
+      'audio',
+      'video',
+      'form',
+      'input',
+      'button',
+      '.mw-editsection',
+      '.reference',
+      '.references',
+      '.reflist',
+      '.toc',
+      '.navbox',
+      '.catlinks',
+      '.license-description',
+      '.mobile-hidden',
+      '.mw-empty-elt',
+      '[role="navigation"]'
+    ];
+
+    var junk = root.querySelectorAll(removableSelectors.join(','));
+    for (var i = 0; i < junk.length; i++) {
+      junk[i].remove();
+    }
+
+    var elements = root.querySelectorAll('*');
+    for (var j = 0; j < elements.length; j++) {
+      var el = elements[j];
+      var attrs = Array.from(el.attributes);
+
+      for (var a = 0; a < attrs.length; a++) {
+        if (/^on/i.test(attrs[a].name)) {
+          el.removeAttribute(attrs[a].name);
+        }
+      }
+
+      if (el.tagName === 'A') {
+        var href = String(el.getAttribute('href') || '').trim();
+        var normalizedHref = absolutizeWikiUrl(href);
+        if (normalizedHref) {
+          el.setAttribute('href', normalizedHref);
+          el.setAttribute('target', '_blank');
+          el.setAttribute('rel', 'noopener noreferrer');
+        } else {
+          el.removeAttribute('href');
+        }
+      }
+
+      if (el.tagName === 'IMG') {
+        var imgSrc = String(el.getAttribute('data-src') || el.getAttribute('src') || '').trim();
+        var normalizedSrc = absolutizeWikiUrl(imgSrc);
+        if (!normalizedSrc || /^data:image\/gif/i.test(normalizedSrc)) {
+          el.remove();
+          continue;
+        }
+
+        el.setAttribute('src', normalizedSrc);
+        el.removeAttribute('srcset');
+        el.removeAttribute('data-src');
+        el.classList.remove('lazyload');
+        el.setAttribute('loading', 'lazy');
+        el.removeAttribute('decoding');
+      }
+    }
+
+    var emptyParagraphs = root.querySelectorAll('p');
+    for (var p = 0; p < emptyParagraphs.length; p++) {
+      var para = emptyParagraphs[p];
+      if (!String(para.textContent || '').trim() && !para.querySelector('img, figure, table, aside, ul, ol')) {
+        para.remove();
+      }
+    }
+
+    return String(root.innerHTML || '').trim();
   }
 
   function toCompactLookupKey(name) {
@@ -1417,6 +1798,366 @@
     }
   }
 
+  function normalizeSearchText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getRelicDisplayName(name) {
+    var raw = String(name || '').trim();
+    if (!raw) return '';
+    return raw.replace(/\s+relic$/i, '').trim() || raw;
+  }
+
+  function getRelicTier(name) {
+    var displayName = getRelicDisplayName(name);
+    var match = displayName.match(/^(Lith|Meso|Neo|Axi|Requiem)\b/i);
+    return match ? match[1][0].toUpperCase() + match[1].slice(1).toLowerCase() : 'Relic';
+  }
+
+  function getRelicTierSortScore(name) {
+    var tier = getRelicTier(name).toLowerCase();
+    if (tier === 'lith') return 1;
+    if (tier === 'meso') return 2;
+    if (tier === 'neo') return 3;
+    if (tier === 'axi') return 4;
+    if (tier === 'requiem') return 5;
+    return 99;
+  }
+
+  function extractRelicRewardsFromItem(item) {
+    var rewards = Array.isArray(item && item.rewards) ? item.rewards : [];
+    var normalized = [];
+
+    for (var i = 0; i < rewards.length; i++) {
+      var reward = rewards[i] || {};
+      var rewardItem = reward.item || {};
+      var rewardName = String(rewardItem.name || '').trim();
+      if (!rewardName) continue;
+      normalized.push({
+        name: rewardName,
+        rarity: String(reward.rarity || 'Unknown'),
+        chance: typeof reward.chance === 'number' ? reward.chance : null
+      });
+    }
+
+    normalized.sort(function(a, b) {
+      var rarityDiff = raritySortScore(b.rarity) - raritySortScore(a.rarity);
+      if (rarityDiff !== 0) return rarityDiff;
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+
+    return normalized;
+  }
+
+  function buildRelicDirectory(rawItems) {
+    var out = [];
+    if (!Array.isArray(rawItems)) return out;
+
+    for (var i = 0; i < rawItems.length; i++) {
+      var item = rawItems[i] || {};
+      var itemType = String(item.type || '').toLowerCase();
+      var relicName = String(item.name || '').trim();
+      if (itemType !== 'relic' || !relicName) continue;
+
+      var rewards = extractRelicRewardsFromItem(item);
+      if (!Array.isArray(rewards) || rewards.length === 0) continue;
+
+      var rewardNames = [];
+      for (var j = 0; j < rewards.length; j++) {
+        rewardNames.push(rewards[j].name);
+      }
+
+      var displayName = getRelicDisplayName(relicName) || relicName;
+      var rareRewardName = '';
+      for (var r = 0; r < rewards.length; r++) {
+        if (String(rewards[r].rarity || '').toLowerCase() === 'rare') {
+          rareRewardName = rewards[r].name;
+          break;
+        }
+      }
+
+      out.push({
+        name: relicName,
+        displayName: displayName,
+        tier: getRelicTier(relicName),
+        rewardCount: rewards.length,
+        rewards: rewards,
+        rewardNames: rewardNames,
+        rareRewardName: rareRewardName,
+        relicSearchKey: normalizeSearchText(relicName + ' ' + displayName),
+        rewardSearchKey: normalizeSearchText(rewardNames.join(' ')),
+        searchKey: normalizeSearchText(relicName + ' ' + displayName + ' ' + rewardNames.join(' '))
+      });
+    }
+
+    out.sort(function(a, b) {
+      var tierDiff = getRelicTierSortScore(a.name) - getRelicTierSortScore(b.name);
+      if (tierDiff !== 0) return tierDiff;
+      return String(a.displayName || a.name || '').localeCompare(String(b.displayName || b.name || ''));
+    });
+
+    return out;
+  }
+
+  function cacheRelicRewardsDirectory(entries) {
+    if (!Array.isArray(entries)) return;
+    for (var i = 0; i < entries.length; i++) {
+      var relic = entries[i] || {};
+      var relicName = String(relic.name || '').trim();
+      if (!relicName) continue;
+      primeRelicRewardsCache[relicName] = Array.isArray(relic.rewards) ? relic.rewards : [];
+    }
+  }
+
+  function saveRelicDirectoryCache(entries) {
+    try {
+      localStorage.setItem(RELIC_DIRECTORY_CACHE_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        relics: entries
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
+  function loadRelicDirectoryCache() {
+    try {
+      var raw = localStorage.getItem(RELIC_DIRECTORY_CACHE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.relics)) return null;
+      if (Date.now() - parsed.timestamp > RELIC_DIRECTORY_CACHE_TTL) return null;
+      return parsed.relics;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function ensureRelicDirectoryLoaded(forceRefresh) {
+    if (!forceRefresh && Array.isArray(relicDirectory) && relicDirectory.length > 0) return true;
+
+    if (!forceRefresh) {
+      var cached = loadRelicDirectoryCache();
+      if (cached) {
+        relicDirectory = cached;
+        cacheRelicRewardsDirectory(relicDirectory);
+        return true;
+      }
+    }
+
+    if (relicDirectoryPromise) {
+      try {
+        await relicDirectoryPromise;
+        return Array.isArray(relicDirectory) && relicDirectory.length > 0;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    relicDirectoryPromise = (async function() {
+      var resp = await fetch(API_URL);
+      if (!resp.ok) throw new Error('Failed to load relic catalog: HTTP ' + resp.status);
+      var data = await resp.json();
+
+      relicProjectionLookup = buildRelicProjectionLookup(data);
+      saveRelicLookupCache(relicProjectionLookup);
+
+      relicDirectory = buildRelicDirectory(data);
+      cacheRelicRewardsDirectory(relicDirectory);
+      saveRelicDirectoryCache(relicDirectory);
+    })();
+
+    try {
+      await relicDirectoryPromise;
+      return Array.isArray(relicDirectory) && relicDirectory.length > 0;
+    } catch (e) {
+      return false;
+    } finally {
+      relicDirectoryPromise = null;
+    }
+  }
+
+  function normalizeArcaneStatLines(rawStats) {
+    var out = [];
+    var seen = Object.create(null);
+    var stats = Array.isArray(rawStats) ? rawStats : [];
+
+    for (var i = 0; i < stats.length; i++) {
+      var raw = String(stats[i] || '');
+      if (!raw) continue;
+
+      var chunks = raw.split(/\r?\n+/);
+      for (var j = 0; j < chunks.length; j++) {
+        var clean = String(chunks[j] || '').replace(/\s+/g, ' ').trim();
+        if (!clean) continue;
+
+        var key = clean.toLowerCase();
+        if (seen[key]) continue;
+        seen[key] = true;
+        out.push(clean);
+      }
+    }
+
+    return out;
+  }
+
+  function buildArcaneDirectory(rawItems) {
+    var out = [];
+    var seen = Object.create(null);
+    if (!Array.isArray(rawItems)) return out;
+
+    for (var i = 0; i < rawItems.length; i++) {
+      var item = rawItems[i] || {};
+      var category = String(item.category || '').trim().toLowerCase();
+      var arcaneName = String(item.name || '').trim();
+      var uniqueName = String(item.uniqueName || arcaneName).trim();
+      if (category !== 'arcanes' || !arcaneName) continue;
+      var arcaneNameKey = normalizeSearchText(arcaneName);
+      if (!arcaneNameKey || arcaneNameKey === 'arcane') continue;
+
+      var typeLabel = String(item.type || 'Arcane').trim() || 'Arcane';
+      var rarityLabel = String(item.rarity || 'Unknown').trim() || 'Unknown';
+      var tradable = parseBooleanFlag(item.tradable) || parseBooleanFlag(item.tradeable);
+      var ranks = [];
+      var allStatLines = [];
+      var rawLevelStats = Array.isArray(item.levelStats) ? item.levelStats : [];
+
+      for (var r = 0; r < rawLevelStats.length; r++) {
+        var rankEntry = rawLevelStats[r] || {};
+        var lines = normalizeArcaneStatLines(rankEntry.stats);
+        if (lines.length === 0) continue;
+
+        for (var s = 0; s < lines.length; s++) {
+          allStatLines.push(lines[s]);
+        }
+
+        ranks.push({
+          rank: r,
+          label: 'Rank ' + r,
+          lines: lines
+        });
+      }
+
+      if (ranks.length === 0 || allStatLines.length === 0) continue;
+      if (seen[arcaneNameKey]) continue;
+      seen[arcaneNameKey] = uniqueName || arcaneNameKey;
+
+      var dropLocations = [];
+      var locationSeen = Object.create(null);
+      var drops = Array.isArray(item.drops) ? item.drops : [];
+      for (var d = 0; d < drops.length; d++) {
+        var location = String(drops[d] && drops[d].location || '').replace(/\s+/g, ' ').trim();
+        if (!location) continue;
+        var locationKey = location.toLowerCase();
+        if (locationSeen[locationKey]) continue;
+        locationSeen[locationKey] = true;
+        dropLocations.push(location);
+      }
+
+      var maxRank = Math.max(0, ranks.length - 1);
+      var previewLines = (ranks[ranks.length - 1] && Array.isArray(ranks[ranks.length - 1].lines) && ranks[ranks.length - 1].lines.length > 0
+        ? ranks[ranks.length - 1].lines
+        : allStatLines).slice(0, 2);
+
+      out.push({
+        uniqueName: uniqueName,
+        name: arcaneName,
+        type: typeLabel,
+        rarity: rarityLabel,
+        tradable: tradable,
+        imageName: String(item.imageName || ''),
+        ranks: ranks,
+        maxRank: maxRank,
+        previewLines: previewLines,
+        statLines: allStatLines,
+        dropCount: dropLocations.length,
+        dropLocations: dropLocations.slice(0, 3),
+        nameKey: arcaneNameKey,
+        typeKey: normalizeSearchText(typeLabel),
+        rarityKey: normalizeSearchText(rarityLabel),
+        statsSearchKey: normalizeSearchText(allStatLines.join(' ')),
+        dropsSearchKey: normalizeSearchText(dropLocations.join(' ')),
+        searchKey: normalizeSearchText(
+          arcaneName + ' ' + typeLabel + ' ' + rarityLabel + ' ' + allStatLines.join(' ') + ' ' + dropLocations.join(' ')
+        )
+      });
+    }
+
+    out.sort(function(a, b) {
+      var typeDiff = String(a.type || '').localeCompare(String(b.type || ''));
+      if (typeDiff !== 0) return typeDiff;
+
+      var rarityDiff = raritySortScore(b.rarity) - raritySortScore(a.rarity);
+      if (rarityDiff !== 0) return rarityDiff;
+
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+
+    return out;
+  }
+
+  function saveArcaneDirectoryCache(entries) {
+    try {
+      localStorage.setItem(ARCANE_DIRECTORY_CACHE_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        arcanes: entries
+      }));
+    } catch (e) { /* ignore */ }
+  }
+
+  function loadArcaneDirectoryCache() {
+    try {
+      var raw = localStorage.getItem(ARCANE_DIRECTORY_CACHE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || !Array.isArray(parsed.arcanes)) return null;
+      if (Date.now() - parsed.timestamp > ARCANE_DIRECTORY_CACHE_TTL) return null;
+      return parsed.arcanes;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function ensureArcaneDirectoryLoaded(forceRefresh) {
+    if (!forceRefresh && Array.isArray(arcaneDirectory) && arcaneDirectory.length > 0) return true;
+
+    if (!forceRefresh) {
+      var cached = loadArcaneDirectoryCache();
+      if (cached) {
+        arcaneDirectory = cached;
+        return true;
+      }
+    }
+
+    if (arcaneDirectoryPromise) {
+      try {
+        await arcaneDirectoryPromise;
+        return Array.isArray(arcaneDirectory) && arcaneDirectory.length > 0;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    arcaneDirectoryPromise = (async function() {
+      var resp = await fetch(API_URL);
+      if (!resp.ok) throw new Error('Failed to load arcane codex: HTTP ' + resp.status);
+      var data = await resp.json();
+      arcaneDirectory = buildArcaneDirectory(data);
+      saveArcaneDirectoryCache(arcaneDirectory);
+    })();
+
+    try {
+      await arcaneDirectoryPromise;
+      return Array.isArray(arcaneDirectory) && arcaneDirectory.length > 0;
+    } catch (e) {
+      return false;
+    } finally {
+      arcaneDirectoryPromise = null;
+    }
+  }
+
   function toPrimeNameMatchKey(name) {
     return String(name || '')
       .toLowerCase()
@@ -1933,6 +2674,7 @@
 
   function raritySortScore(rarity) {
     var value = String(rarity || '').toLowerCase();
+    if (value === 'legendary') return 4;
     if (value === 'rare') return 3;
     if (value === 'uncommon') return 2;
     if (value === 'common') return 1;
@@ -1948,27 +2690,7 @@
       var resp = await fetch('https://api.warframestat.us/items/' + encodeURIComponent(key));
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var item = await resp.json();
-      var rewards = Array.isArray(item && item.rewards) ? item.rewards : [];
-
-      var normalized = [];
-      for (var i = 0; i < rewards.length; i++) {
-        var reward = rewards[i] || {};
-        var rewardItem = reward.item || {};
-        var rewardName = String(rewardItem.name || '').trim();
-        if (!rewardName) continue;
-        normalized.push({
-          name: rewardName,
-          rarity: String(reward.rarity || 'Unknown'),
-          chance: typeof reward.chance === 'number' ? reward.chance : null
-        });
-      }
-
-      normalized.sort(function(a, b) {
-        var rarityDiff = raritySortScore(b.rarity) - raritySortScore(a.rarity);
-        if (rarityDiff !== 0) return rarityDiff;
-        return String(a.name || '').localeCompare(String(b.name || ''));
-      });
-
+      var normalized = extractRelicRewardsFromItem(item);
       primeRelicRewardsCache[key] = normalized;
       return normalized;
     } catch (err) {
@@ -2026,6 +2748,7 @@
       var relic = relics[i];
       var card = document.createElement('article');
       card.className = 'prime-relic-card';
+      card.tabIndex = 0;
 
       var title = document.createElement('h4');
       title.className = 'prime-relic-name';
@@ -2108,6 +2831,691 @@
         els.primeNextTitle.textContent = 'TBA';
       }
       stopPrimeCountdown();
+    }
+  }
+
+  function getRelicSearchMatches(relic, query) {
+    var normalizedQuery = normalizeSearchText(query);
+    if (!normalizedQuery) {
+      return { score: 0, matchedRewards: [] };
+    }
+
+    var tokens = normalizedQuery.split(' ').filter(Boolean);
+    var relicNameHit = relic.relicSearchKey.indexOf(normalizedQuery) !== -1;
+    var rewardNameHit = relic.rewardSearchKey.indexOf(normalizedQuery) !== -1;
+    var tokenHit = tokens.length > 0 && tokens.every(function(token) {
+      return relic.searchKey.indexOf(token) !== -1;
+    });
+
+    if (!relicNameHit && !rewardNameHit && !tokenHit) {
+      return null;
+    }
+
+    var matchedRewards = [];
+    for (var i = 0; i < relic.rewardNames.length; i++) {
+      var rewardName = relic.rewardNames[i];
+      var rewardKey = normalizeSearchText(rewardName);
+      var rewardMatches = rewardKey.indexOf(normalizedQuery) !== -1 || (tokens.length > 0 && tokens.every(function(token) {
+        return rewardKey.indexOf(token) !== -1;
+      }));
+      if (rewardMatches) {
+        matchedRewards.push(rewardName);
+      }
+      if (matchedRewards.length >= 3) break;
+    }
+
+    var score = 0;
+    if (relicNameHit) score += 400;
+    if (rewardNameHit) score += 250;
+    if (tokenHit) score += 100;
+    if (relic.relicSearchKey.indexOf(normalizedQuery) === 0) score += 40;
+
+    return {
+      score: score,
+      matchedRewards: matchedRewards
+    };
+  }
+
+  function getVisibleRelicResults() {
+    if (!Array.isArray(relicDirectory) || relicDirectory.length === 0) return [];
+    if (!normalizeSearchText(relicSearchQuery)) {
+      return relicDirectory.map(function(relic) {
+        return {
+          relic: relic,
+          score: 0,
+          matchedRewards: []
+        };
+      });
+    }
+
+    var results = [];
+    for (var i = 0; i < relicDirectory.length; i++) {
+      var relic = relicDirectory[i];
+      var matchInfo = getRelicSearchMatches(relic, relicSearchQuery);
+      if (!matchInfo) continue;
+      results.push({
+        relic: relic,
+        score: matchInfo.score,
+        matchedRewards: matchInfo.matchedRewards
+      });
+    }
+
+    results.sort(function(a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return String(a.relic.displayName || a.relic.name || '').localeCompare(String(b.relic.displayName || b.relic.name || ''));
+    });
+    return results;
+  }
+
+  function updateRelicResultsHeader(results) {
+    var totalCount = Array.isArray(relicDirectory) ? relicDirectory.length : 0;
+    var visibleCount = Array.isArray(results) ? results.length : 0;
+    var renderedCount = Math.min(visibleCount, relicVisibleCount);
+    var hasQuery = !!normalizeSearchText(relicSearchQuery);
+
+    if (els.relicsTotalCount) {
+      els.relicsTotalCount.textContent = totalCount ? totalCount.toLocaleString() : '0';
+    }
+    if (els.relicsResultsCount) {
+      els.relicsResultsCount.textContent = renderedCount.toLocaleString();
+    }
+    if (els.relicsCountText) {
+      els.relicsCountText.textContent = hasQuery
+        ? 'Showing ' + renderedCount.toLocaleString() + ' of ' + visibleCount.toLocaleString() + ' matches for "' + relicSearchQuery + '".'
+        : 'Showing ' + renderedCount.toLocaleString() + ' of ' + totalCount.toLocaleString() + ' relics in the full in-game reward table.';
+    }
+    if (els.relicsSearchSummary) {
+      els.relicsSearchSummary.textContent = hasQuery
+        ? 'Matches by relic name and reward name'
+        : 'Search by relic name, Warframe, weapon, or prime part';
+    }
+  }
+
+  function syncRelicSearchControls() {
+    if (els.relicSearchInput && els.relicSearchInput.value !== relicSearchQuery) {
+      els.relicSearchInput.value = relicSearchQuery;
+    }
+    if (els.relicSearchClear) {
+      els.relicSearchClear.classList.toggle('hidden', !relicSearchQuery);
+    }
+  }
+
+  function scrollRelicsToTop(smooth) {
+    if (!els.relicsContent) return;
+    if (smooth && typeof els.relicsContent.scrollTo === 'function') {
+      els.relicsContent.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    els.relicsContent.scrollTop = 0;
+  }
+
+  function scheduleRelicDirectoryRender(options) {
+    var opts = options || {};
+    if (opts.resetLimit) {
+      relicVisibleCount = RELIC_RENDER_BATCH_SIZE;
+    }
+    if (opts.resetScroll) {
+      scrollRelicsToTop(!!opts.smoothScroll);
+    }
+
+    if (relicRenderFrame && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(relicRenderFrame);
+      relicRenderFrame = 0;
+    }
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      relicRenderFrame = window.requestAnimationFrame(function() {
+        relicRenderFrame = 0;
+        renderRelicDirectory();
+      });
+      return;
+    }
+
+    renderRelicDirectory();
+  }
+
+  function renderRelicDirectory() {
+    if (!els.relicsGrid) return;
+
+    var results = getVisibleRelicResults();
+    var visibleResults = results.slice(0, relicVisibleCount);
+    syncRelicSearchControls();
+    updateRelicResultsHeader(results);
+    els.relicsGrid.textContent = '';
+
+    if (results.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'prime-empty';
+      empty.textContent = relicSearchQuery
+        ? 'No relics matched "' + relicSearchQuery + '". Try a broader item or relic name.'
+        : 'No relics are available right now.';
+      els.relicsGrid.appendChild(empty);
+      return;
+    }
+
+    var fragment = document.createDocumentFragment();
+
+    for (var i = 0; i < visibleResults.length; i++) {
+      var result = visibleResults[i];
+      var relic = result.relic;
+
+      var card = document.createElement('article');
+      card.className = 'prime-relic-card relic-directory-card';
+      card.tabIndex = 0;
+
+      var title = document.createElement('h4');
+      title.className = 'prime-relic-name';
+      title.textContent = relic.name;
+
+      var meta = document.createElement('div');
+      meta.className = 'prime-relic-cost';
+      meta.textContent = relic.rareRewardName
+        ? 'Rare reward: ' + relic.rareRewardName
+        : relic.rewardCount + ' rewards available';
+
+      var pillRow = document.createElement('div');
+      pillRow.className = 'relic-card-pill-row';
+
+      var tierPill = document.createElement('span');
+      tierPill.className = 'relic-card-pill';
+      tierPill.textContent = relic.tier;
+
+      var countPill = document.createElement('span');
+      countPill.className = 'relic-card-pill';
+      countPill.textContent = relic.rewardCount + ' rewards';
+
+      pillRow.appendChild(tierPill);
+      pillRow.appendChild(countPill);
+
+      var detail = document.createElement('div');
+      if (result.matchedRewards && result.matchedRewards.length > 0) {
+        detail.className = 'relic-card-match';
+
+        var label = document.createElement('span');
+        label.className = 'relic-card-match-label';
+        label.textContent = 'Matches:';
+
+        var matchText = document.createElement('span');
+        matchText.textContent = result.matchedRewards.join(', ');
+
+        detail.appendChild(label);
+        detail.appendChild(matchText);
+      } else {
+        detail.className = 'relic-card-preview';
+        detail.textContent = relic.rareRewardName
+          ? 'Hover to inspect all drops and drop chances.'
+          : 'Hover to inspect the full reward table.';
+      }
+
+      var spacer = document.createElement('div');
+      spacer.className = 'relic-card-spacer';
+
+      var hint = document.createElement('div');
+      hint.className = 'prime-relic-hint';
+      hint.textContent = 'Hover to see drops';
+
+      var hover = document.createElement('div');
+      hover.className = 'prime-relic-hover';
+      renderRelicRewards(hover, relic.rewards);
+
+      card.appendChild(title);
+      card.appendChild(meta);
+      card.appendChild(pillRow);
+      card.appendChild(detail);
+      card.appendChild(spacer);
+      card.appendChild(hint);
+      card.appendChild(hover);
+      fragment.appendChild(card);
+    }
+
+    if (results.length > visibleResults.length) {
+      var remaining = results.length - visibleResults.length;
+      var showMoreCard = document.createElement('article');
+      showMoreCard.className = 'prime-relic-card relic-directory-card relic-show-more-card';
+
+      var showMoreTitle = document.createElement('h4');
+      showMoreTitle.className = 'prime-relic-name';
+      showMoreTitle.textContent = 'More Relics Ready';
+
+      var showMoreCopy = document.createElement('p');
+      showMoreCopy.className = 'relic-show-more-copy';
+      showMoreCopy.textContent = 'Showing ' + visibleResults.length.toLocaleString() + ' of ' + results.length.toLocaleString() + ' matches. Load more results to keep browsing without freezing the tab.';
+
+      var showMoreBtn = document.createElement('button');
+      showMoreBtn.className = 'relic-show-more-btn';
+      showMoreBtn.type = 'button';
+      showMoreBtn.innerHTML = '<span class="material-icons-round">expand_more</span><span>Show ' + Math.min(RELIC_RENDER_BATCH_SIZE, remaining).toLocaleString() + ' More</span>';
+      showMoreBtn.addEventListener('click', function() {
+        relicVisibleCount += RELIC_RENDER_BATCH_SIZE;
+        scheduleRelicDirectoryRender({ resetScroll: false });
+      });
+
+      showMoreCard.appendChild(showMoreTitle);
+      showMoreCard.appendChild(showMoreCopy);
+      showMoreCard.appendChild(showMoreBtn);
+      fragment.appendChild(showMoreCard);
+    }
+
+    els.relicsGrid.appendChild(fragment);
+  }
+
+  async function loadRelicDirectory(forceRefresh) {
+    if (!els.relicsGrid) return;
+    if (!relicSearchQuery) {
+      relicVisibleCount = RELIC_RENDER_BATCH_SIZE;
+    }
+    syncRelicSearchControls();
+    scrollRelicsToTop(false);
+
+    if (!forceRefresh && Array.isArray(relicDirectory) && relicDirectory.length > 0) {
+      scheduleRelicDirectoryRender({ resetScroll: false });
+      return;
+    }
+
+    els.relicsGrid.innerHTML = '<div class="prime-loading">Loading relic catalog...</div>';
+    if (els.relicsSearchSummary) {
+      els.relicsSearchSummary.textContent = 'Building relic catalog...';
+    }
+
+    try {
+      var loaded = await ensureRelicDirectoryLoaded(!!forceRefresh);
+      if (!loaded) {
+        throw new Error('Relic catalog is unavailable right now.');
+      }
+      scheduleRelicDirectoryRender({ resetScroll: false });
+    } catch (err) {
+      var msg = err && err.message ? String(err.message) : 'Unknown error';
+      if (els.relicsGrid) {
+        els.relicsGrid.innerHTML = '<div class="prime-error">Failed to load relic catalog. ' + escapeHtml(msg) + '</div>';
+      }
+      if (els.relicsCountText) {
+        els.relicsCountText.textContent = 'Unable to load relic search right now.';
+      }
+      if (els.relicsSearchSummary) {
+        els.relicsSearchSummary.textContent = 'Try reopening the panel in a moment';
+      }
+      if (els.relicsTotalCount) {
+        els.relicsTotalCount.textContent = '--';
+      }
+      if (els.relicsResultsCount) {
+        els.relicsResultsCount.textContent = '--';
+      }
+    }
+  }
+
+  function getArcaneSearchMatches(arcane, query) {
+    var normalizedQuery = normalizeSearchText(query);
+    if (!normalizedQuery) {
+      return { score: 0, matchedLines: [] };
+    }
+
+    var tokens = normalizedQuery.split(' ').filter(Boolean);
+    var nameHit = arcane.nameKey.indexOf(normalizedQuery) !== -1;
+    var typeHit = arcane.typeKey.indexOf(normalizedQuery) !== -1;
+    var rarityHit = arcane.rarityKey.indexOf(normalizedQuery) !== -1;
+    var statsHit = arcane.statsSearchKey.indexOf(normalizedQuery) !== -1;
+    var dropHit = arcane.dropsSearchKey.indexOf(normalizedQuery) !== -1;
+    var tokenHit = tokens.length > 0 && tokens.every(function(token) {
+      return arcane.searchKey.indexOf(token) !== -1;
+    });
+
+    if (!nameHit && !typeHit && !rarityHit && !statsHit && !dropHit && !tokenHit) {
+      return null;
+    }
+
+    var matchedLines = [];
+    for (var i = 0; i < arcane.statLines.length; i++) {
+      var line = arcane.statLines[i];
+      var lineKey = normalizeSearchText(line);
+      var lineMatches = lineKey.indexOf(normalizedQuery) !== -1 || (tokens.length > 0 && tokens.every(function(token) {
+        return lineKey.indexOf(token) !== -1;
+      }));
+      if (!lineMatches) continue;
+      matchedLines.push(line);
+      if (matchedLines.length >= 2) break;
+    }
+
+    var score = 0;
+    if (nameHit) score += 500;
+    if (typeHit) score += 180;
+    if (rarityHit) score += 90;
+    if (statsHit) score += 260;
+    if (dropHit) score += 80;
+    if (tokenHit) score += 100;
+    if (arcane.nameKey.indexOf(normalizedQuery) === 0) score += 50;
+
+    return {
+      score: score,
+      matchedLines: matchedLines
+    };
+  }
+
+  function getVisibleArcaneResults() {
+    if (!Array.isArray(arcaneDirectory) || arcaneDirectory.length === 0) return [];
+    if (!normalizeSearchText(arcaneSearchQuery)) {
+      return arcaneDirectory.map(function(arcane) {
+        return {
+          arcane: arcane,
+          score: 0,
+          matchedLines: []
+        };
+      });
+    }
+
+    var results = [];
+    for (var i = 0; i < arcaneDirectory.length; i++) {
+      var arcane = arcaneDirectory[i];
+      var matchInfo = getArcaneSearchMatches(arcane, arcaneSearchQuery);
+      if (!matchInfo) continue;
+      results.push({
+        arcane: arcane,
+        score: matchInfo.score,
+        matchedLines: matchInfo.matchedLines
+      });
+    }
+
+    results.sort(function(a, b) {
+      if (b.score !== a.score) return b.score - a.score;
+      return String(a.arcane.name || '').localeCompare(String(b.arcane.name || ''));
+    });
+    return results;
+  }
+
+  function updateArcaneResultsHeader(results) {
+    var totalCount = Array.isArray(arcaneDirectory) ? arcaneDirectory.length : 0;
+    var visibleCount = Array.isArray(results) ? results.length : 0;
+    var renderedCount = Math.min(visibleCount, arcaneVisibleCount);
+    var hasQuery = !!normalizeSearchText(arcaneSearchQuery);
+    if (els.arcanesCountText) {
+      els.arcanesCountText.textContent = hasQuery
+        ? 'Showing ' + renderedCount.toLocaleString() + ' of ' + visibleCount.toLocaleString() + ' matches for "' + arcaneSearchQuery + '".'
+        : 'Showing ' + renderedCount.toLocaleString() + ' of ' + totalCount.toLocaleString() + ' arcanes with full rank breakdowns.';
+    }
+    if (els.arcanesSearchSummary) {
+      els.arcanesSearchSummary.textContent = hasQuery
+        ? 'Matches by name, slot type, rarity, effect text, or drop location'
+        : 'Search by arcane name, slot type, rarity, or effect text';
+    }
+  }
+
+  function syncArcaneSearchControls() {
+    if (els.arcaneSearchInput && els.arcaneSearchInput.value !== arcaneSearchQuery) {
+      els.arcaneSearchInput.value = arcaneSearchQuery;
+    }
+    if (els.arcaneSearchClear) {
+      els.arcaneSearchClear.classList.toggle('hidden', !arcaneSearchQuery);
+    }
+  }
+
+  function scrollArcanesToTop(smooth) {
+    if (!els.arcanesContent) return;
+    if (smooth && typeof els.arcanesContent.scrollTo === 'function') {
+      els.arcanesContent.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    els.arcanesContent.scrollTop = 0;
+  }
+
+  function scheduleArcaneDirectoryRender(options) {
+    var opts = options || {};
+    if (opts.resetLimit) {
+      arcaneVisibleCount = ARCANE_RENDER_BATCH_SIZE;
+    }
+    if (opts.resetScroll) {
+      scrollArcanesToTop(!!opts.smoothScroll);
+    }
+
+    if (arcaneRenderFrame && typeof window.cancelAnimationFrame === 'function') {
+      window.cancelAnimationFrame(arcaneRenderFrame);
+      arcaneRenderFrame = 0;
+    }
+
+    if (typeof window.requestAnimationFrame === 'function') {
+      arcaneRenderFrame = window.requestAnimationFrame(function() {
+        arcaneRenderFrame = 0;
+        renderArcaneDirectory();
+      });
+      return;
+    }
+
+    renderArcaneDirectory();
+  }
+
+  function renderArcaneRanks(hoverEl, ranks) {
+    if (!hoverEl) return;
+    hoverEl.textContent = '';
+
+    if (!Array.isArray(ranks) || ranks.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'prime-relic-empty';
+      empty.textContent = 'No rank data available.';
+      hoverEl.appendChild(empty);
+      return;
+    }
+
+    for (var i = 0; i < ranks.length; i++) {
+      var rank = ranks[i] || {};
+      var section = document.createElement('section');
+      section.className = 'arcane-hover-rank';
+
+      var label = document.createElement('div');
+      label.className = 'arcane-hover-rank-label';
+      label.textContent = rank.label || ('Rank ' + i);
+      section.appendChild(label);
+
+      var list = document.createElement('ul');
+      list.className = 'arcane-hover-rank-list';
+
+      var lines = Array.isArray(rank.lines) && rank.lines.length > 0 ? rank.lines : ['No stat data available.'];
+      for (var j = 0; j < lines.length; j++) {
+        var line = document.createElement('li');
+        line.className = 'arcane-hover-rank-line';
+        line.textContent = lines[j];
+        list.appendChild(line);
+      }
+
+      section.appendChild(list);
+      hoverEl.appendChild(section);
+    }
+  }
+
+  function renderArcaneDirectory() {
+    if (!els.arcanesGrid) return;
+
+    var results = getVisibleArcaneResults();
+    var visibleResults = results.slice(0, arcaneVisibleCount);
+    syncArcaneSearchControls();
+    updateArcaneResultsHeader(results);
+    els.arcanesGrid.textContent = '';
+
+    if (results.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'prime-empty';
+      empty.textContent = arcaneSearchQuery
+        ? 'No arcanes matched "' + arcaneSearchQuery + '". Try a broader name or stat search.'
+        : 'No arcanes are available right now.';
+      els.arcanesGrid.appendChild(empty);
+      return;
+    }
+
+    var fragment = document.createDocumentFragment();
+
+    for (var i = 0; i < visibleResults.length; i++) {
+      var result = visibleResults[i];
+      var arcane = result.arcane;
+
+      var card = document.createElement('article');
+      card.className = 'prime-relic-card arcane-directory-card';
+      card.tabIndex = 0;
+
+      var head = document.createElement('div');
+      head.className = 'arcane-card-head';
+
+      var media = document.createElement('div');
+      media.className = 'arcane-card-media';
+      if (arcane.imageName) {
+        var img = document.createElement('img');
+        img.className = 'arcane-card-icon';
+        img.src = getChecklistImageUrl(arcane.imageName);
+        img.alt = arcane.name;
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        media.appendChild(img);
+      } else {
+        var fallback = document.createElement('span');
+        fallback.className = 'material-icons-round arcane-card-icon-fallback';
+        fallback.textContent = 'diamond';
+        media.appendChild(fallback);
+      }
+
+      var body = document.createElement('div');
+      body.className = 'arcane-card-body';
+
+      var title = document.createElement('h4');
+      title.className = 'prime-relic-name';
+      title.textContent = arcane.name;
+
+      var meta = document.createElement('div');
+      meta.className = 'prime-relic-cost';
+      meta.textContent = arcane.type + ' | ' + arcane.rarity;
+
+      body.appendChild(title);
+      body.appendChild(meta);
+      head.appendChild(media);
+      head.appendChild(body);
+
+      var pillRow = document.createElement('div');
+      pillRow.className = 'arcane-card-pill-row';
+
+      var rankPill = document.createElement('span');
+      rankPill.className = 'arcane-card-pill';
+      rankPill.textContent = 'Max Rank ' + arcane.maxRank;
+
+      var rarityPill = document.createElement('span');
+      rarityPill.className = 'arcane-card-pill';
+      rarityPill.textContent = arcane.rarity;
+
+      var tradePill = document.createElement('span');
+      tradePill.className = 'arcane-card-pill' + (arcane.tradable ? ' is-tradable' : ' is-untradable');
+      tradePill.textContent = arcane.tradable ? 'Tradable' : 'Untradable';
+
+      pillRow.appendChild(rankPill);
+      pillRow.appendChild(rarityPill);
+      pillRow.appendChild(tradePill);
+
+      var detail = document.createElement('div');
+      if (result.matchedLines && result.matchedLines.length > 0) {
+        detail.className = 'arcane-card-match';
+
+        var label = document.createElement('span');
+        label.className = 'arcane-card-match-label';
+        label.textContent = 'Matched:';
+
+        var matchText = document.createElement('span');
+        matchText.textContent = result.matchedLines.join(' / ');
+
+        detail.appendChild(label);
+        detail.appendChild(matchText);
+      } else {
+        detail.className = 'arcane-card-preview';
+        detail.textContent = arcane.previewLines && arcane.previewLines.length > 0
+          ? arcane.previewLines.join(' / ')
+          : 'Hover to inspect every arcane rank.';
+      }
+
+      var source = document.createElement('div');
+      source.className = 'arcane-card-source';
+      source.textContent = arcane.dropLocations && arcane.dropLocations.length > 0
+        ? 'Drops: ' + arcane.dropLocations.join(' | ')
+        : 'Rank entries: ' + arcane.ranks.length;
+
+      var spacer = document.createElement('div');
+      spacer.className = 'relic-card-spacer';
+
+      var hint = document.createElement('div');
+      hint.className = 'prime-relic-hint';
+      hint.textContent = 'Hover to see ranks';
+
+      var hover = document.createElement('div');
+      hover.className = 'prime-relic-hover arcane-hover';
+      renderArcaneRanks(hover, arcane.ranks);
+
+      card.appendChild(head);
+      card.appendChild(pillRow);
+      card.appendChild(detail);
+      card.appendChild(source);
+      card.appendChild(spacer);
+      card.appendChild(hint);
+      card.appendChild(hover);
+      fragment.appendChild(card);
+    }
+
+    if (results.length > visibleResults.length) {
+      var remaining = results.length - visibleResults.length;
+      var showMoreCard = document.createElement('article');
+      showMoreCard.className = 'prime-relic-card arcane-directory-card arcane-show-more-card';
+
+      var showMoreTitle = document.createElement('h4');
+      showMoreTitle.className = 'prime-relic-name';
+      showMoreTitle.textContent = 'More Arcanes Ready';
+
+      var showMoreCopy = document.createElement('p');
+      showMoreCopy.className = 'arcane-show-more-copy';
+      showMoreCopy.textContent = 'Showing ' + visibleResults.length.toLocaleString() + ' of ' + results.length.toLocaleString() + ' matches. Load more without freezing the panel.';
+
+      var showMoreBtn = document.createElement('button');
+      showMoreBtn.className = 'arcane-show-more-btn';
+      showMoreBtn.type = 'button';
+      showMoreBtn.innerHTML = '<span class="material-icons-round">expand_more</span><span>Show ' + Math.min(ARCANE_RENDER_BATCH_SIZE, remaining).toLocaleString() + ' More</span>';
+      showMoreBtn.addEventListener('click', function() {
+        arcaneVisibleCount += ARCANE_RENDER_BATCH_SIZE;
+        scheduleArcaneDirectoryRender({ resetScroll: false });
+      });
+
+      showMoreCard.appendChild(showMoreTitle);
+      showMoreCard.appendChild(showMoreCopy);
+      showMoreCard.appendChild(showMoreBtn);
+      fragment.appendChild(showMoreCard);
+    }
+
+    els.arcanesGrid.appendChild(fragment);
+  }
+
+  async function loadArcaneDirectory(forceRefresh) {
+    if (!els.arcanesGrid) return;
+    if (!normalizeSearchText(arcaneSearchQuery)) {
+      arcaneVisibleCount = ARCANE_RENDER_BATCH_SIZE;
+    }
+    syncArcaneSearchControls();
+    scrollArcanesToTop(false);
+
+    if (!forceRefresh && Array.isArray(arcaneDirectory) && arcaneDirectory.length > 0) {
+      scheduleArcaneDirectoryRender({ resetScroll: false });
+      return;
+    }
+
+    els.arcanesGrid.innerHTML = '<div class="prime-loading">Loading arcane codex...</div>';
+    if (els.arcanesSearchSummary) {
+      els.arcanesSearchSummary.textContent = 'Building arcane codex...';
+    }
+
+    try {
+      var loaded = await ensureArcaneDirectoryLoaded(!!forceRefresh);
+      if (!loaded) {
+        throw new Error('Arcane codex is unavailable right now.');
+      }
+      scheduleArcaneDirectoryRender({ resetScroll: false });
+    } catch (err) {
+      var msg = err && err.message ? String(err.message) : 'Unknown error';
+      if (els.arcanesGrid) {
+        els.arcanesGrid.innerHTML = '<div class="prime-error">Failed to load arcane codex. ' + escapeHtml(msg) + '</div>';
+      }
+      if (els.arcanesCountText) {
+        els.arcanesCountText.textContent = 'Unable to load arcane search right now.';
+      }
+      if (els.arcanesSearchSummary) {
+        els.arcanesSearchSummary.textContent = 'Try reopening the panel in a moment';
+      }
     }
   }
 
@@ -2236,21 +3644,25 @@
     var isInfo = tab === 'info';
     var isMission = tab === 'mission';
     var isResources = tab === 'resources';
+    var isWiki = tab === 'wiki';
     var isBuild = tab === 'build';
 
     els.itemInfoTabInfo.classList.toggle('active', isInfo);
     els.itemInfoTabMission.classList.toggle('active', isMission);
     els.itemInfoTabResources.classList.toggle('active', isResources);
+    if (els.itemInfoTabWiki) els.itemInfoTabWiki.classList.toggle('active', isWiki);
     if (els.itemInfoTabBuild) els.itemInfoTabBuild.classList.toggle('active', isBuild);
 
     els.itemInfoTabInfo.setAttribute('aria-selected', isInfo ? 'true' : 'false');
     els.itemInfoTabMission.setAttribute('aria-selected', isMission ? 'true' : 'false');
     els.itemInfoTabResources.setAttribute('aria-selected', isResources ? 'true' : 'false');
+    if (els.itemInfoTabWiki) els.itemInfoTabWiki.setAttribute('aria-selected', isWiki ? 'true' : 'false');
     if (els.itemInfoTabBuild) els.itemInfoTabBuild.setAttribute('aria-selected', isBuild ? 'true' : 'false');
 
     els.itemInfoPaneInfo.classList.toggle('hidden', !isInfo);
     els.itemInfoPaneMission.classList.toggle('hidden', !isMission);
     els.itemInfoPaneResources.classList.toggle('hidden', !isResources);
+    if (els.itemInfoPaneWiki) els.itemInfoPaneWiki.classList.toggle('hidden', !isWiki);
     if (els.itemInfoPaneBuild) els.itemInfoPaneBuild.classList.toggle('hidden', !isBuild);
   }
 
@@ -2279,6 +3691,59 @@
       block.appendChild(value);
       els.itemInfoSummary.appendChild(block);
     }
+  }
+
+  function findItemByUniqueName(uniqueName) {
+    var target = String(uniqueName || '').trim();
+    if (!target) return null;
+    for (var i = 0; i < allItems.length; i++) {
+      if (allItems[i] && allItems[i].uniqueName === target) {
+        return allItems[i];
+      }
+    }
+    return null;
+  }
+
+  function syncItemInfoModalContent(item, options) {
+    var config = options || {};
+    if (!item) return;
+
+    currentItemInfo = item;
+    els.itemInfoName.textContent = item.name || 'Item';
+    els.itemInfoImg.src = getChecklistImageUrl(item.imageName);
+    els.itemInfoImg.alt = item.name || 'Item';
+    els.itemInfoDescription.textContent = item.description || 'No description available.';
+    updateItemInfoPrimeStatus(item);
+
+    if (els.itemInfoMarketBtn) {
+      var canOpenMarket = tradeModeEnabled && !!item.tradable;
+      els.itemInfoMarketBtn.classList.toggle('hidden', !canOpenMarket);
+      els.itemInfoMarketBtn.disabled = !canOpenMarket;
+    }
+
+    renderSummary(item);
+    if (!config.preserveActiveTab) {
+      setActiveInfoTab('info');
+    }
+    updateWikiPaneForCurrentItem();
+    populateInfoList(els.itemInfoFarmList, buildFarmEntries(item), 'No farm source data found.');
+    populateCraftInfoList(els.itemInfoCraftList, item);
+
+    if (config.prefetchWiki !== false) {
+      prefetchWikiArticle(item);
+    }
+  }
+
+  function refreshCurrentItemInfoFromLatestData() {
+    if (!currentItemInfo || !els.itemInfoModal || els.itemInfoModal.classList.contains('hidden')) return;
+
+    var latestItem = findItemByUniqueName(currentItemInfo.uniqueName);
+    if (!latestItem) return;
+
+    syncItemInfoModalContent(latestItem, {
+      preserveActiveTab: true,
+      prefetchWiki: false
+    });
   }
 
   function appendEmptyInfoRow(container, text) {
@@ -2548,37 +4013,163 @@
     }
   }
 
+  function isWikiTabActive() {
+    return !!(els.itemInfoTabWiki && els.itemInfoTabWiki.classList.contains('active'));
+  }
+
+  function setWikiPaneState(state, message) {
+    if (!els.itemInfoWikiState || !els.itemInfoWikiContent) return;
+
+    els.itemInfoWikiState.className = 'item-info-wiki-state';
+    if (state) els.itemInfoWikiState.classList.add('is-' + state);
+
+    var text = String(message || '').trim();
+    els.itemInfoWikiState.textContent = text;
+    els.itemInfoWikiState.classList.toggle('hidden', !text);
+  }
+
+  function renderWikiPaneContent(entry) {
+    if (!els.itemInfoWikiContent) return;
+
+    els.itemInfoWikiContent.textContent = '';
+
+    var source = document.createElement('div');
+    source.className = 'item-info-wiki-source';
+    source.textContent = 'Content from Warframe Wiki';
+
+    var article = document.createElement('div');
+    article.className = 'item-info-wiki-article';
+    article.innerHTML = entry && entry.html ? entry.html : '';
+    applyAppTradeStatusToWikiArticle(article, currentItemInfo);
+
+    els.itemInfoWikiContent.appendChild(source);
+    els.itemInfoWikiContent.appendChild(article);
+    els.itemInfoWikiContent.classList.remove('hidden');
+    setWikiPaneState('', '');
+  }
+
+  function updateWikiPaneForCurrentItem() {
+    if (!els.itemInfoWikiContent) return;
+
+    var entry = currentItemInfo ? getWikiCacheEntry(currentItemInfo) : null;
+    if (entry && entry.status === 'ready' && entry.html) {
+      renderWikiPaneContent(entry);
+      return;
+    }
+
+    els.itemInfoWikiContent.textContent = '';
+    els.itemInfoWikiContent.classList.add('hidden');
+
+    if (entry && entry.status === 'loading') {
+      setWikiPaneState('loading', 'Fetching article from Warframe Wiki...');
+      return;
+    }
+
+    if (entry && entry.status === 'error') {
+      setWikiPaneState('error', entry.message || 'Unable to load wiki content right now.');
+      return;
+    }
+
+    setWikiPaneState('idle', 'Open the Wiki tab to load the full article for this item.');
+  }
+
+  async function fetchWikiArticle(item) {
+    var cacheKey = getWikiCacheKey(item);
+    var existing = getWikiCacheEntry(item);
+    if (existing) {
+      if (existing.status === 'loading' && existing.promise) return existing.promise;
+      if (existing.status === 'ready' && existing.html) return existing;
+    }
+
+    if (!cacheKey) {
+      return {
+        status: 'error',
+        fetchedAt: Date.now(),
+        message: 'This item does not have a wiki page title.'
+      };
+    }
+
+    var pending = (async function() {
+      try {
+        var resp = await fetch(buildWikiApiUrl(item), { cache: 'no-store' });
+        if (!resp.ok) throw new Error('Warframe Wiki returned HTTP ' + resp.status + '.');
+
+        var json = await resp.json();
+        if (json && json.error) {
+          throw new Error(String(json.error.info || json.error.code || 'Wiki page could not be loaded.'));
+        }
+
+        var parsed = json && json.parse ? json.parse : null;
+        var html = sanitizeWikiArticleHtml(parsed && parsed.text ? parsed.text : '');
+        if (!html) throw new Error('Warframe Wiki did not return article content for this item.');
+
+        var readyEntry = {
+          status: 'ready',
+          fetchedAt: Date.now(),
+          title: parsed && parsed.title ? parsed.title : getWikiPageTitle(item),
+          url: buildWikiUrl(item),
+          html: html
+        };
+
+        wikiArticleCache[cacheKey] = readyEntry;
+        return readyEntry;
+      } catch (err) {
+        var message = err && err.message ? err.message : 'Unable to load wiki content right now.';
+        var errorEntry = {
+          status: 'error',
+          fetchedAt: Date.now(),
+          title: getWikiPageTitle(item),
+          url: buildWikiUrl(item),
+          message: message
+        };
+
+        wikiArticleCache[cacheKey] = errorEntry;
+        return errorEntry;
+      } finally {
+        if (currentItemInfo && getWikiCacheKey(currentItemInfo) === cacheKey && isWikiTabActive()) {
+          updateWikiPaneForCurrentItem();
+        }
+      }
+    })();
+
+    wikiArticleCache[cacheKey] = {
+      status: 'loading',
+      fetchedAt: Date.now(),
+      title: getWikiPageTitle(item),
+      url: buildWikiUrl(item),
+      promise: pending
+    };
+
+    return pending;
+  }
+
+  function prefetchWikiArticle(item) {
+    var entry = getWikiCacheEntry(item);
+    if (entry && (entry.status === 'loading' || entry.status === 'ready')) return;
+    fetchWikiArticle(item);
+  }
+
+  function openWikiTabForCurrentItem() {
+    setActiveInfoTab('wiki');
+    updateWikiPaneForCurrentItem();
+    if (currentItemInfo) fetchWikiArticle(currentItemInfo);
+  }
+
   function openItemInfoModal(item) {
     if (!els.itemInfoModal) return;
-    currentItemInfo = item;
-    els.itemInfoName.textContent = item.name || 'Item';
-    els.itemInfoImg.src = getChecklistImageUrl(item.imageName);
-    els.itemInfoImg.alt = item.name || 'Item';
-    els.itemInfoDescription.textContent = item.description || 'No description available.';
-    if (els.itemInfoWikiBtn) {
-      var wikiUrl = buildWikiUrl(item);
-      els.itemInfoWikiBtn.classList.toggle('hidden', !wikiUrl);
-      els.itemInfoWikiBtn.disabled = !wikiUrl;
-      els.itemInfoWikiBtn.dataset.url = wikiUrl;
-    }
-    if (els.itemInfoMarketBtn) {
-      var canOpenMarket = tradeModeEnabled && !!item.tradable;
-      els.itemInfoMarketBtn.classList.toggle('hidden', !canOpenMarket);
-      els.itemInfoMarketBtn.disabled = !canOpenMarket;
-    }
-    renderSummary(item);
-    setActiveInfoTab('info');
-
-    populateInfoList(els.itemInfoFarmList, buildFarmEntries(item), 'No farm source data found.');
-    populateCraftInfoList(els.itemInfoCraftList, item);
-
+    syncItemInfoModalContent(item, {
+      preserveActiveTab: false,
+      prefetchWiki: true
+    });
     els.itemInfoModal.classList.remove('hidden');
   }
 
   function closeItemInfoModal() {
     if (!els.itemInfoModal) return;
     els.itemInfoModal.classList.add('hidden');
+    updateItemInfoPrimeStatus(null);
     currentItemInfo = null;
+    updateWikiPaneForCurrentItem();
   }
 
   function ensureArray(value) {
@@ -3878,6 +5469,78 @@
     return hasPrefix && isWeaponCategory;
   }
 
+  function normalizeApiItems(data) {
+    relicProjectionLookup = buildRelicProjectionLookup(data);
+    saveRelicLookupCache(relicProjectionLookup);
+    relicDirectory = buildRelicDirectory(data);
+    cacheRelicRewardsDirectory(relicDirectory);
+    saveRelicDirectoryCache(relicDirectory);
+
+    return data
+      .filter(function(item) { return item.masterable === true || item.category === 'Mods' || isMasterableAmpItem(item); })
+      .map(normalizeItem)
+      .filter(function(item) { return !!item.uniqueName && !!item.name; })
+      .sort(function(a, b) { return a.name.localeCompare(b.name); });
+  }
+
+  async function fetchLatestItemsFromApi() {
+    const response = await fetch(API_URL);
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    const normalizedItems = normalizeApiItems(data);
+    await enrichItemsTradability(normalizedItems);
+    return normalizedItems;
+  }
+
+  function areItemsEquivalent(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+
+    for (var i = 0; i < left.length; i++) {
+      var a = left[i] || {};
+      var b = right[i] || {};
+      if (a.uniqueName !== b.uniqueName) return false;
+      if (a.name !== b.name) return false;
+      if (a.category !== b.category) return false;
+      if (a.type !== b.type) return false;
+      if (!!a.tradable !== !!b.tradable) return false;
+      if (!!a.isPrime !== !!b.isPrime) return false;
+      if (!!a.vaulted !== !!b.vaulted) return false;
+      if (!!a.hasVaultedStatus !== !!b.hasVaultedStatus) return false;
+      if ((a.imageName || '') !== (b.imageName || '')) return false;
+      if ((a.description || '') !== (b.description || '')) return false;
+      if ((a.masteryReq || 0) !== (b.masteryReq || 0)) return false;
+    }
+
+    return true;
+  }
+
+  function applyLatestItems(items, initialLoad) {
+    var changed = !areItemsEquivalent(allItems, items);
+    allItems = items;
+    saveToCache(allItems);
+
+    if (initialLoad) {
+      onItemsLoaded();
+      return;
+    }
+
+    refreshCurrentItemInfoFromLatestData();
+
+    if (!changed) return;
+    updateCounts();
+    applyFilters();
+    updateStats();
+  }
+
+  async function refreshItemsInBackground() {
+    try {
+      var latestItems = await fetchLatestItemsFromApi();
+      applyLatestItems(latestItems, false);
+    } catch (err) {
+      console.warn('Background item refresh failed:', err);
+    }
+  }
+
   function getItemXP(item) {
     var type = String(item.type || '').toLowerCase();
     if (item.category === 'Mods') return 0;
@@ -3892,7 +5555,7 @@
   }
 
   function isMasteryRelevantItem(item) {
-    return !!item && item.category !== 'Mods';
+    return !!item && item.category !== 'Mods' && item.masterable === true;
   }
 
   // ---------- Data Loading ----------
@@ -3902,28 +5565,15 @@
       allItems = cached;
       ensureRelicLookupLoaded().catch(function() { /* ignore lookup preload failure */ });
       await enrichItemsTradability(allItems);
+      saveToCache(allItems);
       onItemsLoaded();
+      refreshItemsInBackground();
       return;
     }
 
     try {
-      const response = await fetch(API_URL);
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      const data = await response.json();
-
-      relicProjectionLookup = buildRelicProjectionLookup(data);
-      saveRelicLookupCache(relicProjectionLookup);
-
-      allItems = data
-        .filter(function(item) { return item.masterable === true || item.category === 'Mods'; })
-        .map(normalizeItem)
-        .filter(function(item) { return !!item.uniqueName && !!item.name; })
-        .sort(function(a, b) { return a.name.localeCompare(b.name); });
-
-      await enrichItemsTradability(allItems);
-
-      saveToCache(allItems);
-      onItemsLoaded();
+      const latestItems = await fetchLatestItemsFromApi();
+      applyLatestItems(latestItems, true);
     } catch (err) {
       console.error('Failed to fetch items:', err);
       els.loadingContainer.textContent = '';
@@ -4164,17 +5814,19 @@
   }
 
   function applyFilters() {
+    var normalizedSearchQuery = normalizeSearchText(searchQuery);
+
     filteredItems = allItems.filter(function(item) {
       if (currentCategory === 'all' && item.category === 'Mods') return false;
       if (currentCategory !== 'all' && item.category !== currentCategory) return false;
       if (currentFilter === 'mastered' && !masteredSet.has(item.uniqueName)) return false;
       if (currentFilter === 'unmastered' && masteredSet.has(item.uniqueName)) return false;
-      if (searchQuery && item.name.toLowerCase().indexOf(searchQuery.toLowerCase()) === -1) return false;
+      if (normalizedSearchQuery && normalizeSearchText(item.name).indexOf(normalizedSearchQuery) === -1) return false;
       return true;
     });
 
+    modVisibleCount = MOD_RENDER_BATCH_SIZE;
     renderItems();
-    updateCategoryHeader();
   }
 
   function createItemCard(item, index) {
@@ -4267,6 +5919,46 @@
     return card;
   }
 
+  function isModBatchingActive() {
+    return currentCategory === 'Mods';
+  }
+
+  function getVisibleChecklistItems() {
+    if (!isModBatchingActive()) return filteredItems;
+    return filteredItems.slice(0, modVisibleCount);
+  }
+
+  function appendModsShowMoreCard(fragment, renderedCount, totalCount) {
+    var remaining = Math.max(0, totalCount - renderedCount);
+    if (remaining <= 0) return;
+
+    var showMoreCard = document.createElement('div');
+    showMoreCard.className = 'item-card items-show-more-card';
+
+    var showMoreTitle = document.createElement('div');
+    showMoreTitle.className = 'items-show-more-title';
+    showMoreTitle.textContent = 'More Mods Ready';
+
+    var showMoreCopy = document.createElement('div');
+    showMoreCopy.className = 'items-show-more-copy';
+    showMoreCopy.textContent = remaining.toLocaleString() + ' more mods are waiting below. Load the next batch when you are ready.';
+
+    var showMoreBtn = document.createElement('button');
+    showMoreBtn.className = 'items-show-more-btn';
+    showMoreBtn.type = 'button';
+    showMoreBtn.innerHTML = '<span class="material-icons-round">expand_more</span><span>Show ' + Math.min(MOD_RENDER_BATCH_SIZE, remaining).toLocaleString() + ' More</span>';
+    showMoreBtn.addEventListener('click', function(evt) {
+      evt.stopPropagation();
+      modVisibleCount += MOD_RENDER_BATCH_SIZE;
+      renderItems();
+    });
+
+    showMoreCard.appendChild(showMoreTitle);
+    showMoreCard.appendChild(showMoreCopy);
+    showMoreCard.appendChild(showMoreBtn);
+    fragment.appendChild(showMoreCard);
+  }
+
   function renderItems() {
     // Remove old cards
     var existingCards = els.itemsGrid.querySelectorAll('.item-card');
@@ -4280,11 +5972,16 @@
       els.emptyState.classList.add('hidden');
     }
 
+    var visibleItems = getVisibleChecklistItems();
     var fragment = document.createDocumentFragment();
-    for (var j = 0; j < filteredItems.length; j++) {
-      fragment.appendChild(createItemCard(filteredItems[j], j));
+    for (var j = 0; j < visibleItems.length; j++) {
+      fragment.appendChild(createItemCard(visibleItems[j], j));
+    }
+    if (isModBatchingActive()) {
+      appendModsShowMoreCard(fragment, visibleItems.length, filteredItems.length);
     }
     els.itemsGrid.appendChild(fragment);
+    updateCategoryHeader();
   }
 
   function updateCategoryHeader() {
@@ -4294,6 +5991,7 @@
       'Primary': 'Primary Weapons',
       'Secondary': 'Secondary Weapons',
       'Melee': 'Melee Weapons',
+      'Amps': 'Amps',
       'Companions': 'Companions',
       'Vehicles': 'Vehicles',
       'Sentinels': 'Sentinels',
@@ -4308,6 +6006,11 @@
         if (allItems[i].tradable) tradableCount++;
       }
       els.categoryItemCount.textContent = filteredItems.length + ' items • ' + tradableCount + ' tradable';
+      return;
+    }
+
+    if (isModBatchingActive() && filteredItems.length > MOD_RENDER_BATCH_SIZE) {
+      els.categoryItemCount.textContent = filteredItems.length + ' items - showing ' + Math.min(filteredItems.length, modVisibleCount).toLocaleString();
       return;
     }
 
@@ -4355,14 +6058,25 @@
     updateCalculator();
   }
 
-  async function openGitHubRepo() {
+  async function openExternalUrl(url) {
+    if (!url) return;
+
     if (window.electronAPI && window.electronAPI.openExternal) {
       try {
-        await window.electronAPI.openExternal(REPO_URL);
+        await window.electronAPI.openExternal(url);
         return;
       } catch (e) { /* fall through */ }
     }
-    window.open(REPO_URL, '_blank', 'noopener');
+
+    window.open(url, '_blank', 'noopener');
+  }
+
+  async function openGitHubRepo() {
+    await openExternalUrl(REPO_URL);
+  }
+
+  async function openTelegramContact() {
+    await openExternalUrl(TELEGRAM_CONTACT_URL);
   }
 
   function getMRFromXP(xp) {
@@ -4427,6 +6141,53 @@
     }
   }
 
+  function normalizeThemeId(rawThemeId) {
+    var themeId = String(rawThemeId || '').trim().toLowerCase();
+    if (!themeId || !Object.prototype.hasOwnProperty.call(APP_THEMES, themeId)) {
+      return DEFAULT_APP_THEME;
+    }
+    return themeId;
+  }
+
+  function getThemeMeta(themeId) {
+    return APP_THEMES[normalizeThemeId(themeId)] || APP_THEMES[DEFAULT_APP_THEME];
+  }
+
+  function updateThemeSettingUI(themeId) {
+    var normalizedThemeId = normalizeThemeId(themeId);
+    var themeMeta = getThemeMeta(normalizedThemeId);
+
+    if (els.settingsThemeCurrent) {
+      els.settingsThemeCurrent.textContent = themeMeta.label;
+    }
+
+    if (!els.themeOptions || !els.themeOptions.length) return;
+    els.themeOptions.forEach(function(button) {
+      var buttonThemeId = normalizeThemeId(button.getAttribute('data-theme'));
+      var isActive = buttonThemeId === normalizedThemeId;
+      button.classList.toggle('is-active', isActive);
+      button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  }
+
+  function applyTheme(themeId, persist) {
+    var normalizedThemeId = normalizeThemeId(themeId);
+    currentThemeId = normalizedThemeId;
+    document.documentElement.setAttribute('data-theme', normalizedThemeId);
+
+    if (persist !== false) {
+      localStorage.setItem(APP_THEME_KEY, normalizedThemeId);
+    }
+
+    updateThemeSettingUI(normalizedThemeId);
+    return normalizedThemeId;
+  }
+
+  function initThemeSetting() {
+    var storedThemeId = normalizeThemeId(localStorage.getItem(APP_THEME_KEY) || document.documentElement.getAttribute('data-theme'));
+    applyTheme(storedThemeId, false);
+  }
+
   async function initAlwaysOnTopSetting() {
     var enabled = localStorage.getItem(ALWAYS_ON_TOP_KEY) === '1';
     if (els.alwaysOnTopToggle) {
@@ -4488,6 +6249,44 @@
     }
     if (els.settingsUpdateDetails && details) {
       els.settingsUpdateDetails.textContent = details;
+    }
+    if (els.mainMenuUpdateDetails && details) {
+      els.mainMenuUpdateDetails.textContent = details;
+    }
+    if (els.mainMenuUpdateBtn) {
+      els.mainMenuUpdateBtn.title = details || text || 'Check for Updates';
+    }
+  }
+
+  function setMainMenuUpdateButtonState(options) {
+    var config = options || {};
+    var action = config.action ? String(config.action) : 'check';
+    var text = config.text ? String(config.text) : 'Check for Updates';
+    var icon = config.icon ? String(config.icon) : 'system_update_alt';
+    var kind = config.kind ? String(config.kind) : '';
+    var disabled = !!config.disabled;
+    var details = config.details ? String(config.details) : '';
+
+    updateMenuAction = action;
+
+    if (els.mainMenuUpdateBtn) {
+      els.mainMenuUpdateBtn.disabled = disabled;
+      els.mainMenuUpdateBtn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+      els.mainMenuUpdateBtn.dataset.action = action;
+      els.mainMenuUpdateBtn.classList.remove('is-checking', 'is-up-to-date', 'is-outdated', 'is-error', 'is-downloading');
+      if (kind) {
+        els.mainMenuUpdateBtn.classList.add(kind);
+      }
+      els.mainMenuUpdateBtn.title = details || text;
+    }
+    if (els.mainMenuUpdateText) {
+      els.mainMenuUpdateText.textContent = text;
+    }
+    if (els.mainMenuUpdateDetails && details) {
+      els.mainMenuUpdateDetails.textContent = details;
+    }
+    if (els.mainMenuUpdateIcon) {
+      els.mainMenuUpdateIcon.textContent = icon;
     }
   }
 
@@ -4556,6 +6355,13 @@
     if (type === 'checking-for-update') {
       updateAvailableForDownload = false;
       setDownloadUpdateButtonVisible(false, true);
+      setMainMenuUpdateButtonState({
+        action: 'check',
+        disabled: true,
+        text: 'Checking...',
+        icon: 'sync',
+        kind: 'is-checking'
+      });
       setUpdateStatus('is-checking', 'checking...', 'Checking GitHub Releases for update metadata...');
       return;
     }
@@ -4564,6 +6370,13 @@
       updateAvailableForDownload = true;
       var nextVersion = payload && payload.version ? payload.version : 'latest';
       setDownloadUpdateButtonVisible(true, false, 'Download Update');
+      setMainMenuUpdateButtonState({
+        action: 'download',
+        disabled: false,
+        text: 'Download Update',
+        icon: 'system_update_alt',
+        kind: 'is-outdated'
+      });
       setUpdateStatus('is-outdated', 'you need to update', 'Update ' + nextVersion + ' is available. Click Download Update to install in-app.');
       return;
     }
@@ -4571,6 +6384,13 @@
     if (type === 'update-not-available') {
       updateAvailableForDownload = false;
       setDownloadUpdateButtonVisible(false, true);
+      setMainMenuUpdateButtonState({
+        action: 'check',
+        disabled: false,
+        text: 'Check for Updates',
+        icon: 'verified',
+        kind: 'is-up-to-date'
+      });
       setUpdateStatus('is-up-to-date', 'up to date', 'You are running the latest release build.');
       return;
     }
@@ -4580,18 +6400,39 @@
       var transferred = bytesToMiB(payload && payload.transferred);
       var total = bytesToMiB(payload && payload.total);
       setDownloadUpdateButtonVisible(true, true, 'Downloading...');
+      setMainMenuUpdateButtonState({
+        action: 'download',
+        disabled: true,
+        text: 'Downloading...',
+        icon: 'download',
+        kind: 'is-downloading'
+      });
       setUpdateStatus('is-downloading', 'downloading ' + percent.toFixed(0) + '%', transferred + ' MiB / ' + total + ' MiB downloaded.');
       return;
     }
 
     if (type === 'update-downloaded') {
       setDownloadUpdateButtonVisible(false, true);
+      setMainMenuUpdateButtonState({
+        action: 'busy',
+        disabled: true,
+        text: 'Installing Update',
+        icon: 'restart_alt',
+        kind: 'is-checking'
+      });
       setUpdateStatus('is-checking', 'restarting...', 'Update downloaded. Restarting app to install now...');
       return;
     }
 
     if (type === 'installing-update') {
       setDownloadUpdateButtonVisible(false, true);
+      setMainMenuUpdateButtonState({
+        action: 'busy',
+        disabled: true,
+        text: 'Installing Update',
+        icon: 'restart_alt',
+        kind: 'is-checking'
+      });
       setUpdateStatus('is-checking', 'installing...', 'Installing update and restarting...');
       return;
     }
@@ -4599,6 +6440,13 @@
     if (type === 'error') {
       var message = payload && payload.message ? payload.message : 'Update operation failed.';
       setDownloadUpdateButtonVisible(updateAvailableForDownload, false, 'Download Update');
+      setMainMenuUpdateButtonState({
+        action: updateAvailableForDownload ? 'download' : 'check',
+        disabled: false,
+        text: updateAvailableForDownload ? 'Download Update' : 'Check for Updates',
+        icon: updateAvailableForDownload ? 'system_update_alt' : 'error_outline',
+        kind: 'is-error'
+      });
       setUpdateStatus('is-error', 'status unavailable', message);
     }
   }
@@ -4619,10 +6467,24 @@
 
     var current = normalizeVersion(currentAppVersion);
     if (!current) {
+      setMainMenuUpdateButtonState({
+        action: 'check',
+        disabled: false,
+        text: 'Check for Updates',
+        icon: 'error_outline',
+        kind: 'is-error'
+      });
       setUpdateStatus('is-error', 'status unavailable', 'Current app version is unavailable.');
       return;
     }
 
+    setMainMenuUpdateButtonState({
+      action: 'check',
+      disabled: true,
+      text: 'Checking...',
+      icon: 'sync',
+      kind: 'is-checking'
+    });
     setUpdateStatus('is-checking', 'checking...', 'Checking GitHub for the latest version...');
 
     try {
@@ -4631,12 +6493,26 @@
       var comparison = compareVersionParts(current.parts, latest.parts);
 
       if (comparison >= 0) {
+        setMainMenuUpdateButtonState({
+          action: 'check',
+          disabled: false,
+          text: 'Check for Updates',
+          icon: 'verified',
+          kind: 'is-up-to-date'
+        });
         setUpdateStatus(
           'is-up-to-date',
           'up to date',
           'Current ' + current.normalized + ' • Latest ' + latest.normalized + ' (' + latestInfo.source + ')'
         );
       } else {
+        setMainMenuUpdateButtonState({
+          action: 'check',
+          disabled: false,
+          text: 'Check for Updates',
+          icon: 'priority_high',
+          kind: 'is-outdated'
+        });
         setUpdateStatus(
           'is-outdated',
           'you need to update',
@@ -4644,6 +6520,13 @@
         );
       }
     } catch (err) {
+      setMainMenuUpdateButtonState({
+        action: 'check',
+        disabled: false,
+        text: 'Check for Updates',
+        icon: 'error_outline',
+        kind: 'is-error'
+      });
       setUpdateStatus('is-error', 'status unavailable', err && err.message ? err.message : 'Update check failed.');
     }
   }
@@ -4654,6 +6537,13 @@
       return;
     }
 
+    setMainMenuUpdateButtonState({
+      action: 'check',
+      disabled: true,
+      text: 'Checking...',
+      icon: 'sync',
+      kind: 'is-checking'
+    });
     setDownloadUpdateButtonVisible(false, true);
     setUpdateStatus('is-checking', 'checking...', 'Checking for updates...');
 
@@ -4661,6 +6551,13 @@
     try {
       result = await window.electronAPI.checkForAppUpdate();
     } catch (err) {
+      setMainMenuUpdateButtonState({
+        action: 'check',
+        disabled: false,
+        text: 'Check for Updates',
+        icon: 'error_outline',
+        kind: 'is-error'
+      });
       setUpdateStatus('is-error', 'status unavailable', err && err.message ? err.message : 'Update check failed.');
       return;
     }
@@ -4674,15 +6571,36 @@
       return;
     }
 
+    setMainMenuUpdateButtonState({
+      action: 'check',
+      disabled: false,
+      text: 'Check for Updates',
+      icon: 'error_outline',
+      kind: 'is-error'
+    });
     setUpdateStatus('is-error', 'status unavailable', result && result.message ? result.message : 'Update check failed.');
   }
 
   async function downloadUpdateInApp() {
     if (!window.electronAPI || !window.electronAPI.downloadAppUpdate) {
+      setMainMenuUpdateButtonState({
+        action: 'check',
+        disabled: false,
+        text: 'Check for Updates',
+        icon: 'error_outline',
+        kind: 'is-error'
+      });
       setUpdateStatus('is-error', 'status unavailable', 'In-app updater is unavailable in this build.');
       return;
     }
 
+    setMainMenuUpdateButtonState({
+      action: 'download',
+      disabled: true,
+      text: 'Downloading...',
+      icon: 'download',
+      kind: 'is-downloading'
+    });
     setDownloadUpdateButtonVisible(true, true, 'Downloading...');
     setUpdateStatus('is-downloading', 'downloading...', 'Starting secure update download from GitHub Releases...');
 
@@ -4690,12 +6608,26 @@
     try {
       result = await window.electronAPI.downloadAppUpdate();
     } catch (err) {
+      setMainMenuUpdateButtonState({
+        action: 'download',
+        disabled: false,
+        text: 'Download Update',
+        icon: 'system_update_alt',
+        kind: 'is-error'
+      });
       setDownloadUpdateButtonVisible(true, false, 'Download Update');
       setUpdateStatus('is-error', 'status unavailable', err && err.message ? err.message : 'Update download failed.');
       return;
     }
 
     if (!result || !result.ok) {
+      setMainMenuUpdateButtonState({
+        action: 'download',
+        disabled: false,
+        text: 'Download Update',
+        icon: 'system_update_alt',
+        kind: 'is-error'
+      });
       setDownloadUpdateButtonVisible(true, false, 'Download Update');
       setUpdateStatus('is-error', 'status unavailable', result && result.message ? result.message : 'Update download failed.');
     }
@@ -4705,6 +6637,14 @@
     var raw = localStorage.getItem(AUTO_UPDATE_CHECK_KEY);
     var enabled = raw === null ? true : raw === '1';
 
+    setMainMenuUpdateButtonState({
+      action: 'check',
+      disabled: false,
+      text: 'Check for Updates',
+      icon: 'system_update_alt',
+      details: 'Use this button to check for or download new versions.'
+    });
+
     if (els.autoUpdateCheckToggle) {
       els.autoUpdateCheckToggle.checked = enabled;
     }
@@ -4713,6 +6653,13 @@
       checkForUpdates();
     } else {
       setDownloadUpdateButtonVisible(false, true);
+      setMainMenuUpdateButtonState({
+        action: 'check',
+        disabled: false,
+        text: 'Check for Updates',
+        icon: 'system_update_alt',
+        kind: 'is-error'
+      });
       setUpdateStatus('is-error', 'status unavailable', 'Auto update check is disabled.');
     }
   }
@@ -4743,6 +6690,7 @@
     setCount('count-primary', counts['Primary']);
     setCount('count-secondary', counts['Secondary']);
     setCount('count-melee', counts['Melee']);
+    setCount('count-amps', counts['Amps']);
     setCount('count-companions', counts['Companions']);
     setCount('count-vehicles', counts['Vehicles']);
     setCount('count-sentinels', counts['Sentinels']);
@@ -4870,7 +6818,7 @@
 
   // Search
   els.searchInput.addEventListener('input', function(e) {
-    searchQuery = e.target.value.trim();
+    searchQuery = String(e.target.value || '');
     els.searchClear.classList.toggle('hidden', !searchQuery);
     applyFilters();
   });
@@ -4881,6 +6829,60 @@
     els.searchClear.classList.add('hidden');
     applyFilters();
   });
+
+  if (els.relicSearchInput) {
+    els.relicSearchInput.addEventListener('input', function(e) {
+      relicSearchQuery = String(e.target.value || '');
+      syncRelicSearchControls();
+      if (Array.isArray(relicDirectory) && relicDirectory.length > 0) {
+        scheduleRelicDirectoryRender({ resetLimit: true, resetScroll: true, smoothScroll: false });
+      } else {
+        loadRelicDirectory(false);
+      }
+    });
+  }
+
+  if (els.relicSearchClear) {
+    els.relicSearchClear.addEventListener('click', function() {
+      relicSearchQuery = '';
+      syncRelicSearchControls();
+      if (Array.isArray(relicDirectory) && relicDirectory.length > 0) {
+        scheduleRelicDirectoryRender({ resetLimit: true, resetScroll: true, smoothScroll: true });
+      } else {
+        loadRelicDirectory(false);
+      }
+      if (els.relicSearchInput) {
+        els.relicSearchInput.focus();
+      }
+    });
+  }
+
+  if (els.arcaneSearchInput) {
+    els.arcaneSearchInput.addEventListener('input', function(e) {
+      arcaneSearchQuery = String(e.target.value || '');
+      syncArcaneSearchControls();
+      if (Array.isArray(arcaneDirectory) && arcaneDirectory.length > 0) {
+        scheduleArcaneDirectoryRender({ resetLimit: true, resetScroll: true, smoothScroll: false });
+      } else {
+        loadArcaneDirectory(false);
+      }
+    });
+  }
+
+  if (els.arcaneSearchClear) {
+    els.arcaneSearchClear.addEventListener('click', function() {
+      arcaneSearchQuery = '';
+      syncArcaneSearchControls();
+      if (Array.isArray(arcaneDirectory) && arcaneDirectory.length > 0) {
+        scheduleArcaneDirectoryRender({ resetLimit: true, resetScroll: true, smoothScroll: true });
+      } else {
+        loadArcaneDirectory(false);
+      }
+      if (els.arcaneSearchInput) {
+        els.arcaneSearchInput.focus();
+      }
+    });
+  }
 
   // Mark All / Unmark All buttons
   $('#btn-mark-all').addEventListener('click', function() {
@@ -4905,6 +6907,16 @@
     });
   }
 
+  if (els.themeOptions && els.themeOptions.length) {
+    els.themeOptions.forEach(function(button) {
+      button.addEventListener('click', function() {
+        var requestedThemeId = button.getAttribute('data-theme');
+        if (normalizeThemeId(requestedThemeId) === currentThemeId) return;
+        applyTheme(requestedThemeId, true);
+      });
+    });
+  }
+
   if (els.autoUpdateCheckToggle) {
     els.autoUpdateCheckToggle.addEventListener('change', function() {
       var enabled = !!els.autoUpdateCheckToggle.checked;
@@ -4913,6 +6925,13 @@
         checkForUpdates();
       } else {
         setDownloadUpdateButtonVisible(false, true);
+        setMainMenuUpdateButtonState({
+          action: 'check',
+          disabled: false,
+          text: 'Check for Updates',
+          icon: 'system_update_alt',
+          kind: 'is-error'
+        });
         setUpdateStatus('is-error', 'status unavailable', 'Auto update check is disabled.');
       }
     });
@@ -4924,8 +6943,20 @@
     });
   }
 
-  if (els.updateCheckNowBtn) {
-    els.updateCheckNowBtn.addEventListener('click', function() {
+  if (els.openTelegramContactBtn) {
+    els.openTelegramContactBtn.addEventListener('click', function() {
+      openTelegramContact();
+    });
+  }
+
+  if (els.mainMenuUpdateBtn) {
+    els.mainMenuUpdateBtn.addEventListener('click', function() {
+      if (els.mainMenuUpdateBtn.disabled) return;
+      if (updateMenuAction === 'download') {
+        downloadUpdateInApp();
+        return;
+      }
+      if (updateMenuAction === 'busy') return;
       checkForUpdates();
     });
   }
@@ -5034,8 +7065,14 @@
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       var marketPanel = $('#market-panel');
+      var relicsPanel = $('#relics-panel');
+      var arcanesPanel = $('#arcanes-panel');
       if (marketPanel && !marketPanel.classList.contains('hidden')) {
         $('#market-search-input').focus();
+      } else if (arcanesPanel && !arcanesPanel.classList.contains('hidden') && els.arcaneSearchInput) {
+        els.arcaneSearchInput.focus();
+      } else if (relicsPanel && !relicsPanel.classList.contains('hidden') && els.relicSearchInput) {
+        els.relicSearchInput.focus();
       } else {
         els.searchInput.focus();
       }
@@ -5065,6 +7102,9 @@
   if (els.itemInfoTabResources) {
     els.itemInfoTabResources.addEventListener('click', function() { setActiveInfoTab('resources'); });
   }
+  if (els.itemInfoTabWiki) {
+    els.itemInfoTabWiki.addEventListener('click', function() { openWikiTabForCurrentItem(); });
+  }
   if (els.itemInfoMarketBtn) {
     els.itemInfoMarketBtn.addEventListener('click', async function() {
       if (!tradeModeEnabled || !currentItemInfo || !currentItemInfo.tradable) return;
@@ -5077,12 +7117,14 @@
       closeItemInfoModal();
     });
   }
-  if (els.itemInfoWikiBtn) {
-    els.itemInfoWikiBtn.addEventListener('click', function() {
-      if (!currentItemInfo) return;
-      var wikiUrl = buildWikiUrl(currentItemInfo);
-      if (!wikiUrl) return;
-      window.open(wikiUrl, '_blank', 'noopener');
+  if (els.itemInfoWikiContent) {
+    els.itemInfoWikiContent.addEventListener('click', function(evt) {
+      var target = evt.target;
+      if (!target || !target.closest) return;
+      var link = target.closest('a[href]');
+      if (!link) return;
+      evt.preventDefault();
+      window.open(link.href, '_blank', 'noopener');
     });
   }
 
@@ -5093,7 +7135,10 @@
     return {
       checklist: $('#content'),
       market: $('#market-panel'),
+      analytics: $('#trade-analytics-panel'),
       prime: $('#prime-panel'),
+      relics: $('#relics-panel'),
+      arcanes: $('#arcanes-panel'),
       cycles: $('#cycles-panel'),
       settings: $('#settings-page')
     };
@@ -5103,7 +7148,10 @@
     var refs = getPanelRefs();
     if (refs.settings && !refs.settings.classList.contains('hidden')) return 'settings';
     if (refs.cycles && !refs.cycles.classList.contains('hidden')) return 'cycles';
+    if (refs.arcanes && !refs.arcanes.classList.contains('hidden')) return 'arcanes';
+    if (refs.relics && !refs.relics.classList.contains('hidden')) return 'relics';
     if (refs.prime && !refs.prime.classList.contains('hidden')) return 'prime';
+    if (refs.analytics && !refs.analytics.classList.contains('hidden')) return 'analytics';
     if (refs.market && !refs.market.classList.contains('hidden')) return 'market';
     return 'checklist';
   }
@@ -5111,23 +7159,35 @@
   function applyPanelVisibility(panel, refs) {
     var contentEl = refs.checklist;
     var marketPanel = refs.market;
+    var analyticsPanel = refs.analytics;
     var primePanel = refs.prime;
+    var relicsPanel = refs.relics;
+    var arcanesPanel = refs.arcanes;
     var cyclesPanel = refs.cycles;
     var settingsPage = refs.settings;
 
     var navMarket = $('#nav-market');
+    var navAnalytics = $('#nav-trade-analytics');
     var navPrime = $('#nav-prime-resurgence');
+    var navRelics = $('#nav-relics');
+    var navArcanes = $('#nav-arcanes');
     var navCycles = $('#nav-cycles');
 
     if (panel === 'market') {
       contentEl.classList.add('hidden');
       marketPanel.classList.remove('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
       if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.add('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
       if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
@@ -5136,49 +7196,136 @@
         window.warframeMarket.load();
         marketLoaded = true;
       }
-    } else if (panel === 'prime') {
+    } else if (panel === 'analytics') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
-      if (primePanel) primePanel.classList.remove('hidden');
+      if (analyticsPanel) analyticsPanel.classList.remove('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.add('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      if (!marketLoaded && window.warframeMarket) {
+        window.warframeMarket.init();
+        marketLoaded = true;
+      }
+      if (window.warframeMarket && typeof window.warframeMarket.loadAnalytics === 'function') {
+        window.warframeMarket.loadAnalytics();
+      }
+    } else if (panel === 'prime') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.remove('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
       if (navPrime) navPrime.classList.add('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
       stopCycleCountdown();
       loadPrimeResurgence(false);
+    } else if (panel === 'relics') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.remove('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.add('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      loadRelicDirectory(false);
+    } else if (panel === 'arcanes') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.remove('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.add('active');
+      if (navCycles) navCycles.classList.remove('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      loadArcaneDirectory(false);
     } else if (panel === 'cycles') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
       if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.remove('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
       if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.add('active');
       stopPrimeCountdown();
       loadCycles();
     } else if (panel === 'settings') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
       if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
       settingsPage.classList.remove('hidden');
       if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
       if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
     } else {
       contentEl.classList.remove('hidden');
       marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
       if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
       if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
@@ -5227,10 +7374,47 @@
     showPanel('market');
   });
 
+  var navTradeAnalytics = $('#nav-trade-analytics');
+  if (navTradeAnalytics) {
+    navTradeAnalytics.addEventListener('click', function() {
+      showPanel('analytics', true);
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          var analyticsSearchInput = $('#trade-analytics-search-input');
+          if (analyticsSearchInput) analyticsSearchInput.focus();
+        });
+      }
+    });
+  }
+
   var navPrimeResurgence = $('#nav-prime-resurgence');
   if (navPrimeResurgence) {
     navPrimeResurgence.addEventListener('click', function() {
       showPanel('prime', true);
+    });
+  }
+
+  var navRelics = $('#nav-relics');
+  if (navRelics) {
+    navRelics.addEventListener('click', function() {
+      showPanel('relics', true);
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          if (els.relicSearchInput) els.relicSearchInput.focus();
+        });
+      }
+    });
+  }
+
+  var navArcanes = $('#nav-arcanes');
+  if (navArcanes) {
+    navArcanes.addEventListener('click', function() {
+      showPanel('arcanes', true);
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          if (els.arcaneSearchInput) els.arcaneSearchInput.focus();
+        });
+      }
     });
   }
 
@@ -5280,6 +7464,7 @@
 
   // ---------- Init ----------
   initNativeUpdaterBridge();
+  initThemeSetting();
   initAppVersion();
   initAlwaysOnTopSetting();
   initAutoUpdateSetting();

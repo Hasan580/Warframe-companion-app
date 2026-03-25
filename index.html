@@ -81,6 +81,11 @@
           <span class="nav-text">Melee</span>
           <span class="nav-count" id="count-melee">0</span>
         </button>
+        <button class="nav-item" data-category="Amps" id="nav-amps">
+          <span class="material-icons-round">flash_on</span>
+          <span class="nav-text">Amps</span>
+          <span class="nav-count" id="count-amps">0</span>
+        </button>
         <button class="nav-item" data-category="Companions" id="nav-companions">
           <span class="material-icons-round">pets</span>
           <span class="nav-text">Companions</span>
@@ -107,9 +112,21 @@
           <span class="material-icons-round">storefront</span>
           <span class="nav-text">Market</span>
         </button>
+        <button class="nav-item" id="nav-trade-analytics" data-panel="trade-analytics">
+          <span class="material-icons-round">query_stats</span>
+          <span class="nav-text">Trading Analytics</span>
+        </button>
         <button class="nav-item" id="nav-prime-resurgence" data-panel="prime-resurgence">
           <span class="material-icons-round">workspace_premium</span>
           <span class="nav-text">Prime Resurgence</span>
+        </button>
+        <button class="nav-item" id="nav-relics" data-panel="relics">
+          <span class="material-icons-round">auto_awesome_motion</span>
+          <span class="nav-text">Relics</span>
+        </button>
+        <button class="nav-item" id="nav-arcanes" data-panel="arcanes">
+          <span class="material-icons-round">diamond</span>
+          <span class="nav-text">Arcanes</span>
         </button>
         <button class="nav-item" id="nav-cycles" data-panel="cycles">
           <span class="material-icons-round">schedule</span>
@@ -128,6 +145,13 @@
         <button class="nav-item nav-tool" id="btn-reset">
           <span class="material-icons-round">restart_alt</span>
           <span class="nav-text">Reset All</span>
+        </button>
+        <button class="nav-item nav-tool nav-update-item" id="btn-main-menu-update" type="button" title="Use this button to check for or download new versions.">
+          <span class="material-icons-round" id="main-menu-update-icon">system_update_alt</span>
+          <span class="nav-meta">
+            <span class="nav-text" id="main-menu-update-text">Check for Updates</span>
+            <span class="nav-subtext" id="main-menu-update-details">Use this button to check for or download new versions.</span>
+          </span>
         </button>
       </nav>
 
@@ -268,6 +292,97 @@
       </div>
     </div>
 
+    <!-- Trading Analytics Panel (hidden by default) -->
+    <div class="trade-analytics-panel hidden" id="trade-analytics-panel">
+      <div class="content-topbar trade-analytics-topbar">
+        <div class="trade-analytics-title-wrap">
+          <h1 class="category-title">Trading Analytics</h1>
+          <span class="category-count" id="trade-analytics-count-text">Public warframe.market spread, price, and volume scanner</span>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-secondary" id="btn-trade-analytics-refresh" type="button">
+            <span class="material-icons-round">refresh</span>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <div class="trade-analytics-content">
+        <div class="trade-analytics-search-row">
+          <div class="search-container trade-analytics-search-container">
+            <span class="material-icons-round search-icon">search</span>
+            <input type="text" class="search-input" id="trade-analytics-search-input" placeholder="Search an item for analytics..." autocomplete="off">
+            <button class="search-clear hidden" id="trade-analytics-search-clear" type="button">
+              <span class="material-icons-round">close</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="trade-analytics-layout">
+          <section class="trade-analytics-card trade-analytics-results-card">
+            <div class="trade-analytics-card-head">
+              <h3 class="trade-analytics-card-title">Watchlist</h3>
+              <span class="trade-analytics-card-sub" id="trade-analytics-search-summary">Quick picks from active public trading items.</span>
+            </div>
+            <div class="trade-analytics-results" id="trade-analytics-search-results">
+              <div class="trade-analytics-empty-message">Loading market watchlist...</div>
+            </div>
+          </section>
+
+          <section class="trade-analytics-card trade-analytics-overview-card">
+            <div class="trade-analytics-empty-state" id="trade-analytics-empty-state">
+              Search an item or choose one from the watchlist to load analytics.
+            </div>
+
+            <div class="trade-analytics-overview hidden" id="trade-analytics-overview">
+              <div class="trade-analytics-selected">
+                <div class="trade-analytics-selected-media">
+                  <img id="trade-analytics-selected-img" src="" alt="Selected market item" class="trade-analytics-selected-img hidden">
+                  <span class="material-icons-round trade-analytics-selected-placeholder" id="trade-analytics-selected-placeholder">query_stats</span>
+                </div>
+
+                <div class="trade-analytics-selected-copy">
+                  <div class="trade-analytics-selected-label">Selected Item</div>
+                  <h3 class="trade-analytics-selected-name" id="trade-analytics-selected-name">-</h3>
+                  <div class="trade-analytics-selected-meta">
+                    <span id="trade-analytics-selected-category">-</span>
+                    <span id="trade-analytics-selected-updated">Waiting for market data</span>
+                  </div>
+                </div>
+
+                <button class="btn btn-secondary trade-analytics-open-btn" id="btn-trade-analytics-open-orders" type="button">
+                  <span class="material-icons-round">open_in_new</span>
+                  Open Orders
+                </button>
+              </div>
+
+              <div class="trade-analytics-stat-grid" id="trade-analytics-stat-grid"></div>
+            </div>
+          </section>
+
+          <section class="trade-analytics-card">
+            <div class="trade-analytics-card-head">
+              <h3 class="trade-analytics-card-title">Recent Closed History</h3>
+              <span class="trade-analytics-card-sub">Last 7 daily closes from the 90-day public history</span>
+            </div>
+            <div class="trade-analytics-table-wrap" id="trade-analytics-history">
+              <div class="trade-analytics-empty-message">Choose an item to inspect its recent closed history.</div>
+            </div>
+          </section>
+
+          <section class="trade-analytics-card">
+            <div class="trade-analytics-card-head">
+              <h3 class="trade-analytics-card-title">Live Market Snapshot</h3>
+              <span class="trade-analytics-card-sub">Latest 48h buy and sell pressure plus current order walls</span>
+            </div>
+            <div class="trade-analytics-table-wrap" id="trade-analytics-live">
+              <div class="trade-analytics-empty-message">Choose an item to inspect its live buy and sell pressure.</div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
     <!-- Prime Resurgence Panel (hidden by default) -->
     <div class="prime-panel hidden" id="prime-panel">
       <div class="content-topbar">
@@ -340,6 +455,64 @@
           </div>
           <div class="prime-relics-grid" id="prime-relics-grid">
             <div class="prime-loading">Loading relics...</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Relics Panel (hidden by default) -->
+    <div class="relics-panel hidden" id="relics-panel">
+      <div class="content-topbar relics-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Relic Codex</h1>
+          <span class="category-count" id="relics-count-text">Search any relic, Warframe, weapon, or prime part.</span>
+        </div>
+        <div class="search-container relics-search-container">
+          <span class="material-icons-round search-icon">search</span>
+          <input type="text" class="search-input" id="relic-search-input" placeholder="Search relics, Warframes, weapons, or prime parts..." autocomplete="off">
+          <button class="search-clear hidden" id="relic-search-clear" type="button" aria-label="Clear relic search">
+            <span class="material-icons-round">close</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="relics-content" id="relics-content">
+        <section class="prime-relics-section">
+          <div class="prime-section-head">
+            <h3 class="prime-section-title">Relic Results</h3>
+            <span class="prime-section-sub" id="relics-search-summary">Hover a relic to see rewards</span>
+          </div>
+          <div class="prime-relics-grid relics-grid" id="relics-grid">
+            <div class="prime-loading">Loading relic catalog...</div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- Arcanes Panel (hidden by default) -->
+    <div class="arcanes-panel hidden" id="arcanes-panel">
+      <div class="content-topbar arcanes-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Arcane Codex</h1>
+          <span class="category-count" id="arcanes-count-text">Search every arcane, rank effect, slot type, and rarity.</span>
+        </div>
+        <div class="search-container arcanes-search-container">
+          <span class="material-icons-round search-icon">search</span>
+          <input type="text" class="search-input" id="arcane-search-input" placeholder="Search arcanes, slot types, rarities, or effect text..." autocomplete="off">
+          <button class="search-clear hidden" id="arcane-search-clear" type="button" aria-label="Clear arcane search">
+            <span class="material-icons-round">close</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="arcanes-content" id="arcanes-content">
+        <section class="prime-relics-section">
+          <div class="prime-section-head">
+            <h3 class="prime-section-title">Arcane Results</h3>
+            <span class="prime-section-sub" id="arcanes-search-summary">Hover an arcane to inspect every rank</span>
+          </div>
+          <div class="prime-relics-grid arcanes-grid" id="arcanes-grid">
+            <div class="prime-loading">Loading arcane codex...</div>
           </div>
         </section>
       </div>
@@ -539,6 +712,70 @@
         </div>
 
         <div class="settings-card">
+          <div class="settings-theme-header">
+            <div>
+              <h2 class="settings-card-title">Appearance</h2>
+              <div class="settings-toggle-subtitle">Choose a theme for the app interface. Your selection is saved on this device.</div>
+            </div>
+            <div class="settings-theme-current" id="settings-theme-current">Origin</div>
+          </div>
+
+          <div class="settings-theme-grid">
+            <button class="settings-theme-option is-active" type="button" data-theme="origin" aria-pressed="true">
+              <span class="settings-theme-preview settings-theme-preview-origin" aria-hidden="true">
+                <span class="settings-theme-preview-sidebar"></span>
+                <span class="settings-theme-preview-surface"></span>
+                <span class="settings-theme-preview-accent"></span>
+              </span>
+              <span class="settings-theme-copy">
+                <span class="settings-theme-name">Origin</span>
+                <span class="settings-theme-description">Classic amber and blue.</span>
+              </span>
+              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
+            </button>
+
+            <button class="settings-theme-option" type="button" data-theme="lotus" aria-pressed="false">
+              <span class="settings-theme-preview settings-theme-preview-lotus" aria-hidden="true">
+                <span class="settings-theme-preview-sidebar"></span>
+                <span class="settings-theme-preview-surface"></span>
+                <span class="settings-theme-preview-accent"></span>
+              </span>
+              <span class="settings-theme-copy">
+                <span class="settings-theme-name">Lotus</span>
+                <span class="settings-theme-description">Lotus violet with cool cyan light.</span>
+              </span>
+              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
+            </button>
+
+            <button class="settings-theme-option" type="button" data-theme="orokin" aria-pressed="false">
+              <span class="settings-theme-preview settings-theme-preview-orokin" aria-hidden="true">
+                <span class="settings-theme-preview-sidebar"></span>
+                <span class="settings-theme-preview-surface"></span>
+                <span class="settings-theme-preview-accent"></span>
+              </span>
+              <span class="settings-theme-copy">
+                <span class="settings-theme-name">Orokin</span>
+                <span class="settings-theme-description">Ivory halls and rich gold.</span>
+              </span>
+              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
+            </button>
+
+            <button class="settings-theme-option" type="button" data-theme="stalker" aria-pressed="false">
+              <span class="settings-theme-preview settings-theme-preview-stalker" aria-hidden="true">
+                <span class="settings-theme-preview-sidebar"></span>
+                <span class="settings-theme-preview-surface"></span>
+                <span class="settings-theme-preview-accent"></span>
+              </span>
+              <span class="settings-theme-copy">
+                <span class="settings-theme-name">Stalker</span>
+                <span class="settings-theme-description">Blackened steel with blood-red accents.</span>
+              </span>
+              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="settings-card">
           <h2 class="settings-card-title">Updates</h2>
           <label class="settings-toggle-row" for="setting-auto-update-check">
             <div>
@@ -552,10 +789,9 @@
           </label>
 
           <div class="settings-update-row">
-            <div class="settings-toggle-subtitle" id="settings-update-details">Update status will appear here.</div>
-            <div class="settings-update-actions">
-              <button class="btn btn-primary hidden" id="btn-download-update" type="button">Download Update</button>
-              <button class="btn btn-secondary" id="btn-check-updates-now" type="button">Check Now</button>
+            <div>
+              <div class="settings-toggle-title">Manual Update</div>
+              <div class="settings-toggle-subtitle" id="settings-update-details">Use the Updates button in the left menu to check for or download new versions.</div>
             </div>
           </div>
         </div>
@@ -570,6 +806,16 @@
             <button class="btn btn-secondary settings-link-btn" id="btn-open-github-repo" type="button">
               <span class="material-icons-round">open_in_new</span>
               <span>GitHub</span>
+            </button>
+          </div>
+          <div class="settings-action-row">
+            <div>
+              <div class="settings-toggle-title">Having a bug or error?</div>
+              <div class="settings-toggle-subtitle">Message me on Telegram and I will check it.</div>
+            </div>
+            <button class="btn btn-secondary settings-link-btn" id="btn-open-telegram-contact" type="button">
+              <span class="material-icons-round">send</span>
+              <span>Contact Me</span>
             </button>
           </div>
         </div>
@@ -627,11 +873,10 @@
           </div>
           <div class="item-info-header-summary">
             <div class="item-info-header-top">
-              <h2 class="modal-title" id="item-info-name">Item</h2>
-              <button class="btn btn-secondary item-info-wiki-btn hidden" id="item-info-wiki-btn" type="button">
-                <span class="material-icons-round">open_in_new</span>
-                Wiki
-              </button>
+              <div class="item-info-title-row">
+                <h2 class="modal-title" id="item-info-name">Item</h2>
+                <div class="item-info-prime-status hidden" id="item-info-prime-status"></div>
+              </div>
             </div>
             <div class="item-info-summary-grid" id="item-info-summary"></div>
           </div>
@@ -645,6 +890,7 @@
           <button class="item-info-tab active" id="item-info-tab-info" data-tab="info" role="tab" aria-selected="true">Info</button>
           <button class="item-info-tab" id="item-info-tab-mission" data-tab="mission" role="tab" aria-selected="false">Mission &amp; Drops</button>
           <button class="item-info-tab" id="item-info-tab-resources" data-tab="resources" role="tab" aria-selected="false">Resources</button>
+          <button class="item-info-tab" id="item-info-tab-wiki" data-tab="wiki" role="tab" aria-selected="false">Wiki</button>
         </div>
 
         <div class="item-info-pane" id="item-info-pane-info">
@@ -665,6 +911,13 @@
           <div class="item-info-section">
             <h3 class="item-info-section-title">Resources Required</h3>
             <div class="item-info-list" id="item-info-craft-list"></div>
+          </div>
+        </div>
+
+        <div class="item-info-pane hidden" id="item-info-pane-wiki">
+          <div class="item-info-wiki-shell">
+            <div class="item-info-wiki-state" id="item-info-wiki-state">Wiki content will load here.</div>
+            <div class="item-info-wiki-content hidden" id="item-info-wiki-content"></div>
           </div>
         </div>
 
