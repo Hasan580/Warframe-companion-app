@@ -6,13 +6,19 @@
   'use strict';
 
   const MARKET_API = 'https://api.warframe.market/v2/items';
+  const AUCTIONS_PAGE_URL = 'https://warframe.market/auctions';
+  const AUCTIONS_SEARCH_API = 'https://api.warframe.market/v1/auctions/search';
   const ORDERS_API_V2 = 'https://api.warframe.market/v2/orders/item';
   const ORDERS_API_V1 = 'https://api.warframe.market/v1/items';
   const STATS_API_V1 = 'https://api.warframe.market/v1/items';
   const CDN_BASE = 'https://warframe.market/static/assets/';
   const MARKET_CACHE_KEY = 'warframe_market_items_v3';
+  const CONTRACTS_LOOKUP_CACHE_KEY = 'warframe_market_contract_lookups_v1';
   const MARKET_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+  const CONTRACTS_LOOKUP_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
   const ANALYTICS_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+  const CONTRACT_RESULTS_BATCH_SIZE = 60;
+  const CONTRACT_ANY_EPHEMERA_VALUE = '__any_ephemera__';
   const ANALYTICS_DEFAULT_PICK_NAMES = [
     'Arcane Energize',
     'Arcane Grace',
@@ -35,13 +41,115 @@
   let ordersOnlineMode = 'all_online';
   let ordersRefreshInterval = null;
   let marketInitialized = false;
+  let marketViewMode = 'items';
   let analyticsSearchQuery = '';
   let analyticsSelectedSlug = '';
   let analyticsCurrentItem = null;
   let analyticsStatsCache = Object.create(null);
   let analyticsRequestToken = 0;
+  let contractsLookupData = null;
+  let contractsLookupPromise = null;
+  let contractsLookupError = '';
+  let contractsResults = [];
+  let contractsLoading = false;
+  let contractsError = '';
+  let contractsHasSearched = false;
+  let contractsRequestToken = 0;
+  let contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+  let contractsFilters = createDefaultContractsFilters();
 
   const $ = function (sel) { return document.querySelector(sel); };
+
+  function createDefaultContractsFilters(type) {
+    return {
+      type: type || 'riven',
+      weaponUrlName: '',
+      positiveStats: ['', '', ''],
+      negativeStat: '',
+      modRank: 'any',
+      element: '',
+      ephemera: '',
+      sortBy: 'price_asc',
+      quickSearch: ''
+    };
+  }
+
+  function escapeHtml(value) {
+    return String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function getMarketPanelRefs() {
+    return {
+      topbar: document.querySelector('#market-panel .content-topbar'),
+      categoriesList: $('#market-categories-list'),
+      contractsBtn: $('#market-contracts-btn'),
+      contractsBtnLabel: $('#market-contracts-btn-label'),
+      title: $('#market-panel-title'),
+      count: $('#market-item-count'),
+      grid: $('#market-grid'),
+      contractsView: $('#contracts-view')
+    };
+  }
+
+  function updateMarketPanelHeader() {
+    var refs = getMarketPanelRefs();
+    if (!refs.title || !refs.count) return;
+
+    if (marketViewMode === 'contracts') {
+      refs.title.textContent = 'Contracts';
+
+      if (contractsLookupError) {
+        refs.count.textContent = 'status unavailable';
+      } else if (contractsLoading) {
+        refs.count.textContent = 'Searching live auctions...';
+      } else if (!canSearchContracts()) {
+        refs.count.textContent = 'Pick filters for Rivens, Liches, or Sisters';
+      } else if (!contractsHasSearched) {
+        refs.count.textContent = 'Ready to search';
+      } else {
+        refs.count.textContent = getFilteredContractsResults().length + ' contracts';
+      }
+      return;
+    }
+
+    refs.title.textContent = 'Warframe Market';
+    refs.count.textContent = filteredMarketItems.length + ' items';
+  }
+
+  function renderMarketViewState() {
+    var refs = getMarketPanelRefs();
+    if (refs.topbar) refs.topbar.classList.toggle('hidden', marketViewMode === 'contracts');
+    if (refs.categoriesList) refs.categoriesList.classList.toggle('hidden', marketViewMode === 'contracts');
+    if (refs.grid) refs.grid.classList.toggle('hidden', marketViewMode === 'contracts');
+    if (refs.contractsView) refs.contractsView.classList.toggle('hidden', marketViewMode !== 'contracts');
+
+    if (refs.contractsBtn) refs.contractsBtn.classList.toggle('active', marketViewMode === 'contracts');
+    if (refs.contractsBtnLabel) refs.contractsBtnLabel.textContent = marketViewMode === 'contracts' ? 'Back To Market' : 'Contracts';
+
+    updateMarketPanelHeader();
+  }
+
+  async function setMarketViewMode(mode) {
+    marketViewMode = mode === 'contracts' ? 'contracts' : 'items';
+    renderMarketViewState();
+
+    if (marketViewMode === 'contracts') {
+      try {
+        await ensureContractsLookupData();
+      } catch (err) {
+        /* render fallback below */
+      }
+      renderContractsView();
+      return;
+    }
+
+    applyMarketFilters();
+  }
 
   function safeNameFromSlug(slug) {
     if (!slug) return 'Unknown Item';
@@ -124,6 +232,10 @@
   }
 
   async function openItemByName(name) {
+    if (marketViewMode !== 'items') {
+      await setMarketViewMode('items');
+    }
+
     if (!marketItems || marketItems.length === 0) {
       await loadMarketItems();
     }
@@ -138,6 +250,10 @@
   }
 
   async function searchItemByName(name) {
+    if (marketViewMode !== 'items') {
+      await setMarketViewMode('items');
+    }
+
     if (!marketItems || marketItems.length === 0) {
       await loadMarketItems();
     }
@@ -293,6 +409,857 @@
     return el;
   }
 
+  function saveContractsLookupCache(data) {
+    try {
+      localStorage.setItem(CONTRACTS_LOOKUP_CACHE_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        data: data
+      }));
+    } catch (e) { /* ignore quota */ }
+  }
+
+  function loadContractsLookupCache() {
+    try {
+      var raw = localStorage.getItem(CONTRACTS_LOOKUP_CACHE_KEY);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      if (!parsed || !parsed.data) return null;
+      if (Date.now() - parsed.timestamp > CONTRACTS_LOOKUP_CACHE_TTL) return null;
+      return parsed.data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function sortLookupList(items, labelKey) {
+    return items.slice().sort(function (a, b) {
+      return String(a[labelKey] || '').localeCompare(String(b[labelKey] || ''));
+    });
+  }
+
+  function normalizeContractsLookups(state) {
+    var riven = state && state.riven ? state.riven : {};
+    var lich = state && state.lich ? state.lich : {};
+    var sister = state && state.sister ? state.sister : {};
+
+    return {
+      rivenWeapons: sortLookupList((Array.isArray(riven.items) ? riven.items : []).map(function (item) {
+        return {
+          name: item.item_name || '',
+          urlName: item.url_name || '',
+          icon: item.icon || item.thumb || '',
+          thumb: item.thumb || item.icon || '',
+          rivenType: item.riven_type || '',
+          group: item.group || '',
+          masteryLevel: typeof item.mastery_level === 'number' ? item.mastery_level : 0
+        };
+      }).filter(function (item) { return !!item.urlName; }), 'name'),
+      rivenAttributes: sortLookupList((Array.isArray(riven.attributes) ? riven.attributes : []).map(function (item) {
+        return {
+          name: item.effect || '',
+          urlName: item.url_name || '',
+          units: item.units || '',
+          exclusiveTo: Array.isArray(item.exclusive_to) ? item.exclusive_to.slice() : [],
+          positiveOnly: !!item.positive_only,
+          negativeOnly: !!item.negative_only,
+          searchOnly: !!item.search_only
+        };
+      }).filter(function (item) { return !!item.urlName; }), 'name'),
+      lichWeapons: sortLookupList((Array.isArray(lich.weapons) ? lich.weapons : []).map(function (item) {
+        return {
+          name: item.item_name || '',
+          urlName: item.url_name || '',
+          icon: item.icon || item.thumb || '',
+          thumb: item.thumb || item.icon || ''
+        };
+      }).filter(function (item) { return !!item.urlName; }), 'name'),
+      lichEphemeras: sortLookupList((Array.isArray(lich.ephemeras) ? lich.ephemeras : []).map(function (item) {
+        return {
+          name: item.item_name || '',
+          urlName: item.url_name || '',
+          icon: item.icon || item.thumb || '',
+          thumb: item.thumb || item.icon || '',
+          element: item.element || ''
+        };
+      }).filter(function (item) { return !!item.urlName; }), 'name'),
+      sisterWeapons: sortLookupList((Array.isArray(sister.weapons) ? sister.weapons : []).map(function (item) {
+        return {
+          name: item.item_name || '',
+          urlName: item.url_name || '',
+          icon: item.icon || item.thumb || '',
+          thumb: item.thumb || item.icon || ''
+        };
+      }).filter(function (item) { return !!item.urlName; }), 'name'),
+      sisterEphemeras: sortLookupList((Array.isArray(sister.ephemeras) ? sister.ephemeras : []).map(function (item) {
+        return {
+          name: item.item_name || '',
+          urlName: item.url_name || '',
+          icon: item.icon || item.thumb || '',
+          thumb: item.thumb || item.icon || '',
+          element: item.element || ''
+        };
+      }).filter(function (item) { return !!item.urlName; }), 'name')
+    };
+  }
+
+  async function ensureContractsLookupData() {
+    if (contractsLookupData) return contractsLookupData;
+    if (contractsLookupPromise) return contractsLookupPromise;
+
+    var cached = loadContractsLookupCache();
+    if (cached) {
+      contractsLookupData = cached;
+      contractsLookupError = '';
+      return contractsLookupData;
+    }
+
+    contractsLookupPromise = fetch(AUCTIONS_PAGE_URL, {
+      headers: {
+        Platform: 'pc',
+        Language: 'en'
+      }
+    }).then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.text();
+    }).then(function (html) {
+      var match = html.match(/<script type="application\/json" id="application-state">([\s\S]*?)<\/script>/i);
+      if (!match) throw new Error('Contracts bootstrap payload missing');
+      var state = JSON.parse(match[1]);
+      contractsLookupData = normalizeContractsLookups(state);
+      contractsLookupError = '';
+      saveContractsLookupCache(contractsLookupData);
+      return contractsLookupData;
+    }).catch(function (err) {
+      contractsLookupError = err && err.message ? err.message : 'Failed to load contracts';
+      throw err;
+    }).finally(function () {
+      contractsLookupPromise = null;
+    });
+
+    return contractsLookupPromise;
+  }
+
+  function findLookupByUrl(list, urlName) {
+    if (!Array.isArray(list)) return null;
+
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].urlName === urlName) {
+        return list[i];
+      }
+    }
+
+    return null;
+  }
+
+  function getContractsWeaponOptions() {
+    if (!contractsLookupData) return [];
+    if (contractsFilters.type === 'riven') return contractsLookupData.rivenWeapons;
+    if (contractsFilters.type === 'lich') return contractsLookupData.lichWeapons;
+    return contractsLookupData.sisterWeapons;
+  }
+
+  function getContractsEphemeraOptions() {
+    if (!contractsLookupData) return [];
+    return contractsFilters.type === 'lich' ? contractsLookupData.lichEphemeras : contractsLookupData.sisterEphemeras;
+  }
+
+  function getRivenAttributeOptions(negative) {
+    if (!contractsLookupData) return [];
+
+    var selectedWeapon = findLookupByUrl(contractsLookupData.rivenWeapons, contractsFilters.weaponUrlName);
+    var rivenType = selectedWeapon ? selectedWeapon.rivenType : '';
+
+    return contractsLookupData.rivenAttributes.filter(function (attr) {
+      if (!attr || attr.searchOnly) return false;
+      if (negative && attr.positiveOnly) return false;
+      if (!negative && attr.negativeOnly) return false;
+      if (!rivenType || !Array.isArray(attr.exclusiveTo) || attr.exclusiveTo.length === 0) return true;
+      return attr.exclusiveTo.indexOf(rivenType) !== -1;
+    });
+  }
+
+  function getContractElementOptions() {
+    var ephemeras = getContractsEphemeraOptions();
+    var seen = Object.create(null);
+    var out = [];
+
+    for (var i = 0; i < ephemeras.length; i++) {
+      var element = String(ephemeras[i].element || '').trim();
+      if (!element || seen[element]) continue;
+      seen[element] = true;
+      out.push({
+        value: element,
+        label: element.charAt(0).toUpperCase() + element.slice(1)
+      });
+    }
+
+    return out.sort(function (a, b) { return a.label.localeCompare(b.label); });
+  }
+
+  function formatContractTypeLabel(type) {
+    if (type === 'lich') return 'Kuva Lich';
+    if (type === 'sister') return 'Sister Of Parvos';
+    return 'Riven Mod';
+  }
+
+  function formatRelativeTime(value) {
+    if (!value) return 'just now';
+    var date = new Date(value);
+    if (isNaN(date.getTime())) return 'just now';
+
+    var diffMs = Date.now() - date.getTime();
+    var diffMinutes = Math.max(0, Math.round(diffMs / 60000));
+    if (diffMinutes < 1) return 'just now';
+    if (diffMinutes < 60) return diffMinutes + 'm ago';
+
+    var diffHours = Math.round(diffMinutes / 60);
+    if (diffHours < 24) return diffHours + 'h ago';
+
+    var diffDays = Math.round(diffHours / 24);
+    if (diffDays < 7) return diffDays + 'd ago';
+
+    return date.toLocaleDateString(undefined, {
+      month: 'short',
+      day: 'numeric'
+    });
+  }
+
+  function formatContractAttributeValue(attribute, lookup) {
+    var value = Number(attribute && attribute.value);
+    if (!isFinite(value)) return '';
+
+    var absValue = Math.abs(value);
+    var prefix = value > 0 ? '+' : '-';
+    var units = lookup && lookup.units ? lookup.units : '';
+    var rendered = absValue % 1 === 0 ? absValue.toFixed(0) : absValue.toFixed(1);
+
+    if (units === 'percent') return prefix + rendered + '%';
+    if (units === 'multiply') return prefix + rendered + 'x';
+    if (units === 'seconds') return prefix + rendered + 's';
+    if (units === 'degrees') return prefix + rendered + 'deg';
+    return prefix + rendered;
+  }
+
+  function getAuctionSearchText(auction) {
+    var owner = auction && auction.owner ? auction.owner : {};
+    var item = auction && auction.item ? auction.item : {};
+    var searchParts = [
+      owner.ingame_name,
+      item.name,
+      item.weapon_url_name,
+      item.element,
+      auction.note_raw
+    ];
+
+    if (Array.isArray(item.attributes)) {
+      for (var i = 0; i < item.attributes.length; i++) {
+        searchParts.push(item.attributes[i] && item.attributes[i].url_name ? item.attributes[i].url_name : '');
+      }
+    }
+
+    return searchParts.join(' ').toLowerCase();
+  }
+
+  function getFilteredContractsResults() {
+    var quickSearch = String(contractsFilters.quickSearch || '').toLowerCase().trim();
+    var results = contractsResults.slice();
+
+    if (quickSearch) {
+      results = results.filter(function (auction) {
+        return getAuctionSearchText(auction).indexOf(quickSearch) !== -1;
+      });
+    }
+
+    results.sort(function (a, b) {
+      if (contractsFilters.sortBy === 'price_desc') {
+        return Number(b.buyout_price || b.starting_price || 0) - Number(a.buyout_price || a.starting_price || 0);
+      }
+
+      if (contractsFilters.sortBy === 'created_desc') {
+        return new Date(b.created || 0).getTime() - new Date(a.created || 0).getTime();
+      }
+
+      return Number(a.buyout_price || a.starting_price || 0) - Number(b.buyout_price || b.starting_price || 0);
+    });
+
+    return results;
+  }
+
+  function canSearchContracts() {
+    if (contractsFilters.type === 'riven') return !!contractsFilters.weaponUrlName;
+    if (contractsFilters.weaponUrlName) return true;
+    if (contractsFilters.element) return true;
+    if (contractsFilters.ephemera && contractsFilters.ephemera !== CONTRACT_ANY_EPHEMERA_VALUE) return true;
+    return false;
+  }
+
+  function buildContractsQueryString() {
+    var params = new URLSearchParams();
+    params.set('type', contractsFilters.type);
+    params.set('sort_by', 'price_asc');
+
+    if (contractsFilters.weaponUrlName) {
+      params.set('weapon_url_name', contractsFilters.weaponUrlName);
+    }
+
+    if (contractsFilters.type === 'riven') {
+      var positiveStats = contractsFilters.positiveStats.filter(function (value, index, list) {
+        return !!value && list.indexOf(value) === index;
+      });
+      if (positiveStats.length > 0) params.set('positive_stats', positiveStats.join(','));
+      if (contractsFilters.negativeStat) params.set('negative_stats', contractsFilters.negativeStat);
+      if (contractsFilters.modRank === 'maxed') params.set('mod_rank', 'maxed');
+      return params.toString();
+    }
+
+    var selectedEphemera = findLookupByUrl(getContractsEphemeraOptions(), contractsFilters.ephemera);
+    var element = contractsFilters.element;
+    if (selectedEphemera && selectedEphemera.element) {
+      element = selectedEphemera.element;
+    }
+
+    if (element) params.set('element', element);
+    if (contractsFilters.ephemera === CONTRACT_ANY_EPHEMERA_VALUE || selectedEphemera) {
+      params.set('has_ephemera', 'true');
+    }
+
+    return params.toString();
+  }
+
+  async function searchContracts() {
+    contractsError = '';
+
+    if (!canSearchContracts()) {
+      contractsResults = [];
+      contractsHasSearched = false;
+      contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+      renderContractsView();
+      return;
+    }
+
+    contractsLoading = true;
+    contractsHasSearched = true;
+    contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+    renderContractsView();
+
+    var requestToken = ++contractsRequestToken;
+    try {
+      var resp = await fetch(AUCTIONS_SEARCH_API + '?' + buildContractsQueryString(), {
+        headers: {
+          Platform: 'pc',
+          Language: 'en'
+        }
+      });
+
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      var json = await resp.json();
+
+      if (requestToken !== contractsRequestToken) return;
+
+      contractsResults = Array.isArray(json && json.payload && json.payload.auctions) ? json.payload.auctions.slice() : [];
+      contractsError = '';
+    } catch (err) {
+      if (requestToken !== contractsRequestToken) return;
+      contractsResults = [];
+      contractsError = err && err.message ? err.message : 'Failed to load contracts';
+    } finally {
+      if (requestToken === contractsRequestToken) {
+        contractsLoading = false;
+        renderContractsView();
+      }
+    }
+  }
+
+  function buildOptionsMarkup(options, selectedValue, emptyLabel) {
+    var html = '';
+    if (typeof emptyLabel === 'string') {
+      html += '<option value="">' + escapeHtml(emptyLabel) + '</option>';
+    }
+
+    for (var i = 0; i < options.length; i++) {
+      var option = options[i];
+      var value = option.value;
+      var selected = selectedValue === value ? ' selected' : '';
+      html += '<option value="' + escapeHtml(value) + '"' + selected + '>' + escapeHtml(option.label) + '</option>';
+    }
+
+    return html;
+  }
+
+  function getContractsSummaryText() {
+    if (contractsLoading) return 'Live Search';
+    if (contractsFilters.type === 'riven') return 'Rivens';
+    if (contractsFilters.type === 'lich') return 'Kuva Liches';
+    return 'Sisters';
+  }
+
+  function getContractsSearchHint() {
+    if (contractsFilters.type === 'riven') {
+      return 'Pick a weapon first, then narrow with positive or negative stats.';
+    }
+
+    return 'Search by weapon, by element, by ephemera, or combine them for tighter results.';
+  }
+
+  function getContractsResultsTitle() {
+    if (contractsFilters.type === 'riven') return 'Riven Contracts';
+    if (contractsFilters.type === 'lich') return 'Kuva Lich Contracts';
+    return 'Sister Contracts';
+  }
+
+  function getContractsResultsSubtext(filteredResults) {
+    if (!canSearchContracts()) return 'Choose your filters above to load live warframe.market contracts.';
+    if (contractsLoading) return 'Searching live warframe.market auctions...';
+    if (contractsError) return 'Search unavailable right now.';
+    if (!contractsHasSearched) return 'Press Search Contracts to load live listings for the current filters.';
+
+    var total = filteredResults.length;
+    if (total === 0) return 'No matching contracts were found for the current filters.';
+
+    var rendered = Math.min(total, contractsVisibleCount);
+    return 'Showing ' + rendered + ' of ' + total + ' matching contracts.';
+  }
+
+  function renderContractsView() {
+    var refs = getMarketPanelRefs();
+    if (!refs.contractsView) return;
+
+    updateMarketPanelHeader();
+
+    if (contractsLookupError && !contractsLookupData) {
+      refs.contractsView.innerHTML = '' +
+        '<div class="contracts-results-shell">' +
+          '<div class="contracts-empty">' +
+            '<h3 class="contracts-empty-title">Contracts unavailable</h3>' +
+            '<p class="contracts-empty-copy">' + escapeHtml(contractsLookupError) + '</p>' +
+          '</div>' +
+        '</div>';
+      return;
+    }
+
+    if (!contractsLookupData && contractsLookupPromise) {
+      refs.contractsView.innerHTML = '' +
+        '<div class="contracts-results-shell">' +
+          '<div class="contracts-loading">' +
+            '<h3 class="contracts-loading-title">Loading contracts</h3>' +
+            '<p class="contracts-loading-copy">Fetching the live Riven, Lich, Sister, weapon, and ephemera lists from warframe.market.</p>' +
+          '</div>' +
+        '</div>';
+      return;
+    }
+
+    var weaponOptions = getContractsWeaponOptions().map(function (item) {
+      return { value: item.urlName, label: item.name };
+    });
+    var elementOptions = getContractElementOptions();
+    var ephemeraOptions = getContractsEphemeraOptions().map(function (item) {
+      return { value: item.urlName, label: item.name };
+    });
+    ephemeraOptions.unshift({ value: CONTRACT_ANY_EPHEMERA_VALUE, label: 'Has Any Ephemera' });
+
+    var positiveOptions = getRivenAttributeOptions(false).map(function (item) {
+      return { value: item.urlName, label: item.name };
+    });
+    var negativeOptions = getRivenAttributeOptions(true).map(function (item) {
+      return { value: item.urlName, label: item.name };
+    });
+
+    refs.contractsView.innerHTML = '' +
+      '<section class="contracts-hero">' +
+        '<div class="contracts-hero-top">' +
+          '<div>' +
+            '<div class="contracts-eyebrow">Warframe Market</div>' +
+            '<h2 class="contracts-title">Contracts</h2>' +
+            '<p class="contracts-subtitle">Browse live Rivens, Kuva Liches, and Sisters of Parvos with fast filters for weapon, ephemera, element, and attribute combinations.</p>' +
+          '</div>' +
+          '<div class="contracts-summary-badge"><span class="material-icons-round">hub</span>' + escapeHtml(getContractsSummaryText()) + '</div>' +
+        '</div>' +
+        '<div class="contracts-type-switch">' +
+          '<button class="contracts-type-btn' + (contractsFilters.type === 'riven' ? ' active' : '') + '" type="button" data-contract-type="riven">Rivens</button>' +
+          '<button class="contracts-type-btn' + (contractsFilters.type === 'lich' ? ' active' : '') + '" type="button" data-contract-type="lich">Kuva Liches</button>' +
+          '<button class="contracts-type-btn' + (contractsFilters.type === 'sister' ? ' active' : '') + '" type="button" data-contract-type="sister">Sisters</button>' +
+        '</div>' +
+        '<div class="contracts-filter-grid">' +
+          '<label class="contracts-field">' +
+            '<span class="contracts-field-label">Weapon</span>' +
+            '<select class="contracts-select" id="contracts-weapon-select">' +
+              buildOptionsMarkup(weaponOptions, contractsFilters.weaponUrlName, 'Any weapon') +
+            '</select>' +
+          '</label>' +
+          (contractsFilters.type === 'riven'
+            ? (
+              '<label class="contracts-field"><span class="contracts-field-label">Positive 1</span><select class="contracts-select" id="contracts-positive-0">' + buildOptionsMarkup(positiveOptions, contractsFilters.positiveStats[0], 'Any positive stat') + '</select></label>' +
+              '<label class="contracts-field"><span class="contracts-field-label">Positive 2</span><select class="contracts-select" id="contracts-positive-1">' + buildOptionsMarkup(positiveOptions, contractsFilters.positiveStats[1], 'Any positive stat') + '</select></label>' +
+              '<label class="contracts-field"><span class="contracts-field-label">Positive 3</span><select class="contracts-select" id="contracts-positive-2">' + buildOptionsMarkup(positiveOptions, contractsFilters.positiveStats[2], 'Any positive stat') + '</select></label>' +
+              '<label class="contracts-field"><span class="contracts-field-label">Negative</span><select class="contracts-select" id="contracts-negative-select">' + buildOptionsMarkup(negativeOptions, contractsFilters.negativeStat, 'No preference') + '</select></label>' +
+              '<label class="contracts-field"><span class="contracts-field-label">Rank</span><select class="contracts-select" id="contracts-rank-select"><option value="any"' + (contractsFilters.modRank === 'any' ? ' selected' : '') + '>Any rank</option><option value="maxed"' + (contractsFilters.modRank === 'maxed' ? ' selected' : '') + '>Maxed only</option></select></label>'
+            )
+            : (
+              '<label class="contracts-field"><span class="contracts-field-label">Element</span><select class="contracts-select" id="contracts-element-select">' + buildOptionsMarkup(elementOptions, contractsFilters.element, 'Any element') + '</select></label>' +
+              '<label class="contracts-field"><span class="contracts-field-label">Ephemera</span><select class="contracts-select" id="contracts-ephemera-select">' + buildOptionsMarkup(ephemeraOptions, contractsFilters.ephemera, 'Any ephemera') + '</select></label>'
+            )
+          ) +
+          '<label class="contracts-field"><span class="contracts-field-label">Sort</span><select class="contracts-select" id="contracts-sort-select"><option value="price_asc"' + (contractsFilters.sortBy === 'price_asc' ? ' selected' : '') + '>Price ascending</option><option value="price_desc"' + (contractsFilters.sortBy === 'price_desc' ? ' selected' : '') + '>Price descending</option><option value="created_desc"' + (contractsFilters.sortBy === 'created_desc' ? ' selected' : '') + '>Most recent</option></select></label>' +
+          '<label class="contracts-field"><span class="contracts-field-label">Search Loaded Results</span><input class="contracts-control" id="contracts-quick-search" type="text" value="' + escapeHtml(contractsFilters.quickSearch) + '" placeholder="Seller, weapon, stat, note..."></label>' +
+        '</div>' +
+        '<div class="contracts-filter-actions">' +
+          '<button class="btn btn-primary" id="contracts-apply-btn" type="button">Search Contracts</button>' +
+          '<button class="btn btn-secondary" id="contracts-reset-btn" type="button">Reset Filters</button>' +
+          '<span class="contracts-results-helper">' + escapeHtml(getContractsSearchHint()) + '</span>' +
+        '</div>' +
+      '</section>' +
+      '<section class="contracts-results-shell">' +
+        '<div class="contracts-results-head">' +
+          '<div>' +
+            '<h3 class="contracts-results-title">' + escapeHtml(getContractsResultsTitle()) + '</h3>' +
+            '<div class="contracts-results-sub">' + escapeHtml(getContractsResultsSubtext(getFilteredContractsResults())) + '</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="contracts-results" id="contracts-results-list"></div>' +
+      '</section>';
+
+    renderContractsResultsList($('#contracts-results-list'));
+  }
+
+  function renderContractsResultsList(listEl) {
+    if (!listEl) return;
+    listEl.textContent = '';
+
+    if (contractsLoading) {
+      var loadingEl = document.createElement('div');
+      loadingEl.className = 'contracts-loading';
+      loadingEl.innerHTML = '<h3 class="contracts-loading-title">Searching contracts</h3><p class="contracts-loading-copy">Pulling the latest live auctions from warframe.market.</p>';
+      listEl.appendChild(loadingEl);
+      return;
+    }
+
+    if (contractsError) {
+      var errorEl = document.createElement('div');
+      errorEl.className = 'contracts-empty';
+      errorEl.innerHTML = '<h3 class="contracts-empty-title">Search failed</h3><p class="contracts-empty-copy">' + escapeHtml(contractsError) + '</p>';
+      listEl.appendChild(errorEl);
+      return;
+    }
+
+    if (!canSearchContracts()) {
+      var promptEl = document.createElement('div');
+      promptEl.className = 'contracts-empty';
+      promptEl.innerHTML = '<h3 class="contracts-empty-title">Choose your filters</h3><p class="contracts-empty-copy">' + escapeHtml(getContractsSearchHint()) + '</p>';
+      listEl.appendChild(promptEl);
+      return;
+    }
+
+    if (!contractsHasSearched) {
+      var readyEl = document.createElement('div');
+      readyEl.className = 'contracts-empty';
+      readyEl.innerHTML = '<h3 class="contracts-empty-title">Search is ready</h3><p class="contracts-empty-copy">Press Search Contracts to load live results for the current filters.</p>';
+      listEl.appendChild(readyEl);
+      return;
+    }
+
+    var filteredResults = getFilteredContractsResults();
+    if (filteredResults.length === 0) {
+      var emptyEl = document.createElement('div');
+      emptyEl.className = 'contracts-empty';
+      emptyEl.innerHTML = '<h3 class="contracts-empty-title">No contracts found</h3><p class="contracts-empty-copy">Try another weapon, relax one stat filter, or switch the contract type.</p>';
+      listEl.appendChild(emptyEl);
+      return;
+    }
+
+    var fragment = document.createDocumentFragment();
+    var limit = Math.min(filteredResults.length, contractsVisibleCount);
+    for (var i = 0; i < limit; i++) {
+      fragment.appendChild(createContractCard(filteredResults[i]));
+    }
+
+    listEl.appendChild(fragment);
+
+    if (filteredResults.length > contractsVisibleCount) {
+      var moreWrap = document.createElement('div');
+      moreWrap.className = 'contracts-more';
+      var moreBtn = document.createElement('button');
+      moreBtn.className = 'btn btn-secondary';
+      moreBtn.type = 'button';
+      moreBtn.id = 'contracts-load-more-btn';
+      moreBtn.textContent = 'Load Another ' + CONTRACT_RESULTS_BATCH_SIZE;
+      moreWrap.appendChild(moreBtn);
+      listEl.appendChild(moreWrap);
+    }
+  }
+
+  function refreshContractsResults() {
+    updateMarketPanelHeader();
+
+    var resultsSub = document.querySelector('.contracts-results-sub');
+    if (resultsSub) {
+      resultsSub.textContent = getContractsResultsSubtext(getFilteredContractsResults());
+    }
+
+    renderContractsResultsList($('#contracts-results-list'));
+  }
+
+  function findContractAuctionById(auctionId) {
+    for (var i = 0; i < contractsResults.length; i++) {
+      if (contractsResults[i] && contractsResults[i].id === auctionId) {
+        return contractsResults[i];
+      }
+    }
+    return null;
+  }
+
+  function buildContractWhisperMessage(auction) {
+    var item = auction && auction.item ? auction.item : {};
+    var owner = auction && auction.owner ? auction.owner : {};
+    var type = item.type || contractsFilters.type;
+    var weapon = type === 'riven'
+      ? findLookupByUrl(contractsLookupData.rivenWeapons, item.weapon_url_name)
+      : findLookupByUrl(type === 'lich' ? contractsLookupData.lichWeapons : contractsLookupData.sisterWeapons, item.weapon_url_name);
+    var ephemera = (type === 'lich' ? contractsLookupData.lichEphemeras : contractsLookupData.sisterEphemeras).filter(function (entry) {
+      return item.having_ephemera && entry.element === item.element;
+    })[0] || null;
+    var weaponName = weapon ? weapon.name : safeNameFromSlug(item.weapon_url_name);
+    var price = String(auction && (auction.buyout_price || auction.starting_price || 0));
+    var itemLabel = weaponName;
+
+    if (type === 'riven') {
+      itemLabel = weaponName + ' Riven';
+      if (item.name) itemLabel += ' (' + String(item.name).replace(/-/g, ' ') + ')';
+    } else if (type === 'lich') {
+      itemLabel = weaponName + ' Kuva Lich';
+    } else if (type === 'sister') {
+      itemLabel = weaponName + ' Sister of Parvos';
+    }
+
+    if (type !== 'riven') {
+      var detailParts = [];
+      if (item.element) {
+        detailParts.push(Number(item.damage || 0) + '% ' + String(item.element).replace(/^\w/, function (s) { return s.toUpperCase(); }) + ' bonus');
+      }
+      if (item.having_ephemera) {
+        detailParts.push(ephemera ? '[' + ephemera.name + ']' : 'Ephemera');
+      }
+      if (detailParts.length > 0) {
+        itemLabel += ' with ' + detailParts.join(' and ');
+      }
+    }
+
+    return '/w ' + (owner.ingame_name || 'Unknown') + ' Hi! I want to buy your ' + itemLabel + ' for ' + price + ' platinum. (warframe companion app)';
+  }
+
+  async function copyContractWhisper(auction) {
+    if (!auction) return;
+
+    try {
+      var message = buildContractWhisperMessage(auction);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(message);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = message;
+        ta.setAttribute('readonly', 'readonly');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      showContractsToast('Seller whisper copied');
+    } catch (err) {
+      showContractsToast('Copy failed');
+    }
+  }
+
+  function showContractsToast(text) {
+    var existing = document.querySelector('.contracts-copy-toast');
+    if (existing) existing.remove();
+
+    var toast = document.createElement('div');
+    toast.className = 'contracts-copy-toast';
+    toast.textContent = text;
+    document.body.appendChild(toast);
+
+    setTimeout(function () {
+      toast.classList.add('show');
+    }, 10);
+
+    setTimeout(function () {
+      toast.classList.remove('show');
+      setTimeout(function () {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+      }, 220);
+    }, 1500);
+  }
+
+  function createContractCard(auction) {
+    var card = document.createElement('article');
+    card.className = 'contracts-card';
+
+    var item = auction && auction.item ? auction.item : {};
+    var owner = auction && auction.owner ? auction.owner : {};
+    var type = item.type || contractsFilters.type;
+    var weapon = type === 'riven'
+      ? findLookupByUrl(contractsLookupData.rivenWeapons, item.weapon_url_name)
+      : findLookupByUrl(type === 'lich' ? contractsLookupData.lichWeapons : contractsLookupData.sisterWeapons, item.weapon_url_name);
+    var ephemera = (type === 'lich' ? contractsLookupData.lichEphemeras : contractsLookupData.sisterEphemeras).filter(function (entry) {
+      return item.having_ephemera && entry.element === item.element;
+    })[0] || null;
+
+    var media = document.createElement('div');
+    media.className = 'contracts-card-media';
+    var mediaPath = weapon ? (weapon.icon || weapon.thumb) : '';
+    if (mediaPath) {
+      var img = document.createElement('img');
+      img.src = getMarketImageUrl(mediaPath);
+      img.alt = weapon.name || formatContractTypeLabel(type);
+      img.loading = 'lazy';
+      img.addEventListener('error', function () {
+        img.style.display = 'none';
+      });
+      media.appendChild(img);
+    } else {
+      var placeholder = document.createElement('span');
+      placeholder.className = 'material-icons-round';
+      placeholder.textContent = type === 'riven' ? 'auto_awesome' : 'badge';
+      media.appendChild(placeholder);
+    }
+
+    var main = document.createElement('div');
+    main.className = 'contracts-card-main';
+
+    var titleWrap = document.createElement('div');
+    var title = document.createElement('h3');
+    title.className = 'contracts-card-title';
+    title.textContent = type === 'riven'
+      ? (weapon ? weapon.name : safeNameFromSlug(item.weapon_url_name)) + ' Riven'
+      : (weapon ? weapon.name : safeNameFromSlug(item.weapon_url_name)) + (type === 'lich' ? ' Kuva Lich' : ' Sister');
+    var subtitle = document.createElement('p');
+    subtitle.className = 'contracts-card-subtitle';
+    subtitle.textContent = type === 'riven'
+      ? String(item.name || '').replace(/-/g, ' ')
+      : formatContractTypeLabel(type) + ' • ' + formatRelativeTime(auction.created);
+    titleWrap.appendChild(title);
+    titleWrap.appendChild(subtitle);
+    main.appendChild(titleWrap);
+
+    var chipRow = document.createElement('div');
+    chipRow.className = 'contracts-chip-row';
+    var typeChip = document.createElement('span');
+    typeChip.className = 'contracts-chip is-type';
+    typeChip.textContent = formatContractTypeLabel(type);
+    chipRow.appendChild(typeChip);
+
+    if (type !== 'riven') {
+      var elementChip = document.createElement('span');
+      elementChip.className = 'contracts-chip';
+      elementChip.textContent = String(item.element || 'unknown').replace(/^\w/, function (s) { return s.toUpperCase(); }) + ' • ' + Number(item.damage || 0) + '%';
+      chipRow.appendChild(elementChip);
+
+      if (item.having_ephemera) {
+        var ephChip = document.createElement('span');
+        ephChip.className = 'contracts-chip';
+        ephChip.textContent = ephemera ? ephemera.name : 'Has Ephemera';
+        chipRow.appendChild(ephChip);
+      }
+    }
+
+    main.appendChild(chipRow);
+
+    if (type === 'riven' && Array.isArray(item.attributes) && item.attributes.length > 0) {
+      var attrRow = document.createElement('div');
+      attrRow.className = 'contracts-attr-row';
+
+      for (var a = 0; a < item.attributes.length; a++) {
+        var attribute = item.attributes[a];
+        var attrLookup = findLookupByUrl(contractsLookupData.rivenAttributes, attribute && attribute.url_name ? attribute.url_name : '');
+        var chip = document.createElement('span');
+        chip.className = 'contracts-chip ' + (attribute && attribute.positive === false ? 'is-negative' : 'is-positive');
+        chip.textContent = formatContractAttributeValue(attribute, attrLookup) + ' ' + (attrLookup ? attrLookup.name : safeNameFromSlug(attribute.url_name));
+        attrRow.appendChild(chip);
+      }
+
+      main.appendChild(attrRow);
+
+      var rivenMeta = document.createElement('div');
+      rivenMeta.className = 'contracts-meta-row';
+      [
+        'MR ' + (item.mastery_level || 0),
+        'Rank ' + (item.mod_rank || 0),
+        'Rolls ' + (item.re_rolls || 0),
+        String(item.polarity || 'Any').replace(/^\w/, function (s) { return s.toUpperCase(); })
+      ].forEach(function (label) {
+        var metaChip = document.createElement('span');
+        metaChip.className = 'contracts-meta-chip';
+        metaChip.textContent = label;
+        rivenMeta.appendChild(metaChip);
+      });
+      main.appendChild(rivenMeta);
+    }
+
+    if (auction.note_raw) {
+      var note = document.createElement('p');
+      note.className = 'contracts-card-note';
+      note.textContent = auction.note_raw;
+      main.appendChild(note);
+    }
+
+    var side = document.createElement('div');
+    side.className = 'contracts-card-side';
+
+    var price = document.createElement('div');
+    price.className = 'contracts-price';
+    var priceMain = document.createElement('span');
+    priceMain.textContent = String(auction.buyout_price || auction.starting_price || 0);
+    var priceSuffix = document.createElement('span');
+    priceSuffix.className = 'contracts-price-suffix';
+    priceSuffix.textContent = 'p';
+    price.appendChild(priceMain);
+    price.appendChild(priceSuffix);
+    side.appendChild(price);
+
+    var seller = document.createElement('div');
+    seller.className = 'contracts-seller';
+    var dot = document.createElement('span');
+    dot.className = 'status-dot status-' + String(owner.status || 'offline');
+    seller.appendChild(dot);
+    var sellerName = document.createElement('span');
+    sellerName.className = 'contracts-seller-name';
+    sellerName.textContent = owner.ingame_name || 'Unknown';
+    seller.appendChild(sellerName);
+    var sellerState = document.createElement('span');
+    sellerState.textContent = String(owner.status || 'offline').toUpperCase();
+    seller.appendChild(sellerState);
+    side.appendChild(seller);
+
+    var contactBtn = document.createElement('button');
+    contactBtn.className = 'btn btn-secondary';
+    contactBtn.type = 'button';
+    contactBtn.dataset.contractAuctionId = auction.id;
+    contactBtn.textContent = 'Contact Seller';
+    side.appendChild(contactBtn);
+
+    card.appendChild(media);
+    card.appendChild(main);
+    card.appendChild(side);
+
+    return card;
+  }
+
+  async function openExternalUrl(url) {
+    if (!url) return;
+
+    if (window.electronAPI && typeof window.electronAPI.openExternal === 'function') {
+      try {
+        await window.electronAPI.openExternal(url);
+        return;
+      } catch (err) {
+        console.warn('Failed to open external url:', err);
+      }
+    }
+
+    window.open(url, '_blank', 'noopener');
+  }
+
   // ---------- Data Loading ----------
   async function loadMarketItems() {
     var cached = loadMarketCache();
@@ -384,8 +1351,7 @@
       return true;
     });
     renderMarketItems();
-    var countEl = $('#market-item-count');
-    if (countEl) countEl.textContent = filteredMarketItems.length + ' items';
+    updateMarketPanelHeader();
   }
 
   function updateMarketCategoryCounts() {
@@ -1497,6 +2463,140 @@
     }, 1400);
   }
 
+  function resetContractsFilters(nextType) {
+    contractsFilters = createDefaultContractsFilters(nextType || contractsFilters.type);
+    contractsResults = [];
+    contractsError = '';
+    contractsHasSearched = false;
+    contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+  }
+
+  function handleContractsViewClick(event) {
+    var typeBtn = event.target.closest('[data-contract-type]');
+    if (typeBtn) {
+      resetContractsFilters(typeBtn.dataset.contractType);
+      renderContractsView();
+      return;
+    }
+
+    var contactBtn = event.target.closest('[data-contract-auction-id]');
+    if (contactBtn) {
+      copyContractWhisper(findContractAuctionById(contactBtn.dataset.contractAuctionId));
+      return;
+    }
+
+    if (event.target.id === 'contracts-apply-btn') {
+      searchContracts();
+      return;
+    }
+
+    if (event.target.id === 'contracts-reset-btn') {
+      resetContractsFilters();
+      renderContractsView();
+      return;
+    }
+
+    if (event.target.id === 'contracts-load-more-btn') {
+      contractsVisibleCount += CONTRACT_RESULTS_BATCH_SIZE;
+      refreshContractsResults();
+    }
+  }
+
+  function handleContractsViewChange(event) {
+    var target = event.target;
+    if (!target) return;
+
+    if (target.id === 'contracts-weapon-select') {
+      contractsFilters.weaponUrlName = target.value;
+      contractsResults = [];
+      contractsError = '';
+      contractsHasSearched = false;
+      contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+      if (contractsFilters.type === 'riven') {
+        contractsFilters.positiveStats = ['', '', ''];
+        contractsFilters.negativeStat = '';
+      }
+      renderContractsView();
+      return;
+    }
+
+    if (target.id === 'contracts-positive-0' || target.id === 'contracts-positive-1' || target.id === 'contracts-positive-2') {
+      var index = Number(String(target.id).slice(-1));
+      contractsFilters.positiveStats[index] = target.value;
+      contractsResults = [];
+      contractsError = '';
+      contractsHasSearched = false;
+      contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+      renderContractsView();
+      return;
+    }
+
+    if (target.id === 'contracts-negative-select') {
+      contractsFilters.negativeStat = target.value;
+      contractsResults = [];
+      contractsError = '';
+      contractsHasSearched = false;
+      contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+      renderContractsView();
+      return;
+    }
+
+    if (target.id === 'contracts-rank-select') {
+      contractsFilters.modRank = target.value || 'any';
+      contractsResults = [];
+      contractsError = '';
+      contractsHasSearched = false;
+      contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+      renderContractsView();
+      return;
+    }
+
+    if (target.id === 'contracts-element-select') {
+      contractsFilters.element = target.value;
+      contractsResults = [];
+      contractsError = '';
+      contractsHasSearched = false;
+      contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+      if (contractsFilters.ephemera) {
+        var selectedEphemera = findLookupByUrl(getContractsEphemeraOptions(), contractsFilters.ephemera);
+        if (selectedEphemera && selectedEphemera.element !== contractsFilters.element) {
+          contractsFilters.ephemera = '';
+        }
+      }
+      renderContractsView();
+      return;
+    }
+
+    if (target.id === 'contracts-ephemera-select') {
+      contractsFilters.ephemera = target.value;
+      contractsResults = [];
+      contractsError = '';
+      contractsHasSearched = false;
+      contractsVisibleCount = CONTRACT_RESULTS_BATCH_SIZE;
+      var ephemera = findLookupByUrl(getContractsEphemeraOptions(), contractsFilters.ephemera);
+      if (ephemera && ephemera.element) {
+        contractsFilters.element = ephemera.element;
+      }
+      renderContractsView();
+      return;
+    }
+
+    if (target.id === 'contracts-sort-select') {
+      contractsFilters.sortBy = target.value || 'price_asc';
+      refreshContractsResults();
+    }
+  }
+
+  function handleContractsViewInput(event) {
+    var target = event.target;
+    if (!target) return;
+
+    if (target.id === 'contracts-quick-search') {
+      contractsFilters.quickSearch = String(target.value || '');
+      refreshContractsResults();
+    }
+  }
+
   // ---------- Init on document ready ----------
   function initMarket() {
     if (marketInitialized) return;
@@ -1579,6 +2679,20 @@
       });
     }
 
+    var contractsToggleBtn = $('#market-contracts-btn');
+    if (contractsToggleBtn) {
+      contractsToggleBtn.addEventListener('click', function () {
+        setMarketViewMode(marketViewMode === 'contracts' ? 'items' : 'contracts');
+      });
+    }
+
+    var contractsView = $('#contracts-view');
+    if (contractsView) {
+      contractsView.addEventListener('click', handleContractsViewClick);
+      contractsView.addEventListener('change', handleContractsViewChange);
+      contractsView.addEventListener('input', handleContractsViewInput);
+    }
+
     // Close modal
     var closeBtn = $('#orders-modal-close');
     if (closeBtn) closeBtn.addEventListener('click', closeOrdersModal);
@@ -1593,6 +2707,8 @@
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape') closeOrdersModal();
     });
+
+    renderMarketViewState();
   }
 
   // Expose globally
@@ -1602,6 +2718,9 @@
     loadAnalytics: loadTradeAnalytics,
     openItemByName: openItemByName,
     searchItemByName: searchItemByName,
+    showContracts: function () {
+      return setMarketViewMode('contracts');
+    },
   };
 
 })();

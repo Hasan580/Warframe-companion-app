@@ -1,14 +1,14 @@
 {
   "name": "warframe-companion-app",
-  "version": "1.1.0",
+  "version": "1.4.0",
   "description": "Warframe Companion App - Mastery Rank Checklist & Calculator",
   "main": "main.js",
   "scripts": {
     "dev": "electron .",
-    "build": "electron-builder --win",
+    "build": "electron-builder",
     "build:win": "electron-builder --win",
     "build:linux": "electron-builder --linux AppImage",
-    "build:mac": "electron-builder --mac dmg",
+    "build:mac": "electron-builder --mac dmg zip",
     "package": "electron-builder --win --dir"
   },
   "author": "Hassan",
@@ -19,7 +19,8 @@
     "electron-builder": "^26.8.1"
   },
   "dependencies": {
-    "electron-updater": "^6.6.2"
+    "electron-updater": "^6.6.2",
+    "tesseract.js": "^7.0.0"
   },
   "build": {
     "appId": "com.warframe.companion",
@@ -29,6 +30,20 @@
       "target": "nsis",
       "icon": "assets/icon.png",
       "artifactName": "Warframe-Companion-App-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "artifactName": "Warframe-Companion-App-${version}-${arch}.${ext}",
+      "category": "Utility"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "Warframe-Companion-App-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -48,6 +63,7 @@
       "styles.css",
       "renderer.js",
       "market.js",
+      "starchart.js",
       "assets/**/*"
     ]
   }

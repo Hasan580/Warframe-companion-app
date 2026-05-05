@@ -10,12 +10,20 @@
   const MARKET_ITEMS_API_URL = 'https://api.warframe.market/v2/items';
   const CDN_URL = 'https://cdn.warframestat.us/img/';
   const MASTERED_STORAGE_KEY = 'warframe_mastered_items';
+  const ITEM_LEVELS_STORAGE_KEY = 'warframe_item_levels_v1';
   const REMOVED_PROFILE_NAME_KEY = 'warframe_profile_name_v1';
   const REMOVED_AUTO_PROFILE_SYNC_KEY = 'warframe_auto_profile_sync_v1';
-  const ITEMS_CACHE_KEY = 'warframe_items_cache_v14';
+  const PROFILE_FETCH_LAST_RESULT_KEY = 'warframe_profile_fetch_last_result_v1';
+  const ITEMS_CACHE_KEY = 'warframe_items_cache_v22';
   const MARKET_TRADABLE_CACHE_KEY = 'warframe_market_tradable_names_v2';
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
   const MARKET_TRADABLE_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
+  const ITEMS_BACKGROUND_REFRESH_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+  const ITEMS_BACKGROUND_REFRESH_MIN_GAP_MS = 5 * 60 * 1000; // 5 minutes
+  const PROFILE_PROCESS_WATCH_INTERVAL_MS = 3000;
+  const PROFILE_PROCESS_WATCH_TIMEOUT_MS = 90000;
+  const PROFILE_AUTO_SYNC_INTERVAL_MS = 45000;
+  const PROFILE_AUTO_SYNC_MIN_GAP_MS = 4 * 60 * 1000;
   const ALWAYS_ON_TOP_KEY = 'warframe_always_on_top_enabled';
   const AUTO_UPDATE_CHECK_KEY = 'warframe_auto_update_check_enabled';
   const APP_THEME_KEY = 'warframe_app_theme_v1';
@@ -32,12 +40,18 @@
   const FISSURES_API = 'https://api.warframestat.us/pc/fissures';
   const ARBITRATION_API = 'https://api.warframestat.us/pc/arbitration';
   const OFFICIAL_WORLDSTATE_API = 'https://content.warframe.com/dynamic/worldState.php';
-  const WIKI_API_URL = 'https://warframe.fandom.com/api.php';
-  const WIKI_BASE_URL = 'https://warframe.fandom.com';
+  const WIKI_BASE_URL = 'https://wiki.warframe.com';
+  const WIKI_API_URLS = Object.freeze([
+    'https://wiki.warframe.com/api.php',
+    'https://wiki.warframe.com/w/api.php',
+    'https://warframe.fandom.com/api.php'
+  ]);
+  const WIKI_FETCH_TIMEOUT_MS = 12000;
   const RELIC_LOOKUP_CACHE_KEY = 'warframe_relic_projection_lookup_v1';
   const RELIC_DIRECTORY_CACHE_KEY = 'warframe_relic_directory_v2';
   const ARCANE_DIRECTORY_CACHE_KEY = 'warframe_arcane_directory_v2';
   const NEWS_CACHE_KEY = 'warframe_news_cache_v1';
+  const NIGHTWAVE_ARTICLE_REFRESH_TTL = 6 * 60 * 60 * 1000; // 6 hours
   const PRIME_RESURGENCE_CACHE_KEY = 'warframe_prime_resurgence_cache_v2';
   const CETUS_CYCLE_API = 'https://api.warframestat.us/pc/cetusCycle/';
   const VALLIS_CYCLE_API = 'https://api.warframestat.us/pc/vallisCycle/';
@@ -52,6 +66,7 @@
   const RELIC_RENDER_BATCH_SIZE = 120;
   const ARCANE_RENDER_BATCH_SIZE = 72;
   const MOD_RENDER_BATCH_SIZE = 180;
+  const ALL_ITEMS_RENDER_BATCH_SIZE = 120;
   const WIKI_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
   const WIKI_ERROR_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
   const BUILD_SLOT_COUNT = 8;
@@ -60,6 +75,9 @@
   const APP_THEMES = Object.freeze({
     origin: {
       label: 'Origin'
+    },
+    warframe: {
+      label: 'Warframe'
     },
     lotus: {
       label: 'Lotus'
@@ -71,6 +89,100 @@
       label: 'Stalker'
     }
   });
+  const OCR_IGNORED_LINE_KEYS = new Set([
+    'all items',
+    'mastered',
+    'unmastered',
+    'mark all complete',
+    'unmark all',
+    'mastery rank',
+    'search items',
+    'check for updates',
+    'latest warframe news',
+    'trade mode disabled',
+    'mr calculator',
+    'reset all'
+  ]);
+  const MOTE_PRISM_NAME_KEY = 'mote prism';
+  const SIROCCO_NAME_KEY = 'sirocco';
+  const FOLLIE_NAME_KEY = 'follie';
+  const ENKAUS_RIFLE_NAME_KEY = 'enkaus';
+  const FOLLIE_THUMB_IMAGE = 'assets/Follie_Thumb.png';
+  const ENKAUS_RIFLE_THUMB_IMAGE = 'enkaus-0ffed0644c.png';
+  const MANUAL_CHECKLIST_ITEMS = Object.freeze([
+    {
+      uniqueName: 'manual://warframe/follie',
+      name: 'Follie',
+      category: 'Warframes',
+      type: 'Warframe',
+      masterable: true,
+      tradable: false,
+      imageName: FOLLIE_THUMB_IMAGE,
+      description: 'Ink-redible Warframe released with The Shadowgrapher on March 25, 2026.',
+      wikiaUrl: 'https://wiki.warframe.com/w/Follie',
+      wikiAvailable: true,
+      drops: [],
+      components: [],
+      buildPrice: 0,
+      bpCost: 0,
+      marketCost: 0,
+      tags: ['warframe', 'shadowgrapher'],
+      productCategory: 'Warframes',
+      isPrime: false,
+      vaulted: false,
+      hasVaultedStatus: false,
+      masteryReq: 0,
+      profileOnly: false
+    },
+    {
+      uniqueName: 'manual://primary/enkaus',
+      name: 'Enkaus',
+      category: 'Primary',
+      type: 'Rifle',
+      masterable: true,
+      tradable: false,
+      imageName: ENKAUS_RIFLE_THUMB_IMAGE,
+      description: 'Follie\'s signature rifle released with The Shadowgrapher on March 25, 2026.',
+      wikiaUrl: 'https://wiki.warframe.com/w/Enkaus',
+      wikiAvailable: true,
+      drops: [],
+      components: [],
+      buildPrice: 0,
+      bpCost: 0,
+      marketCost: 0,
+      tags: ['weapon', 'rifle', 'shadowgrapher'],
+      productCategory: 'LongGuns',
+      isPrime: false,
+      vaulted: false,
+      hasVaultedStatus: false,
+      masteryReq: 0,
+      profileOnly: false
+    },
+    {
+      uniqueName: 'manual://vehicle/plexus',
+      name: 'Plexus',
+      category: 'Vehicles',
+      type: 'Plexus',
+      masterable: true,
+      tradable: false,
+      imageName: '',
+      description: 'Railjack modding system shown in Warframe Equipment under Vehicles.',
+      wikiaUrl: 'https://wiki.warframe.com/w/Plexus',
+      wikiAvailable: true,
+      drops: [],
+      components: [],
+      buildPrice: 0,
+      bpCost: 0,
+      marketCost: 0,
+      tags: ['vehicle', 'railjack'],
+      productCategory: 'Vehicles',
+      isPrime: false,
+      vaulted: false,
+      hasVaultedStatus: false,
+      masteryReq: 0,
+      profileOnly: false
+    }
+  ]);
 
   try {
     var bootThemeId = String(localStorage.getItem(APP_THEME_KEY) || '').trim().toLowerCase();
@@ -100,6 +212,7 @@
   let allItems = [];
   let filteredItems = [];
   let masteredSet = new Set();
+  let itemLevelMap = Object.create(null);
   let currentCategory = 'all';
   let currentFilter = 'all';
   let searchQuery = '';
@@ -123,6 +236,7 @@
   let relicVisibleCount = RELIC_RENDER_BATCH_SIZE;
   let arcaneVisibleCount = ARCANE_RENDER_BATCH_SIZE;
   let modVisibleCount = MOD_RENDER_BATCH_SIZE;
+  let allVisibleCount = ALL_ITEMS_RENDER_BATCH_SIZE;
   let relicRenderFrame = 0;
   let arcaneRenderFrame = 0;
   let primeRelicRewardsCache = Object.create(null);
@@ -143,9 +257,33 @@
   let cycleLastBoundaryRefreshAt = 0;
   let cycleRetryTimeout = null;
   let cycleRetryDelayMs = 5000;
+  let nightwaveArticlePayload = null;
+  let nightwaveArticlePromise = null;
+  let nightwaveArticleFetchedAt = 0;
+  let nightwavePanelError = '';
   let sidebarCollapsed = false;
   let masteryExtras = getDefaultMasteryExtras();
   let currentThemeId = DEFAULT_APP_THEME;
+  let ocrScanInProgress = false;
+  let scanDragDepth = 0;
+  let tradabilityEnriched = false;
+  let tradabilityPromise = null;
+  let itemsRefreshInterval = null;
+  let itemsRefreshInProgress = false;
+  let lastItemsRefreshAt = 0;
+  let itemsAutoRefreshInitialized = false;
+  let profileFetchInProgress = false;
+  let profileProcessWatchTimer = null;
+  let profileProcessWatchStartedAt = 0;
+  let profileAutoSyncTimer = null;
+  let profileLastAutoSyncAt = 0;
+  let profileAutoSyncInitialized = false;
+  let simarisFetchInProgress = false;
+  let scanBatchContext = {
+    index: 0,
+    total: 0,
+    fileName: ''
+  };
 
   // ---------- DOM Elements ----------
   const $ = (sel) => document.querySelector(sel);
@@ -187,6 +325,8 @@
     calcItemsNeeded: $('#calc-items-needed'),
     calcProgressPercent: $('#calc-progress-percent'),
     calcProgressBar: $('#calc-progress-bar'),
+    scanItemsBtn: $('#btn-scan-items'),
+    scanItemsInput: $('#scan-items-input'),
     tradeModeBtn: $('#btn-trade-mode'),
     mainMenuUpdateBtn: $('#btn-main-menu-update'),
     mainMenuUpdateText: $('#main-menu-update-text'),
@@ -195,6 +335,15 @@
     settingsOpenBtn: $('#btn-open-settings'),
     settingsPage: $('#settings-page'),
     settingsBackBtn: $('#btn-settings-back'),
+    profileFetchBtn: $('#btn-fetch-profile'),
+    profileFetchBtnText: $('#profile-fetch-btn-text'),
+    profileFetchStatus: $('#profile-fetch-status'),
+    profileFetchStatusIcon: $('#profile-fetch-status-icon'),
+    profileFetchStatusTitle: $('#profile-fetch-status-title'),
+    profileFetchStatusCopy: $('#profile-fetch-status-copy'),
+    profileFetchStatusMeta: $('#profile-fetch-status-meta'),
+    profileSyncPill: $('#profile-sync-pill'),
+    profileSyncText: $('#profile-sync-text'),
     alwaysOnTopToggle: $('#setting-always-on-top'),
     settingsThemeCurrent: $('#settings-theme-current'),
     themeOptions: $$('.settings-theme-option'),
@@ -277,6 +426,19 @@
     cycleDuviriSteelSub: $('#cycle-duviri-steel-sub'),
     cycleDuviriNormalItems: $('#cycle-duviri-normal-items'),
     cycleDuviriHardItems: $('#cycle-duviri-hard-items'),
+    starchartNightwaveBanner: $('#starchart-nightwave-banner'),
+    starchartNightwaveBannerLabel: $('#starchart-nightwave-banner-label'),
+    starchartNightwaveBannerSub: $('#starchart-nightwave-banner-sub'),
+    starchartNightwavePanel: $('#starchart-nightwave-panel'),
+    starchartNightwaveClose: $('#starchart-nightwave-close'),
+    starchartNightwaveTitle: $('#starchart-nightwave-title'),
+    starchartNightwaveSubtitle: $('#starchart-nightwave-subtitle'),
+    starchartNightwaveActsCount: $('#starchart-nightwave-acts-count'),
+    starchartNightwaveDailyReset: $('#starchart-nightwave-daily-reset'),
+    starchartNightwaveWeeklyReset: $('#starchart-nightwave-weekly-reset'),
+    starchartNightwaveSeasonEnd: $('#starchart-nightwave-season-end'),
+    starchartNightwaveRewards: $('#starchart-nightwave-rewards'),
+    starchartNightwaveActs: $('#starchart-nightwave-acts'),
     updateDownloadBtn: $('#btn-download-update'),
     settingsUpdateDetails: $('#settings-update-details'),
     settingsAppVersion: $('#settings-app-version'),
@@ -302,6 +464,30 @@
     itemInfoWikiContent: $('#item-info-wiki-content'),
     itemInfoFarmList: $('#item-info-farm-list'),
     itemInfoCraftList: $('#item-info-craft-list'),
+    scanModal: $('#scan-modal'),
+    scanModalClose: $('#scan-modal-close'),
+    scanModalDone: $('#scan-modal-done'),
+    scanModalPickAnother: $('#scan-modal-pick-another'),
+    scanDropzone: $('#scan-dropzone'),
+    scanModalBrowse: $('#scan-modal-browse'),
+    scanDropzoneMeta: $('#scan-dropzone-meta'),
+    scanPreviewShell: $('#scan-preview-shell'),
+    scanPreviewImg: $('#scan-preview-img'),
+    scanStatusCard: $('#scan-status-card'),
+    scanStatusIcon: $('#scan-status-icon'),
+    scanStatusTitle: $('#scan-status-title'),
+    scanStatusCopy: $('#scan-status-copy'),
+    scanProgressFill: $('#scan-progress-fill'),
+    scanProgressText: $('#scan-progress-text'),
+    scanResults: $('#scan-results'),
+    scanMatchedCount: $('#scan-matched-count'),
+    scanNewCount: $('#scan-new-count'),
+    scanAlreadyCount: $('#scan-already-count'),
+    scanPossibleCount: $('#scan-possible-count'),
+    scanMatchedList: $('#scan-matched-list'),
+    scanPossibleSection: $('#scan-possible-section'),
+    scanPossibleList: $('#scan-possible-list'),
+    scanResultsNote: $('#scan-results-note'),
     itemBuildSlots: $('#item-build-slots'),
     itemBuildFormaCount: $('#item-build-forma-count'),
     itemBuildCopyLink: $('#item-build-copy-link'),
@@ -311,12 +497,40 @@
     itemBuildFamilyTabs: $('#item-build-family-tabs'),
     itemBuildModSearch: $('#item-build-mod-search'),
     itemBuildModList: $('#item-build-mod-list'),
+    cephalonSimarisBtn: $('#btn-cephalon-simaris'),
+    simarisModal: $('#simaris-modal'),
+    simarisModalClose: $('#simaris-modal-close'),
+    simarisSearchForm: $('#simaris-search-form'),
+    simarisQueryInput: $('#simaris-query-input'),
+    simarisSearchBtn: $('#simaris-search-btn'),
+    simarisStatus: $('#simaris-status'),
+    simarisStatusIcon: $('#simaris-status-icon'),
+    simarisStatusText: $('#simaris-status-text'),
+    simarisResult: $('#simaris-result'),
+    simarisResultImg: $('#simaris-result-img'),
+    simarisResultTitle: $('#simaris-result-title'),
+    simarisResultLink: $('#simaris-result-link'),
+    simarisResultContent: $('#simaris-result-content'),
   };
 
   // ---------- Window Controls ----------
-  $('#btn-minimize').addEventListener('click', () => window.electronAPI.minimize());
-  $('#btn-maximize').addEventListener('click', () => window.electronAPI.maximize());
-  $('#btn-close').addEventListener('click', () => window.electronAPI.close());
+  function bindWindowControl(buttonSelector, actionName) {
+    var button = $(buttonSelector);
+    if (!button) return;
+    button.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!window.electronAPI || typeof window.electronAPI[actionName] !== 'function') {
+        console.warn('Window control bridge is unavailable:', actionName);
+        return;
+      }
+      window.electronAPI[actionName]();
+    });
+  }
+
+  bindWindowControl('#btn-minimize', 'minimize');
+  bindWindowControl('#btn-maximize', 'maximize');
+  bindWindowControl('#btn-close', 'close');
 
   // ---------- Helpers ----------
   var NECRAMECH_NAMES = {
@@ -324,15 +538,7 @@
     'voidrig': true,
   };
 
-  var FORCED_SENTINEL_NAMES = {
-    'bharira hound': true,
-    'dorma hound': true,
-    'hec hound': true,
-    'lambeo moa': true,
-    'para moa': true,
-    'nychus moa': true,
-    'oloro moa': true,
-  };
+  var FORCED_SENTINEL_NAMES = {};
 
   var BUILD_POLARITY_OPTIONS = [
     { id: 'none', label: 'None' },
@@ -351,14 +557,37 @@
     return div.innerHTML;
   }
 
+  function cleanDisplayText(value) {
+    return String(value == null ? '' : value)
+      .replace(/ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢|Ã¢â‚¬Â¢/g, ' - ')
+      .replace(/Ã¢â‚¬â€|Ã¢â‚¬â€�|Ã¢Ë†â€™/g, '-')
+      .replace(/Ã¢â‚¬Å“|Ã¢â‚¬Â/g, '"')
+      .replace(/Ã¢â‚¬Ëœ|Ã¢â‚¬â„¢|ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢/g, "'")
+      .replace(/Ã¢â€žÂ¢/g, 'TM')
+      .replace(/Ã‚Â®/g, '(R)')
+      .replace(/Ã¢â€“Â²/g, '^')
+      .replace(/Â/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function joinDisplayParts(parts) {
+    return (Array.isArray(parts) ? parts : [])
+      .map(cleanDisplayText)
+      .filter(Boolean)
+      .join(' - ');
+  }
+
   function getWikiPageTitle(item) {
     var direct = String(item && (item.wikiaUrl || item.wikiUrl) ? (item.wikiaUrl || item.wikiUrl) : '').trim();
     if (direct) {
       try {
         var parsed = new URL(direct);
-        var marker = '/wiki/';
-        var index = parsed.pathname.indexOf(marker);
-        if (index !== -1) {
+        var markers = ['/wiki/', '/w/'];
+        for (var m = 0; m < markers.length; m++) {
+          var marker = markers[m];
+          var index = parsed.pathname.indexOf(marker);
+          if (index === -1) continue;
           var slug = parsed.pathname.slice(index + marker.length).replace(/^\/+/, '').split('/')[0];
           slug = decodeURIComponent(slug || '').replace(/_/g, ' ').trim();
           if (slug) return slug;
@@ -374,14 +603,14 @@
   function buildWikiUrl(item) {
     var title = getWikiPageTitle(item);
     if (!title) return '';
-    return WIKI_BASE_URL + '/wiki/' + encodeURIComponent(title.replace(/\s+/g, '_'));
+    return WIKI_BASE_URL + '/w/' + encodeURIComponent(title.replace(/\s+/g, '_'));
   }
 
-  function buildWikiApiUrl(item) {
+  function buildWikiApiUrl(item, apiBaseUrl) {
     var title = getWikiPageTitle(item);
     if (!title) return '';
 
-    var apiUrl = new URL(WIKI_API_URL);
+    var apiUrl = new URL(apiBaseUrl || WIKI_API_URLS[0]);
     apiUrl.searchParams.set('origin', '*');
     apiUrl.searchParams.set('action', 'parse');
     apiUrl.searchParams.set('page', title.replace(/\s+/g, '_'));
@@ -394,16 +623,82 @@
     return apiUrl.toString();
   }
 
+  async function fetchJsonWithTimeout(url, timeoutMs) {
+    var controller = new AbortController();
+    var timeout = window.setTimeout(function() {
+      controller.abort();
+    }, timeoutMs || WIKI_FETCH_TIMEOUT_MS);
+
+    try {
+      var response = await fetch(url, {
+        cache: 'no-store',
+        signal: controller.signal
+      });
+      var text = await response.text();
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return JSON.parse(text);
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  function isArchgunItem(item) {
+    var type = String(item.type || '').toLowerCase();
+    var category = String(item.category || '').toLowerCase();
+    var productCategory = String(item.productCategory || '').toLowerCase();
+
+    return type.indexOf('arch-gun') !== -1 ||
+      type.indexOf('archgun') !== -1 ||
+      category === 'arch-gun' ||
+      category === 'archgun' ||
+      productCategory === 'spaceguns';
+  }
+
+  function isArchmeleeItem(item) {
+    var type = String(item.type || '').toLowerCase();
+    var category = String(item.category || '').toLowerCase();
+    var productCategory = String(item.productCategory || '').toLowerCase();
+
+    return type.indexOf('arch-melee') !== -1 ||
+      type.indexOf('archmelee') !== -1 ||
+      category === 'arch-melee' ||
+      category === 'archmelee' ||
+      productCategory === 'spacemelee';
+  }
+
+  function isRoboticItem(item) {
+    var type = String(item && item.type ? item.type : '').toLowerCase();
+    var category = String(item && item.category ? item.category : '').toLowerCase();
+    var productCategory = String(item && item.productCategory ? item.productCategory : '').toLowerCase();
+    var uniqueName = String(item && (item.uniqueName || item.unique_name) ? (item.uniqueName || item.unique_name) : '').toLowerCase();
+    var name = toLookupKey(item && item.name);
+
+    if (isSentinelWeaponItem(item)) return true;
+    if (type === 'sentinel' || category === 'sentinels' || productCategory === 'sentinels') return true;
+    if (uniqueName.indexOf('/sentinelpowersuits/') !== -1) return true;
+    if (uniqueName.indexOf('/moapets/') !== -1) return true;
+    if (uniqueName.indexOf('/zanukapets/') !== -1) return true;
+    if (name.indexOf('hound') !== -1 || name.indexOf('moa') !== -1) return true;
+    return false;
+  }
+
   function isVehicleItem(item) {
     var type = String(item.type || '').toLowerCase();
     var category = String(item.category || '').toLowerCase();
-    var name = String(item.name || '').toLowerCase();
+    var name = toLookupKey(item.name);
+    var productCategory = String(item.productCategory || '').toLowerCase();
+    var uniqueName = String(item.uniqueName || item.unique_name || '').toLowerCase();
 
-    if (type.indexOf('archwing') !== -1 || type.indexOf('arch-gun') !== -1 || type.indexOf('arch-melee') !== -1) return true;
-    if (type.indexOf('k-drive') !== -1) return true;
-    if (category === 'archwing' || category === 'arch-gun' || category === 'arch-melee') return true;
+    if (isArchgunItem(item) || isArchmeleeItem(item)) return false;
+    if (type.indexOf('archwing') !== -1) return true;
+    if (category === 'archwing' || productCategory === 'spacesuits') return true;
+    if (type.indexOf('k-drive') !== -1 || type.indexOf('kdrive') !== -1) return true;
+    if (category === 'k-drives' || uniqueName.indexOf('/hoverboard/') !== -1) return true;
+    if (productCategory === 'mechsuits') return true;
+    if (uniqueName.indexOf('/entrati') !== -1 && uniqueName.indexOf('mech') !== -1) return true;
     if (NECRAMECH_NAMES[name]) return true;
     if (name.indexOf('necramech') !== -1) return true;
+    if (name === 'plexus') return true;
     return false;
   }
 
@@ -413,19 +708,64 @@
     return category === 'mods' || type.indexOf(' mod') !== -1 || type === 'mod';
   }
 
+  function isSentinelWeaponItem(item) {
+    var type = String(item && item.type ? item.type : '').toLowerCase();
+    var productCategory = String(item && item.productCategory ? item.productCategory : '').toLowerCase();
+    var uniqueName = String(item && (item.uniqueName || item.unique_name) ? (item.uniqueName || item.unique_name) : '').toLowerCase();
+
+    if (type === 'companion weapon' || type === 'sentinel weapon') return true;
+    if (productCategory === 'sentinelweapons') return true;
+    if (uniqueName.indexOf('/sentinelweapons/') !== -1) return true;
+    return false;
+  }
+
+  function isKitgunChamberItem(item) {
+    var name = toLookupKey(item && item.name);
+    var productCategory = String(item && item.productCategory ? item.productCategory : '').toLowerCase();
+    var uniqueName = String(item && (item.uniqueName || item.unique_name) ? (item.uniqueName || item.unique_name) : '').toLowerCase();
+
+    return productCategory === 'pistols' && (
+      name === 'catchmoon' ||
+      name === 'gaze' ||
+      name === 'rattleguts' ||
+      name === 'tombfinger' ||
+      name === 'sporelacer' ||
+      name === 'vermisplicer' ||
+      uniqueName.indexOf('/sumodularsecondaryset1/barrel/') !== -1 ||
+      uniqueName.indexOf('/infkitgun/barrels/') !== -1
+    );
+  }
+
+  function isVenariProfileItem(item) {
+    var uniqueName = String(item && (item.uniqueName || item.unique_name) ? (item.uniqueName || item.unique_name) : '').toLowerCase();
+    return uniqueName.indexOf('/powersuits/khora/kavat/') !== -1;
+  }
+
+  function isProfileMasterableException(item) {
+    return isKitgunChamberItem(item) || isVenariProfileItem(item);
+  }
+
   function isMasterableAmpItem(item) {
     var type = String(item && item.type ? item.type : '').toLowerCase();
     var name = String(item && item.name ? item.name : '').toLowerCase();
+    var productCategory = String(item && item.productCategory ? item.productCategory : '').toLowerCase();
     var uniqueName = String(item && (item.uniqueName || item.unique_name) ? (item.uniqueName || item.unique_name) : '').toLowerCase();
-    return type === 'amp' && (name.indexOf('prism') !== -1 || uniqueName.indexOf('/barrel') !== -1);
+    return productCategory === 'operatoramps' ||
+      uniqueName.indexOf('/weapons/operator/pistols/drifterpistol/') !== -1 ||
+      (type === 'amp' && (name.indexOf('prism') !== -1 || uniqueName.indexOf('/barrel') !== -1));
   }
 
   function normalizeCategory(cat, item) {
     var itemName = String((item && item.name) || '').toLowerCase();
     if (item && isModItem(item)) return 'Mods';
     if (item && isMasterableAmpItem(item)) return 'Amps';
-    if (FORCED_SENTINEL_NAMES[itemName]) return 'Sentinels';
+    if (item && isArchgunItem(item)) return 'Archgun';
+    if (item && isArchmeleeItem(item)) return 'Archmelee';
+    if (item && isRoboticItem(item)) return 'Robotic';
+    if (FORCED_SENTINEL_NAMES[itemName]) return 'Robotic';
     if (item && isVehicleItem(item)) return 'Vehicles';
+    if (item && isKitgunChamberItem(item)) return 'Secondary';
+    if (item && isVenariProfileItem(item)) return 'Companions';
 
     const map = {
       'Warframes': 'Warframes',
@@ -433,10 +773,10 @@
       'Secondary': 'Secondary',
       'Melee': 'Melee',
       'Pets': 'Companions',
-      'Sentinels': 'Sentinels',
+      'Sentinels': 'Robotic',
       'Archwing': 'Vehicles',
-      'Arch-Gun': 'Vehicles',
-      'Arch-Melee': 'Vehicles',
+      'Arch-Gun': 'Archgun',
+      'Arch-Melee': 'Archmelee',
     };
     return map[cat] || cat;
   }
@@ -445,6 +785,26 @@
     if (value === true || value === false) return value;
     var normalized = String(value || '').trim().toLowerCase();
     return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+
+  function normalizeMaxLevelCap(item) {
+    var source = item || {};
+    var candidates = [
+      source.maxLevelCap,
+      source.maxLevel,
+      source.maxRank,
+      source.levelCap,
+      source.rankCap
+    ];
+
+    for (var i = 0; i < candidates.length; i++) {
+      var value = Number(candidates[i]);
+      if (Number.isFinite(value) && value > 0) {
+        return Math.floor(value);
+      }
+    }
+
+    return 0;
   }
 
   function toTitleCaseFromSlug(text) {
@@ -461,7 +821,7 @@
     var uniqueName = item.uniqueName || item.unique_name || item.slug || '';
     var imageName = item.imageName || item.image_name || '';
     var fallbackName = uniqueName ? uniqueName.split('/').pop() : '';
-    var name = item.name || item.itemName || toTitleCaseFromSlug(fallbackName);
+    var name = cleanDisplayText(item.name || item.itemName || toTitleCaseFromSlug(fallbackName));
     var category = normalizeCategory(item.category || item.type || 'Misc', item);
     var hasVaultedStatus = Object.prototype.hasOwnProperty.call(item || {}, 'hasVaultedStatus')
       ? parseBooleanFlag(item.hasVaultedStatus)
@@ -473,12 +833,12 @@
     return {
       uniqueName: uniqueName,
       name: name,
-      category: category,
-      type: item.type || item.category || category,
-      masterable: item.masterable === true || isMasterableAmpItem(item),
+      category: cleanDisplayText(category),
+      type: cleanDisplayText(item.type || item.category || category),
+      masterable: item.masterable === true || isMasterableAmpItem(item) || isProfileMasterableException(item),
       tradable: parseBooleanFlag(item.tradable) || parseBooleanFlag(item.tradeable),
       imageName: imageName,
-      description: item.description || '',
+      description: cleanDisplayText(item.description || ''),
       wikiaUrl: item.wikiaUrl || item.wikiUrl || '',
       wikiAvailable: item.wikiAvailable !== false,
       drops: Array.isArray(item.drops) ? item.drops : [],
@@ -487,21 +847,294 @@
       bpCost: typeof item.bpCost === 'number' ? item.bpCost : 0,
       marketCost: typeof item.marketCost === 'number' ? item.marketCost : 0,
       tags: Array.isArray(item.tags) ? item.tags : [],
-      productCategory: item.productCategory || '',
+      productCategory: cleanDisplayText(item.productCategory || ''),
       isPrime: !!item.isPrime,
       vaulted: hasVaultedStatus ? parseBooleanFlag(vaultedValue) : false,
       hasVaultedStatus: hasVaultedStatus,
       masteryReq: item.masteryReq || 0,
+      profileOnly: parseBooleanFlag(item.profileOnly),
+      syncOptional: parseBooleanFlag(item.syncOptional),
+      maxLevelCap: normalizeMaxLevelCap(item),
+      levelStats: Array.isArray(item.levelStats) ? item.levelStats : [],
+      rarity: cleanDisplayText(item.rarity || ''),
+      polarity: cleanDisplayText(item.polarity || ''),
+      baseDrain: typeof item.baseDrain === 'number' ? item.baseDrain : 0,
+      fusionLimit: typeof item.fusionLimit === 'number' ? item.fusionLimit : 0,
+      compatName: cleanDisplayText(item.compatName || ''),
+      wikiaThumbnail: String(item.wikiaThumbnail || ''),
     };
   }
 
   function toLookupKey(name) {
-    return String(name || '')
+    return cleanDisplayText(name)
       .toLowerCase()
-      .replace(/[’'`]/g, '')
+      .replace(/[Ã¢â‚¬â„¢'`]/g, '')
       .replace(/[^a-z0-9+]+/g, ' ')
       .trim()
       .replace(/\s+/g, ' ');
+  }
+
+  function cloneNormalizedChecklistItem(item) {
+    var source = item || {};
+    return {
+      uniqueName: String(source.uniqueName || ''),
+      name: cleanDisplayText(source.name || ''),
+      category: cleanDisplayText(source.category || 'Misc'),
+      type: cleanDisplayText(source.type || source.category || 'Misc'),
+      masterable: source.masterable === true,
+      tradable: !!source.tradable,
+      imageName: String(source.imageName || ''),
+      description: cleanDisplayText(source.description || ''),
+      wikiaUrl: String(source.wikiaUrl || source.wikiUrl || ''),
+      wikiAvailable: source.wikiAvailable !== false,
+      drops: Array.isArray(source.drops) ? source.drops.slice() : [],
+      components: Array.isArray(source.components) ? source.components.slice() : [],
+      buildPrice: typeof source.buildPrice === 'number' ? source.buildPrice : 0,
+      bpCost: typeof source.bpCost === 'number' ? source.bpCost : 0,
+      marketCost: typeof source.marketCost === 'number' ? source.marketCost : 0,
+      tags: Array.isArray(source.tags) ? source.tags.slice() : [],
+      productCategory: cleanDisplayText(source.productCategory || ''),
+      isPrime: !!source.isPrime,
+      vaulted: !!source.vaulted,
+      hasVaultedStatus: !!source.hasVaultedStatus,
+      masteryReq: source.masteryReq || 0,
+      profileOnly: source.profileOnly === true,
+      syncOptional: source.syncOptional === true,
+      maxLevelCap: normalizeMaxLevelCap(source),
+      levelStats: Array.isArray(source.levelStats) ? source.levelStats.slice() : [],
+      rarity: cleanDisplayText(source.rarity || ''),
+      polarity: cleanDisplayText(source.polarity || ''),
+      baseDrain: typeof source.baseDrain === 'number' ? source.baseDrain : 0,
+      fusionLimit: typeof source.fusionLimit === 'number' ? source.fusionLimit : 0,
+      compatName: cleanDisplayText(source.compatName || ''),
+      wikiaThumbnail: String(source.wikiaThumbnail || ''),
+    };
+  }
+
+  function getMarketAssetUrl(path) {
+    if (!path) return '';
+    var normalized = String(path).trim();
+    if (!normalized) return '';
+    if (/^https?:\/\//i.test(normalized)) return normalized;
+    return 'https://warframe.market/static/assets/' + normalized.replace(/^\/+/, '');
+  }
+
+  function normalizeMarketChecklistName(name) {
+    var value = String(name || '').trim();
+    if (!value) return '';
+    return value.replace(/\s+set$/i, '').trim();
+  }
+
+  function normalizeMarketChecklistCategory(tags) {
+    var normalizedTags = Array.isArray(tags)
+      ? tags.map(function(tag) { return String(tag || '').trim().toLowerCase(); }).filter(Boolean)
+      : [];
+
+    if (normalizedTags.indexOf('warframe') !== -1) {
+      return { category: 'Warframes', type: 'Warframe' };
+    }
+    if (normalizedTags.indexOf('sentinel') !== -1) {
+      return { category: 'Robotic', type: 'Sentinel' };
+    }
+    if (normalizedTags.indexOf('companion') !== -1 || normalizedTags.indexOf('pet') !== -1) {
+      return { category: 'Companions', type: 'Companion' };
+    }
+    if (normalizedTags.indexOf('primary') !== -1) {
+      return { category: 'Primary', type: 'Primary' };
+    }
+    if (normalizedTags.indexOf('secondary') !== -1) {
+      return { category: 'Secondary', type: 'Secondary' };
+    }
+    if (normalizedTags.indexOf('melee') !== -1) {
+      return { category: 'Melee', type: 'Melee' };
+    }
+    if (normalizedTags.indexOf('arch-gun') !== -1 || normalizedTags.indexOf('archgun') !== -1) {
+      return { category: 'Archgun', type: 'Archgun' };
+    }
+    if (normalizedTags.indexOf('arch-melee') !== -1 || normalizedTags.indexOf('archmelee') !== -1) {
+      return { category: 'Archmelee', type: 'Archmelee' };
+    }
+    if (
+      normalizedTags.indexOf('archwing') !== -1 ||
+      normalizedTags.indexOf('k-drive') !== -1 ||
+      normalizedTags.indexOf('kdrive') !== -1 ||
+      normalizedTags.indexOf('vehicle') !== -1 ||
+      normalizedTags.indexOf('necramech') !== -1
+    ) {
+      return { category: 'Vehicles', type: 'Vehicle' };
+    }
+
+    return null;
+  }
+
+  function isMarketMasteryChecklistEntry(entry, categoryMeta) {
+    if (!categoryMeta) return false;
+
+    var gameRef = String(entry && (entry.gameRef || entry.game_ref) ? (entry.gameRef || entry.game_ref) : '')
+      .trim()
+      .toLowerCase();
+    if (!gameRef) return false;
+
+    if (categoryMeta.category === 'Warframes') {
+      return gameRef.indexOf('/powersuits/') !== -1;
+    }
+    if (categoryMeta.category === 'Primary' || categoryMeta.category === 'Secondary' || categoryMeta.category === 'Melee') {
+      return gameRef.indexOf('/weapons/') !== -1;
+    }
+    if (categoryMeta.category === 'Vehicles' || categoryMeta.category === 'Archgun' || categoryMeta.category === 'Archmelee') {
+      return gameRef.indexOf('/weapons/') !== -1 || gameRef.indexOf('/vehicles/') !== -1;
+    }
+    if (categoryMeta.category === 'Robotic') {
+      return gameRef.indexOf('/sentinels/') !== -1 || gameRef.indexOf('/companions/sentinels/') !== -1;
+    }
+    if (categoryMeta.category === 'Companions') {
+      return gameRef.indexOf('/companions/') !== -1 || gameRef.indexOf('/pets/') !== -1;
+    }
+
+    return false;
+  }
+
+  function normalizeMarketChecklistItem(entry) {
+    var source = entry || {};
+    var tags = Array.isArray(source.tags) ? source.tags.slice() : [];
+    var categoryMeta = normalizeMarketChecklistCategory(tags);
+    var localized = source.i18n && source.i18n.en ? source.i18n.en : {};
+    var rawName = localized.name || source.item_name || source.name || '';
+    var name = normalizeMarketChecklistName(rawName);
+    if (!categoryMeta || !name || !isMarketMasteryChecklistEntry(source, categoryMeta)) return null;
+
+    return cloneNormalizedChecklistItem({
+      uniqueName: String(source.gameRef || source.game_ref || ('market://' + String(source.slug || name).trim().toLowerCase())),
+      name: name,
+      category: categoryMeta.category,
+      type: categoryMeta.type,
+      masterable: true,
+      tradable: true,
+      imageName: getMarketAssetUrl(localized.thumb || localized.icon || ''),
+      description: '',
+      wikiaUrl: buildWikiUrl({ name: name }),
+      wikiAvailable: true,
+      drops: [],
+      components: [],
+      buildPrice: 0,
+      bpCost: 0,
+      marketCost: 0,
+      tags: tags,
+      productCategory: categoryMeta.category,
+      isPrime: tags.some(function(tag) { return String(tag || '').trim().toLowerCase() === 'prime'; }) || /\bprime\b/i.test(name),
+      vaulted: false,
+      hasVaultedStatus: false,
+      masteryReq: 0,
+      profileOnly: false
+    });
+  }
+
+  function mergeChecklistItems(primaryItems, supplementalItems) {
+    var merged = [];
+    var seenUniqueNames = Object.create(null);
+    var seenNames = Object.create(null);
+
+    function addItem(item) {
+      var normalizedItem = cloneNormalizedChecklistItem(item);
+      var uniqueKey = String(normalizedItem.uniqueName || '').trim();
+      var nameKey = toLookupKey(normalizedItem.name);
+      if (!uniqueKey || !nameKey) return;
+      if (seenUniqueNames[uniqueKey] || seenNames[nameKey]) return;
+      seenUniqueNames[uniqueKey] = true;
+      seenNames[nameKey] = true;
+      merged.push(normalizedItem);
+    }
+
+    if (Array.isArray(primaryItems)) {
+      primaryItems.forEach(addItem);
+    }
+    if (Array.isArray(supplementalItems)) {
+      supplementalItems.forEach(addItem);
+    }
+
+    return merged;
+  }
+
+  function applyChecklistItemPatches(items) {
+    var patchedItems = Array.isArray(items) ? items.map(cloneNormalizedChecklistItem) : [];
+    var seenNames = Object.create(null);
+
+    for (var i = 0; i < patchedItems.length; i++) {
+      var item = patchedItems[i];
+      var key = toLookupKey(item.name);
+      if (!key) continue;
+
+      if (key === MOTE_PRISM_NAME_KEY) {
+        item.name = 'Mote Amp';
+        item.category = 'Amps';
+        item.type = 'Amp';
+        if (!String(item.description || '').trim()) {
+          item.description = 'Starter Amp awarded during early Operator progression.';
+        }
+        if (!String(item.wikiaUrl || '').trim()) {
+          item.wikiaUrl = 'https://wiki.warframe.com/w/Mote_Amp';
+        }
+      } else if (key === SIROCCO_NAME_KEY) {
+        item.category = 'Amps';
+        item.type = 'Amp';
+        if (!String(item.description || '').trim()) {
+          item.description = 'Drifter sidearm that also counts toward Amp progression.';
+        }
+        if (!String(item.wikiaUrl || '').trim()) {
+          item.wikiaUrl = 'https://wiki.warframe.com/w/Sirocco';
+        }
+      } else if (key === FOLLIE_NAME_KEY) {
+        item.category = 'Warframes';
+        item.type = 'Warframe';
+        item.imageName = FOLLIE_THUMB_IMAGE;
+        if (!String(item.description || '').trim()) {
+          item.description = 'Ink-redible Warframe released with The Shadowgrapher on March 25, 2026.';
+        }
+        if (!String(item.wikiaUrl || '').trim()) {
+          item.wikiaUrl = 'https://wiki.warframe.com/w/Follie';
+        }
+      } else if (key === ENKAUS_RIFLE_NAME_KEY) {
+        item.category = 'Primary';
+        item.type = 'Rifle';
+        if (!String(item.imageName || '').trim()) {
+          item.imageName = ENKAUS_RIFLE_THUMB_IMAGE;
+        }
+        if (!String(item.description || '').trim()) {
+          item.description = 'Follie\'s signature rifle released with The Shadowgrapher on March 25, 2026.';
+        }
+        if (!String(item.wikiaUrl || '').trim()) {
+          item.wikiaUrl = 'https://wiki.warframe.com/w/Enkaus';
+        }
+      } else if (key === 'plexus') {
+        item.category = 'Vehicles';
+        item.type = 'Plexus';
+        item.masterable = true;
+        item.profileOnly = false;
+        item.syncOptional = false;
+        if (!String(item.description || '').trim()) {
+          item.description = 'Railjack modding system shown in Warframe Equipment under Vehicles.';
+        }
+        if (!String(item.wikiaUrl || '').trim()) {
+          item.wikiaUrl = 'https://wiki.warframe.com/w/Plexus';
+        }
+      }
+
+      seenNames[toLookupKey(item.name)] = true;
+    }
+
+    for (var j = 0; j < MANUAL_CHECKLIST_ITEMS.length; j++) {
+      var manualItem = cloneNormalizedChecklistItem(MANUAL_CHECKLIST_ITEMS[j]);
+      var manualKey = toLookupKey(manualItem.name);
+      if (!manualKey || seenNames[manualKey]) continue;
+      patchedItems.push(manualItem);
+      seenNames[manualKey] = true;
+    }
+
+    patchedItems.sort(function(a, b) {
+      return String(a && a.name ? a.name : '').localeCompare(String(b && b.name ? b.name : ''));
+    });
+
+    return patchedItems;
   }
 
   function getWikiCacheKey(item) {
@@ -773,6 +1406,379 @@
     return null;
   }
 
+  function buildItemScanLookup() {
+    var byLookup = Object.create(null);
+    var byCompact = Object.create(null);
+    var entries = [];
+    var maxTokens = 1;
+
+    for (var i = 0; i < allItems.length; i++) {
+      var item = allItems[i] || {};
+      if (!item.uniqueName || !item.name) continue;
+
+      var lookupKey = toLookupKey(item.name);
+      var compactKey = toCompactLookupKey(item.name);
+      var tokenCount = lookupKey ? lookupKey.split(' ').filter(Boolean).length : 0;
+      if (!lookupKey || !compactKey) continue;
+
+      if (!byLookup[lookupKey]) byLookup[lookupKey] = item;
+      if (!byCompact[compactKey]) byCompact[compactKey] = item;
+
+      entries.push({
+        item: item,
+        lookupKey: lookupKey,
+        compactKey: compactKey,
+        tokenCount: tokenCount
+      });
+
+      if (tokenCount > maxTokens) {
+        maxTokens = tokenCount;
+      }
+    }
+
+    return {
+      byLookup: byLookup,
+      byCompact: byCompact,
+      entries: entries,
+      maxTokens: Math.min(Math.max(maxTokens, 1), 6)
+    };
+  }
+
+  function cleanOcrLineText(value) {
+    return String(value || '')
+      .replace(/[|]/g, ' ')
+      .replace(/[Ã¢â‚¬Å“Ã¢â‚¬Â]/g, '"')
+      .replace(/[Ã¢â‚¬ËœÃ¢â‚¬â„¢]/g, "'")
+      .replace(/[Ã¢â€žÂ¢Ã‚Â®]/g, ' ')
+      .replace(/\b(?:rank|owned|mastered|unmastered|completed|complete|ready|equipped|inventory|item|items|slot|slots|qty|quantity|copy|loadout)\b/gi, ' ')
+      .replace(/\b\d+\b/g, ' ')
+      .replace(/[_~]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function getUniqueOcrLines(scanPayload) {
+    var seen = Object.create(null);
+    var out = [];
+    var lines = Array.isArray(scanPayload && scanPayload.lines) ? scanPayload.lines : [];
+
+    for (var i = 0; i < lines.length; i++) {
+      var rawLine = lines[i] || {};
+      var lineText = String(rawLine.text || '').trim();
+      if (!lineText) continue;
+      var cleaned = cleanOcrLineText(lineText);
+      var normalized = toLookupKey(cleaned);
+      if (!normalized || OCR_IGNORED_LINE_KEYS.has(normalized) || seen[normalized]) continue;
+      seen[normalized] = true;
+      out.push({
+        raw: lineText,
+        cleaned: cleaned,
+        normalized: normalized,
+        confidence: typeof rawLine.confidence === 'number' ? rawLine.confidence : 0
+      });
+    }
+
+    if (out.length > 0) {
+      return out;
+    }
+
+    var fallbackLines = String(scanPayload && scanPayload.text ? scanPayload.text : '').split(/\r?\n/);
+    for (var j = 0; j < fallbackLines.length; j++) {
+      var fallbackText = String(fallbackLines[j] || '').trim();
+      if (!fallbackText) continue;
+      var fallbackCleaned = cleanOcrLineText(fallbackText);
+      var fallbackNormalized = toLookupKey(fallbackCleaned);
+      if (!fallbackNormalized || OCR_IGNORED_LINE_KEYS.has(fallbackNormalized) || seen[fallbackNormalized]) continue;
+      seen[fallbackNormalized] = true;
+      out.push({
+        raw: fallbackText,
+        cleaned: fallbackCleaned,
+        normalized: fallbackNormalized,
+        confidence: 0
+      });
+    }
+
+    return out;
+  }
+
+  function isUsefulOcrLine(line) {
+    if (!line || !line.normalized) return false;
+    var tokens = line.normalized.split(' ').filter(Boolean);
+    if (!tokens.length) return false;
+    if (tokens.length === 1 && tokens[0].length < 4) return false;
+    return true;
+  }
+
+  function tokenizeLookupValue(value) {
+    return toLookupKey(value).split(' ').filter(Boolean);
+  }
+
+  function hasOccupiedTokens(occupied, start, length) {
+    for (var i = start; i < start + length; i++) {
+      if (occupied[i]) return true;
+    }
+    return false;
+  }
+
+  function fillOccupiedTokens(occupied, start, length) {
+    for (var i = start; i < start + length; i++) {
+      occupied[i] = true;
+    }
+  }
+
+  function findExactItemMatchesInLine(line, lookup) {
+    if (!line || !line.normalized) return [];
+    var tokens = tokenizeLookupValue(line.normalized);
+    if (!tokens.length) return [];
+
+    var occupied = new Array(tokens.length);
+    var matches = [];
+
+    for (var len = Math.min(lookup.maxTokens, tokens.length); len >= 1; len--) {
+      for (var start = 0; start <= tokens.length - len; start++) {
+        if (hasOccupiedTokens(occupied, start, len)) continue;
+
+        var phrase = tokens.slice(start, start + len).join(' ');
+        var item = lookup.byLookup[phrase] || lookup.byCompact[toCompactLookupKey(phrase)];
+        if (!item) continue;
+
+        matches.push({
+          item: item,
+          source: phrase,
+          rawLine: line.raw,
+          score: 1,
+          matchType: 'exact'
+        });
+        fillOccupiedTokens(occupied, start, len);
+      }
+    }
+
+    return matches;
+  }
+
+  function levenshteinDistance(a, b) {
+    var left = String(a || '');
+    var right = String(b || '');
+    if (!left) return right.length;
+    if (!right) return left.length;
+
+    var previous = [];
+    var current = [];
+
+    for (var i = 0; i <= right.length; i++) {
+      previous[i] = i;
+    }
+
+    for (var row = 1; row <= left.length; row++) {
+      current[0] = row;
+      for (var col = 1; col <= right.length; col++) {
+        var cost = left.charCodeAt(row - 1) === right.charCodeAt(col - 1) ? 0 : 1;
+        current[col] = Math.min(
+          current[col - 1] + 1,
+          previous[col] + 1,
+          previous[col - 1] + cost
+        );
+      }
+      previous = current.slice();
+    }
+
+    return previous[right.length];
+  }
+
+  function getTokenOverlapScore(leftTokens, rightTokens) {
+    if (!leftTokens.length || !rightTokens.length) return 0;
+    var rightSeen = Object.create(null);
+    var shared = 0;
+
+    for (var i = 0; i < rightTokens.length; i++) {
+      rightSeen[rightTokens[i]] = (rightSeen[rightTokens[i]] || 0) + 1;
+    }
+
+    for (var j = 0; j < leftTokens.length; j++) {
+      var token = leftTokens[j];
+      if (!rightSeen[token]) continue;
+      shared++;
+      rightSeen[token]--;
+    }
+
+    return shared / Math.max(leftTokens.length, rightTokens.length);
+  }
+
+  function getOcrSimilarityScore(candidateKey, entry) {
+    var compactCandidate = toCompactLookupKey(candidateKey);
+    var compactTarget = entry && entry.compactKey ? entry.compactKey : '';
+    if (!compactCandidate || !compactTarget) return 0;
+
+    var editDistance = levenshteinDistance(compactCandidate, compactTarget);
+    var maxLength = Math.max(compactCandidate.length, compactTarget.length);
+    var editScore = maxLength ? 1 - (editDistance / maxLength) : 0;
+    var tokenScore = getTokenOverlapScore(
+      candidateKey.split(' ').filter(Boolean),
+      entry.lookupKey.split(' ').filter(Boolean)
+    );
+    var startBonus = compactCandidate.charAt(0) && compactCandidate.charAt(0) === compactTarget.charAt(0) ? 0.03 : 0;
+
+    return (editScore * 0.72) + (tokenScore * 0.28) + startBonus;
+  }
+
+  function findFuzzyItemMatchForLine(line, lookup) {
+    if (!line || !line.normalized) return null;
+    var candidateTokens = line.normalized.split(' ').filter(Boolean);
+    var compactCandidate = toCompactLookupKey(line.normalized);
+    if (!candidateTokens.length || compactCandidate.length < 5) return null;
+
+    var best = null;
+    var second = null;
+
+    for (var i = 0; i < lookup.entries.length; i++) {
+      var entry = lookup.entries[i];
+      if (Math.abs(entry.tokenCount - candidateTokens.length) > 1) continue;
+      if (Math.abs(entry.compactKey.length - compactCandidate.length) > 4) continue;
+
+      var score = getOcrSimilarityScore(line.normalized, entry);
+      if (!best || score > best.score) {
+        second = best;
+        best = {
+          item: entry.item,
+          score: score
+        };
+      } else if (!second || score > second.score) {
+        second = {
+          item: entry.item,
+          score: score
+        };
+      }
+    }
+
+    if (!best || best.score < 0.86) return null;
+
+    return {
+      item: best.item,
+      score: best.score,
+      confident: best.score >= 0.94 && (!second || (best.score - second.score) >= 0.05),
+      source: line.cleaned || line.raw
+    };
+  }
+
+  function analyzeRecognizedItems(scanPayload, options) {
+    var lookup = buildItemScanLookup();
+    var lines = getUniqueOcrLines(scanPayload).filter(isUsefulOcrLine);
+    var matchMap = Object.create(null);
+    var possibleMatches = [];
+    var unmatchedLines = [];
+    var sourceLabel = String(options && options.sourceLabel ? options.sourceLabel : '').trim();
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var exactMatches = findExactItemMatchesInLine(line, lookup);
+
+      if (exactMatches.length > 0) {
+        for (var j = 0; j < exactMatches.length; j++) {
+          var exactMatch = exactMatches[j];
+          if (!matchMap[exactMatch.item.uniqueName]) {
+            matchMap[exactMatch.item.uniqueName] = exactMatch;
+          }
+        }
+        continue;
+      }
+
+      var fuzzyMatch = findFuzzyItemMatchForLine(line, lookup);
+      if (fuzzyMatch && fuzzyMatch.confident) {
+        if (!matchMap[fuzzyMatch.item.uniqueName]) {
+          matchMap[fuzzyMatch.item.uniqueName] = {
+            item: fuzzyMatch.item,
+            source: fuzzyMatch.source,
+            rawLine: line.raw,
+            score: fuzzyMatch.score,
+            matchType: 'fuzzy'
+          };
+        }
+        continue;
+      }
+
+      if (fuzzyMatch) {
+        possibleMatches.push({
+          source: sourceLabel ? (sourceLabel + ': ' + fuzzyMatch.source) : fuzzyMatch.source,
+          itemName: fuzzyMatch.item.name,
+          score: fuzzyMatch.score
+        });
+      } else {
+        unmatchedLines.push(line.cleaned || line.raw);
+      }
+    }
+
+    var matchedItems = Object.keys(matchMap).map(function(key) { return matchMap[key]; });
+    matchedItems.sort(function(a, b) {
+      return String(a.item && a.item.name ? a.item.name : '').localeCompare(String(b.item && b.item.name ? b.item.name : ''));
+    });
+
+    possibleMatches.sort(function(a, b) { return b.score - a.score; });
+
+    return {
+      matchedItems: matchedItems,
+      possibleMatches: possibleMatches,
+      unmatchedCount: unmatchedLines.length,
+      scannedLineCount: lines.length
+    };
+  }
+
+  function applyRecognizedMatches(scanAnalysis, options) {
+    var matchedItems = Array.isArray(scanAnalysis && scanAnalysis.matchedItems)
+      ? scanAnalysis.matchedItems.slice()
+      : [];
+    matchedItems.sort(function(a, b) {
+      return String(a && a.item && a.item.name ? a.item.name : '').localeCompare(String(b && b.item && b.item.name ? b.item.name : ''));
+    });
+    var newlyMarked = [];
+    var alreadyMarked = [];
+    var shouldPersist = !(options && options.persist === false);
+    var shouldRefreshUi = !(options && options.refreshUi === false);
+
+    for (var k = 0; k < matchedItems.length; k++) {
+      var match = matchedItems[k];
+      if (!match.item || !match.item.uniqueName) continue;
+      if (isItemFullyRanked(match.item)) {
+        alreadyMarked.push(match);
+      } else {
+        var maxRank = getItemMaxRank(match.item);
+        setItemRank(match.item, match.item.category === 'Mods' ? 1 : (maxRank > 0 ? maxRank : 1));
+        newlyMarked.push(match);
+      }
+    }
+
+    if (shouldPersist && newlyMarked.length > 0) {
+      saveMasteryProgress();
+      if (shouldRefreshUi) {
+        updateCounts();
+        updateStats();
+        applyFilters();
+      }
+    }
+
+    var possibleMatches = Array.isArray(scanAnalysis && scanAnalysis.possibleMatches)
+      ? scanAnalysis.possibleMatches.slice()
+      : [];
+    possibleMatches.sort(function(a, b) { return b.score - a.score; });
+    var possibleMatchTotal = typeof (scanAnalysis && scanAnalysis.possibleMatchTotal) === 'number'
+      ? Math.max(0, Math.floor(scanAnalysis.possibleMatchTotal))
+      : possibleMatches.length;
+
+    return {
+      matchedItems: matchedItems,
+      newlyMarked: newlyMarked,
+      alreadyMarked: alreadyMarked,
+      possibleMatches: possibleMatches.slice(0, 8),
+      possibleMatchTotal: possibleMatchTotal,
+      unmatchedCount: scanAnalysis && typeof scanAnalysis.unmatchedCount === 'number' ? scanAnalysis.unmatchedCount : 0,
+      scannedLineCount: scanAnalysis && typeof scanAnalysis.scannedLineCount === 'number' ? scanAnalysis.scannedLineCount : 0,
+      scannedFileCount: scanAnalysis && typeof scanAnalysis.scannedFileCount === 'number' ? scanAnalysis.scannedFileCount : 1,
+      successfulFileCount: scanAnalysis && typeof scanAnalysis.successfulFileCount === 'number'
+        ? scanAnalysis.successfulFileCount
+        : (scanAnalysis && typeof scanAnalysis.scannedFileCount === 'number' ? scanAnalysis.scannedFileCount : 1),
+      failedFiles: Array.isArray(scanAnalysis && scanAnalysis.failedFiles) ? scanAnalysis.failedFiles.slice() : []
+    };
+  }
+
   function normalizeChoiceName(name) {
     var raw = String(name || '').trim();
     if (!raw) return '';
@@ -943,12 +1949,14 @@
     if (category === 'primary') return { family: 'primary', subType: subType };
     if (category === 'secondary') return { family: 'secondary', subType: subType };
     if (category === 'melee') return { family: 'melee', subType: subType };
+    if (category === 'archgun') return { family: 'archgun', subType: 'archgun' };
+    if (category === 'archmelee') return { family: 'archmelee', subType: 'archmelee' };
     if (category === 'vehicles') {
       if (subType === 'archgun') return { family: 'archgun', subType: subType };
       if (subType === 'archmelee') return { family: 'archmelee', subType: subType };
       return { family: 'archwing', subType: subType };
     }
-    if (category === 'companions' || category === 'sentinels') return { family: 'companion', subType: 'companion' };
+    if (category === 'companions' || category === 'robotic' || category === 'sentinels') return { family: 'companion', subType: 'companion' };
     return { family: 'all', subType: 'all' };
   }
 
@@ -1506,7 +2514,7 @@
 
     for (var i = 0; i < recipe.components.length; i++) {
       var comp = recipe.components[i] || {};
-      var name = String(comp.name || '').trim();
+      var name = cleanDisplayText(comp.name || '');
       if (!name || name.toLowerCase() === 'blueprint') continue;
       var count = typeof comp.itemCount === 'number' ? comp.itemCount : 1;
       out.push(name + ' x' + count);
@@ -1621,11 +2629,150 @@
     }
   }
 
+  async function ensureTradabilityLoaded(items) {
+    var targetItems = Array.isArray(items) ? items : allItems;
+    if (!Array.isArray(targetItems) || targetItems.length === 0) return false;
+    if (tradabilityEnriched) return true;
+
+    if (tradabilityPromise) {
+      try {
+        await tradabilityPromise;
+        return tradabilityEnriched;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    tradabilityPromise = (async function() {
+      await enrichItemsTradability(targetItems);
+      tradabilityEnriched = true;
+    })();
+
+    try {
+      await tradabilityPromise;
+      return tradabilityEnriched;
+    } catch (err) {
+      console.warn('Failed to enrich tradability:', err);
+      return false;
+    } finally {
+      tradabilityPromise = null;
+    }
+  }
+
   function getChecklistImageUrl(imageName) {
     if (!imageName) return '';
-    if (/^https?:\/\//i.test(imageName)) return imageName;
-    return CDN_URL + encodeURI(String(imageName).replace(/^\/+/, ''));
+    var normalized = String(imageName).trim();
+    if (/^(https?:|data:|file:)/i.test(normalized)) return normalized;
+    if (/^\/?assets\//i.test(normalized)) {
+      var assetPath = normalized.replace(/^\/+/, '');
+      if (window.electronAPI && typeof window.electronAPI.resolveAssetUrl === 'function') {
+        return window.electronAPI.resolveAssetUrl(assetPath);
+      }
+      try {
+        return new URL(assetPath, window.location.href).toString();
+      } catch (e) {
+        return encodeURI(assetPath);
+      }
+    }
+    return CDN_URL + encodeURI(normalized.replace(/^\/+/, ''));
   }
+
+  function getItemImageSources(item) {
+    if (!item) return { primary: '', fallback: '' };
+
+    var primaryImage = String(item.imageName || '').trim();
+    var fallbackImage = String(item.wikiaThumbnail || '').trim();
+    var primaryUrl = primaryImage ? getChecklistImageUrl(primaryImage) : '';
+    var fallbackUrl = fallbackImage ? getChecklistImageUrl(fallbackImage) : '';
+
+    if (primaryUrl && fallbackUrl && primaryUrl === fallbackUrl) {
+      fallbackUrl = '';
+    }
+
+    if (!primaryUrl && fallbackUrl) {
+      primaryUrl = fallbackUrl;
+      fallbackUrl = '';
+    }
+
+    return {
+      primary: primaryUrl,
+      fallback: fallbackUrl
+    };
+  }
+
+  function getItemImageUrl(item) {
+    var sources = getItemImageSources(item);
+    return sources.primary || '';
+  }
+
+  function bindImageFallback(img, sources, onFinalError) {
+    if (!img) return;
+
+    var imageSources = sources || {};
+    var primaryUrl = String(imageSources.primary || '').trim();
+    var fallbackUrl = String(imageSources.fallback || '').trim();
+
+    if (!primaryUrl) {
+      if (typeof onFinalError === 'function') onFinalError();
+      return;
+    }
+
+    function handleError() {
+      if (fallbackUrl && img.src !== fallbackUrl) {
+        img.src = fallbackUrl;
+        return;
+      }
+
+      img.removeEventListener('error', handleError);
+      if (typeof onFinalError === 'function') onFinalError();
+    }
+
+    img.addEventListener('error', handleError);
+    img.src = primaryUrl;
+  }
+
+  function hydrateManagedImageFallbacks(container) {
+    if (!container || !container.querySelectorAll) return;
+
+    var managedImages = container.querySelectorAll('img[data-primary-src]');
+    managedImages.forEach(function(img) {
+      if (img.getAttribute('data-fallback-bound') === '1') return;
+      img.setAttribute('data-fallback-bound', '1');
+
+      var primaryUrl = String(img.getAttribute('data-primary-src') || img.getAttribute('src') || '').trim();
+      var fallbackUrl = String(img.getAttribute('data-fallback-src') || '').trim();
+      var finalUrl = String(img.getAttribute('data-final-src') || '').trim();
+
+      img.addEventListener('error', function handleManagedError() {
+        if (fallbackUrl && img.src !== fallbackUrl) {
+          img.src = fallbackUrl;
+          return;
+        }
+
+        if (finalUrl && img.src !== finalUrl) {
+          img.src = finalUrl;
+          return;
+        }
+
+        img.removeEventListener('error', handleManagedError);
+      });
+
+      if (primaryUrl && img.getAttribute('src') !== primaryUrl) {
+        img.setAttribute('src', primaryUrl);
+      }
+    });
+  }
+
+  window.warframeItemImageBridge = {
+    getImageSourcesByName: function(rawName) {
+      var item = findItemByLooseName(rawName);
+      return getItemImageSources(item);
+    },
+    getImageUrlByName: function(rawName) {
+      var item = findItemByLooseName(rawName);
+      return getItemImageUrl(item);
+    }
+  };
 
   function getNewsImageUrl(imagePath) {
     if (!imagePath) return '';
@@ -2616,7 +3763,7 @@
 
       var frameName = frameNames && frameNames[i] ? frameNames[i] : '';
       var frameItem = findPrimeWarframeItemByName(frameName);
-      var imageUrl = frameItem && frameItem.imageName ? getChecklistImageUrl(frameItem.imageName) : '';
+      var imageUrl = getItemImageUrl(frameItem);
 
       if (imageUrl) {
         slot.src = imageUrl;
@@ -2652,7 +3799,7 @@
 
       var weaponName = weaponNames && weaponNames[i] ? weaponNames[i] : '';
       var weaponItem = findPrimeWeaponItemByName(weaponName);
-      var imageUrl = weaponItem && weaponItem.imageName ? getChecklistImageUrl(weaponItem.imageName) : '';
+      var imageUrl = getItemImageUrl(weaponItem);
 
       if (imageUrl) {
         slot.src = imageUrl;
@@ -2724,7 +3871,7 @@
       var right = document.createElement('span');
       right.className = 'prime-relic-reward-meta';
       var chance = formatRewardChance(reward.chance);
-      right.textContent = reward.rarity + (chance ? ' • ' + chance : '');
+      right.textContent = cleanDisplayText(reward.rarity) + (chance ? ' - ' + chance : '');
 
       row.appendChild(left);
       row.appendChild(right);
@@ -3634,9 +4781,558 @@
     els.newsModal.classList.add('hidden');
   }
 
+  function setScanTriggerBusy(isBusy) {
+    if (!els.scanItemsBtn) return;
+    els.scanItemsBtn.disabled = !!isBusy;
+  }
+
+  function setScanBatchContext(index, total, fileName) {
+    scanBatchContext.index = Math.max(0, Number(index) || 0);
+    scanBatchContext.total = Math.max(0, Number(total) || 0);
+    scanBatchContext.fileName = String(fileName || '').trim();
+  }
+
+  function getDefaultScanDropzoneMetaText() {
+    return 'Supports PNG, JPG, WEBP, GIF, BMP, and TIFF screenshots.';
+  }
+
+  function setScanDropzoneMetaText(text) {
+    if (!els.scanDropzoneMeta) return;
+    els.scanDropzoneMeta.textContent = String(text || '').trim() || getDefaultScanDropzoneMetaText();
+  }
+
+  function resetScanDropzoneState() {
+    scanDragDepth = 0;
+    if (els.scanDropzone) {
+      els.scanDropzone.classList.remove('is-dragover');
+    }
+    setScanDropzoneMetaText('');
+  }
+
+  function updateScanDropzoneMetaForSelection(files) {
+    var count = Array.isArray(files) ? files.length : 0;
+    if (!count) {
+      setScanDropzoneMetaText('');
+      return;
+    }
+
+    var firstName = files[0] && files[0].name ? String(files[0].name) : '';
+    if (count === 1) {
+      setScanDropzoneMetaText(firstName ? ('1 screenshot selected: ' + firstName) : '1 screenshot selected.');
+      return;
+    }
+
+    setScanDropzoneMetaText(count + ' screenshots selected for batch scanning.');
+  }
+
+  function updateScanDropzoneMetaForProgress(index, total, fileName) {
+    if (total <= 0) {
+      setScanDropzoneMetaText('');
+      return;
+    }
+
+    var safeName = String(fileName || '').trim();
+    if (total === 1) {
+      setScanDropzoneMetaText(safeName ? ('Scanning: ' + safeName) : 'Scanning screenshot...');
+      return;
+    }
+
+    setScanDropzoneMetaText('Scanning ' + index + ' of ' + total + (safeName ? (': ' + safeName) : ''));
+  }
+
+  function prepareScanModalForSelection() {
+    openScanModal();
+    resetScanModalView();
+    renderScanPreview('');
+    setScanBatchContext(0, 0, '');
+    resetScanDropzoneState();
+    setScanStatus(
+      'idle',
+      'Drop screenshots to begin',
+      'Drag and drop one or more screenshots here, or choose images to batch scan your inventory checklist.',
+      0,
+      'Idle'
+    );
+  }
+
+  function openScanModal() {
+    if (!els.scanModal) return;
+    els.scanModal.classList.remove('hidden');
+  }
+
+  function closeScanModal(force) {
+    if (!els.scanModal) return;
+    if (ocrScanInProgress && !force) return;
+    els.scanModal.classList.add('hidden');
+    resetScanDropzoneState();
+  }
+
+  function resetScanModalView(options) {
+    var preservePreview = !!(options && options.preservePreview);
+    if (!preservePreview) {
+      if (els.scanPreviewShell) els.scanPreviewShell.classList.add('hidden');
+      if (els.scanPreviewImg) {
+        els.scanPreviewImg.removeAttribute('src');
+      }
+    }
+    if (els.scanResults) els.scanResults.classList.add('hidden');
+    if (els.scanMatchedList) els.scanMatchedList.textContent = '';
+    if (els.scanPossibleList) els.scanPossibleList.textContent = '';
+    if (els.scanPossibleSection) els.scanPossibleSection.classList.add('hidden');
+    if (els.scanMatchedCount) els.scanMatchedCount.textContent = '0';
+    if (els.scanNewCount) els.scanNewCount.textContent = '0';
+    if (els.scanAlreadyCount) els.scanAlreadyCount.textContent = '0';
+    if (els.scanPossibleCount) els.scanPossibleCount.textContent = '0';
+    if (els.scanResultsNote) els.scanResultsNote.textContent = '';
+  }
+
+  function setScanStatus(state, title, copy, progress, progressLabel) {
+    if (els.scanStatusCard) {
+      els.scanStatusCard.classList.remove('is-busy', 'is-success', 'is-error');
+      if (state === 'busy') els.scanStatusCard.classList.add('is-busy');
+      if (state === 'success') els.scanStatusCard.classList.add('is-success');
+      if (state === 'error') els.scanStatusCard.classList.add('is-error');
+    }
+    if (els.scanStatusIcon) {
+      els.scanStatusIcon.textContent = state === 'error'
+        ? 'error'
+        : state === 'success'
+          ? 'task_alt'
+          : 'image_search';
+    }
+    if (els.scanStatusTitle) els.scanStatusTitle.textContent = title || '';
+    if (els.scanStatusCopy) els.scanStatusCopy.textContent = copy || '';
+    if (els.scanProgressFill) {
+      var value = typeof progress === 'number' ? Math.max(0, Math.min(progress, 1)) : 0;
+      els.scanProgressFill.style.width = Math.round(value * 100) + '%';
+    }
+    if (els.scanProgressText) {
+      els.scanProgressText.textContent = progressLabel || '';
+    }
+  }
+
+  function setScanModalBusy(isBusy) {
+    ocrScanInProgress = !!isBusy;
+    setScanTriggerBusy(isBusy);
+    if (els.scanModalClose) els.scanModalClose.disabled = !!isBusy;
+    if (els.scanModalDone) els.scanModalDone.disabled = !!isBusy;
+    if (els.scanModalPickAnother) els.scanModalPickAnother.disabled = !!isBusy;
+    if (els.scanModalBrowse) els.scanModalBrowse.disabled = !!isBusy;
+    if (els.scanItemsInput) els.scanItemsInput.disabled = !!isBusy;
+    if (els.scanDropzone) els.scanDropzone.classList.toggle('is-disabled', !!isBusy);
+  }
+
+  function renderScanPreview(dataUrl) {
+    if (!els.scanPreviewShell || !els.scanPreviewImg) return;
+    if (!dataUrl) {
+      els.scanPreviewShell.classList.add('hidden');
+      els.scanPreviewImg.removeAttribute('src');
+      return;
+    }
+    els.scanPreviewImg.src = dataUrl;
+    els.scanPreviewShell.classList.remove('hidden');
+  }
+
+  function appendScanChip(container, label, tone) {
+    if (!container) return;
+    var chip = document.createElement('div');
+    chip.className = 'scan-chip' + (tone ? ' ' + tone : '');
+
+    var name = document.createElement('span');
+    name.textContent = label;
+    chip.appendChild(name);
+
+    var tag = document.createElement('span');
+    tag.className = 'scan-chip-tag';
+    tag.textContent = tone === 'is-new' ? 'new' : 'already checked';
+    chip.appendChild(tag);
+
+    container.appendChild(chip);
+  }
+
+  function renderPossibleScanMatch(container, match) {
+    if (!container || !match) return;
+
+    var row = document.createElement('div');
+    row.className = 'scan-possible-item';
+
+    var source = document.createElement('div');
+    source.className = 'scan-possible-source';
+    source.textContent = match.source || '';
+    row.appendChild(source);
+
+    var arrow = document.createElement('div');
+    arrow.className = 'scan-possible-arrow';
+    arrow.textContent = '->';
+    row.appendChild(arrow);
+
+    var target = document.createElement('div');
+    target.className = 'scan-possible-target';
+    target.textContent = match.itemName || '';
+    row.appendChild(target);
+
+    var score = document.createElement('div');
+    score.className = 'scan-possible-score';
+    score.textContent = Math.round((match.score || 0) * 100) + '%';
+    row.appendChild(score);
+
+    container.appendChild(row);
+  }
+
+  function renderScanResults(scanResult) {
+    resetScanModalView({ preservePreview: true });
+
+    if (els.scanResults) {
+      els.scanResults.classList.remove('hidden');
+    }
+    if (els.scanMatchedCount) els.scanMatchedCount.textContent = String(scanResult.matchedItems.length);
+    if (els.scanNewCount) els.scanNewCount.textContent = String(scanResult.newlyMarked.length);
+    if (els.scanAlreadyCount) els.scanAlreadyCount.textContent = String(scanResult.alreadyMarked.length);
+    if (els.scanPossibleCount) {
+      var possibleCount = typeof scanResult.possibleMatchTotal === 'number'
+        ? scanResult.possibleMatchTotal
+        : scanResult.possibleMatches.length;
+      els.scanPossibleCount.textContent = String(possibleCount);
+    }
+
+    for (var i = 0; i < scanResult.newlyMarked.length; i++) {
+      appendScanChip(els.scanMatchedList, scanResult.newlyMarked[i].item.name, 'is-new');
+    }
+    for (var j = 0; j < scanResult.alreadyMarked.length; j++) {
+      appendScanChip(els.scanMatchedList, scanResult.alreadyMarked[j].item.name, 'is-existing');
+    }
+
+    if (scanResult.possibleMatches.length > 0 && els.scanPossibleSection) {
+      els.scanPossibleSection.classList.remove('hidden');
+      for (var p = 0; p < scanResult.possibleMatches.length; p++) {
+        renderPossibleScanMatch(els.scanPossibleList, scanResult.possibleMatches[p]);
+      }
+    }
+
+    if (els.scanResultsNote) {
+      var successfulFileCount = typeof scanResult.successfulFileCount === 'number'
+        ? scanResult.successfulFileCount
+        : (typeof scanResult.scannedFileCount === 'number' ? scanResult.scannedFileCount : 1);
+      var selectedFileCount = typeof scanResult.scannedFileCount === 'number' ? scanResult.scannedFileCount : 1;
+      var failedFiles = Array.isArray(scanResult.failedFiles) ? scanResult.failedFiles : [];
+      var failedNames = failedFiles
+        .map(function(entry) { return String(entry && entry.name ? entry.name : '').trim(); })
+        .filter(Boolean);
+      var failedSummary = '';
+
+      if (failedNames.length > 0) {
+        failedSummary = failedNames.length <= 3
+          ? failedNames.join(', ')
+          : failedNames.slice(0, 3).join(', ') + ', +' + (failedNames.length - 3) + ' more';
+      }
+
+      if (scanResult.matchedItems.length > 0) {
+        els.scanResultsNote.textContent = selectedFileCount > 1
+          ? 'Matched ' + scanResult.matchedItems.length + ' unique item(s) from ' + scanResult.scannedLineCount + ' OCR line(s) across ' + successfulFileCount + ' successful screenshot(s). Low-confidence guesses were left unchecked so the app does not mark the wrong item.'
+          : 'Matched ' + scanResult.matchedItems.length + ' item(s) from ' + scanResult.scannedLineCount + ' OCR line(s). Low-confidence guesses were left unchecked so the app does not mark the wrong item.';
+      } else {
+        els.scanResultsNote.textContent = selectedFileCount > 1
+          ? 'No confident matches were found in the successful screenshots from this batch. Try clearer screenshots with item names visible, or crop tighter around the item list.'
+          : 'No confident matches were found in this screenshot. Try a clearer screenshot with item names visible, or crop tighter around the item list.';
+      }
+
+      if (scanResult.unmatchedCount > 0) {
+        els.scanResultsNote.textContent += ' Unmatched OCR lines: ' + scanResult.unmatchedCount + '.';
+      }
+      if (failedFiles.length > 0) {
+        els.scanResultsNote.textContent += ' Failed screenshots: ' + failedFiles.length + (failedSummary ? (' (' + failedSummary + ').') : '.');
+      }
+    }
+  }
+
+  function formatOcrProgressLabel(payload) {
+    var status = String(payload && payload.status ? payload.status : '').toLowerCase();
+    if (status === 'queued') return 'Preparing screenshot';
+    if (status === 'loading tesseract core') return 'Loading OCR engine';
+    if (status === 'initializing tesseract') return 'Starting OCR engine';
+    if (status === 'loading language traineddata') return 'Downloading OCR language data';
+    if (status === 'initializing api') return 'Preparing text recognition';
+    if (status === 'recognizing text') return 'Reading item names';
+    if (status === 'done') return 'Scan complete';
+    return 'Analyzing screenshot';
+  }
+
+  function handleOcrScanProgress(payload) {
+    if (!ocrScanInProgress) return;
+    var progress = typeof payload.progress === 'number' ? payload.progress : 0;
+    var overallProgress = progress;
+    if (scanBatchContext.total > 1 && scanBatchContext.index > 0) {
+      overallProgress = ((scanBatchContext.index - 1) + Math.max(0, Math.min(progress, 1))) / scanBatchContext.total;
+    }
+    var label = formatOcrProgressLabel(payload);
+    var title = scanBatchContext.total > 1 && scanBatchContext.index > 0
+      ? label + ' (' + scanBatchContext.index + '/' + scanBatchContext.total + ')'
+      : label;
+    var copy = scanBatchContext.fileName
+      ? 'Current file: ' + scanBatchContext.fileName + '. The first scan can take longer while the OCR engine downloads its English data.'
+      : 'The first scan can take longer while the OCR engine downloads its English data.';
+    var progressLabel = scanBatchContext.total > 1 && scanBatchContext.index > 0
+      ? 'Batch ' + scanBatchContext.index + '/' + scanBatchContext.total + ' | ' + label + ' ' + Math.round(overallProgress * 100) + '%'
+      : label + ' ' + Math.round(overallProgress * 100) + '%';
+    setScanStatus(
+      'busy',
+      title,
+      copy,
+      overallProgress,
+      progressLabel
+    );
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise(function(resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function() {
+        resolve(String(reader.result || ''));
+      };
+      reader.onerror = function() {
+        reject(new Error('Failed to read the selected image.'));
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function isSupportedScanImageFile(file) {
+    if (!file) return false;
+
+    var type = String(file.type || '').toLowerCase();
+    if (type.indexOf('image/') === 0) return true;
+
+    var name = String(file.name || '').toLowerCase();
+    return /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(name);
+  }
+
+  function getSelectedScanFiles(fileList) {
+    var files = [];
+    if (!fileList || typeof fileList.length !== 'number') return files;
+
+    for (var i = 0; i < fileList.length; i++) {
+      var file = fileList[i];
+      if (isSupportedScanImageFile(file)) {
+        files.push(file);
+      }
+    }
+
+    return files;
+  }
+
+  function buildScanBatchAggregate(fileCount) {
+    return {
+      matchedMap: Object.create(null),
+      possibleMap: Object.create(null),
+      scannedLineCount: 0,
+      unmatchedCount: 0,
+      scannedFileCount: fileCount,
+      successfulFileCount: 0,
+      failedFiles: []
+    };
+  }
+
+  function accumulateScanAnalysis(aggregate, scanAnalysis) {
+    if (!aggregate || !scanAnalysis) return;
+
+    aggregate.successfulFileCount += 1;
+    aggregate.scannedLineCount += Math.max(0, Number(scanAnalysis.scannedLineCount) || 0);
+    aggregate.unmatchedCount += Math.max(0, Number(scanAnalysis.unmatchedCount) || 0);
+
+    var matchedItems = Array.isArray(scanAnalysis.matchedItems) ? scanAnalysis.matchedItems : [];
+    for (var i = 0; i < matchedItems.length; i++) {
+      var match = matchedItems[i];
+      var key = match && match.item ? String(match.item.uniqueName || '') : '';
+      if (!key || aggregate.matchedMap[key]) continue;
+      aggregate.matchedMap[key] = match;
+    }
+
+    var possibleMatches = Array.isArray(scanAnalysis.possibleMatches) ? scanAnalysis.possibleMatches : [];
+    for (var p = 0; p < possibleMatches.length; p++) {
+      var possible = possibleMatches[p];
+      if (!possible) continue;
+      var possibleKey = String(possible.itemName || '') + '|' + String(possible.source || '');
+      var existing = aggregate.possibleMap[possibleKey];
+      if (!existing || Number(possible.score || 0) > Number(existing.score || 0)) {
+        aggregate.possibleMap[possibleKey] = possible;
+      }
+    }
+  }
+
+  function finalizeScanBatchResult(aggregate) {
+    var matchedItems = Object.keys(aggregate.matchedMap).map(function(key) {
+      return aggregate.matchedMap[key];
+    });
+    matchedItems.sort(function(a, b) {
+      return String(a && a.item && a.item.name ? a.item.name : '').localeCompare(String(b && b.item && b.item.name ? b.item.name : ''));
+    });
+
+    var possibleMatches = Object.keys(aggregate.possibleMap).map(function(key) {
+      return aggregate.possibleMap[key];
+    });
+    possibleMatches.sort(function(a, b) { return Number(b.score || 0) - Number(a.score || 0); });
+
+    return applyRecognizedMatches({
+      matchedItems: matchedItems,
+      possibleMatches: possibleMatches,
+      possibleMatchTotal: possibleMatches.length,
+      unmatchedCount: aggregate.unmatchedCount,
+      scannedLineCount: aggregate.scannedLineCount,
+      scannedFileCount: aggregate.scannedFileCount,
+      successfulFileCount: aggregate.successfulFileCount,
+      failedFiles: aggregate.failedFiles
+    });
+  }
+
+  function buildScanCompletionCopy(scanResult) {
+    var scannedFileCount = typeof scanResult.scannedFileCount === 'number' ? scanResult.scannedFileCount : 1;
+    var successfulFileCount = typeof scanResult.successfulFileCount === 'number' ? scanResult.successfulFileCount : scannedFileCount;
+    var failedFileCount = Array.isArray(scanResult.failedFiles) ? scanResult.failedFiles.length : 0;
+
+    if (failedFileCount > 0 && successfulFileCount > 0) {
+      return scanResult.newlyMarked.length > 0
+        ? 'Scanned ' + successfulFileCount + ' of ' + scannedFileCount + ' screenshots. New matches from the successful scans were added to your checklist.'
+        : 'Scanned ' + successfulFileCount + ' of ' + scannedFileCount + ' screenshots. No new items were added automatically from the successful scans.';
+    }
+
+    if (scanResult.newlyMarked.length > 0) {
+      return scannedFileCount > 1
+        ? 'New matches from this batch were added to your checklist automatically.'
+        : 'New matches were added to your checklist automatically.';
+    }
+
+    return scannedFileCount > 1
+      ? 'No new items were added automatically from this batch scan.'
+      : 'No new items were added automatically from this scan.';
+  }
+
+  function openScanFilePicker() {
+    if (ocrScanInProgress || !els.scanItemsInput) return;
+    els.scanItemsInput.click();
+  }
+
+  async function startScreenshotItemScanBatch(files) {
+    var selectedFiles = Array.isArray(files) ? files.filter(Boolean) : [];
+    if (!selectedFiles.length) return;
+
+    prepareScanModalForSelection();
+    updateScanDropzoneMetaForSelection(selectedFiles);
+
+    if (!allItems.length) {
+      setScanStatus(
+        'error',
+        'Items are still loading',
+        'Wait for the checklist to finish loading before scanning screenshots.',
+        0,
+        'Unavailable'
+      );
+      return;
+    }
+
+    if (!window.electronAPI || !window.electronAPI.scanImageForItems) {
+      setScanStatus(
+        'error',
+        'OCR is not available',
+        'This build does not expose the screenshot scanner through Electron.',
+        0,
+        'Unavailable'
+      );
+      return;
+    }
+
+    try {
+      var aggregate = buildScanBatchAggregate(selectedFiles.length);
+      setScanModalBusy(true);
+
+      for (var i = 0; i < selectedFiles.length; i++) {
+        var file = selectedFiles[i];
+        setScanBatchContext(i + 1, selectedFiles.length, file && file.name ? file.name : '');
+        updateScanDropzoneMetaForProgress(i + 1, selectedFiles.length, scanBatchContext.fileName);
+
+        setScanStatus(
+          'busy',
+          selectedFiles.length > 1 ? ('Preparing screenshot ' + (i + 1) + ' of ' + selectedFiles.length) : 'Preparing screenshot',
+          scanBatchContext.fileName
+            ? ('Loading ' + scanBatchContext.fileName + ' and sending it to the OCR worker.')
+            : 'Loading the selected image and sending it to the OCR worker.',
+          selectedFiles.length > 1 ? (i / selectedFiles.length) : 0.02,
+          selectedFiles.length > 1 ? ('Batch ' + (i + 1) + '/' + selectedFiles.length) : 'Preparing 2%'
+        );
+
+        var dataUrl = await readFileAsDataUrl(file);
+        renderScanPreview(dataUrl);
+
+        try {
+          var scanResponse = await window.electronAPI.scanImageForItems(dataUrl);
+          if (!scanResponse || !scanResponse.ok) {
+            throw new Error(scanResponse && scanResponse.message ? scanResponse.message : 'The screenshot scan failed.');
+          }
+
+          var scanAnalysis = analyzeRecognizedItems(scanResponse, {
+            sourceLabel: selectedFiles.length > 1 && file && file.name ? file.name : ''
+          });
+          accumulateScanAnalysis(aggregate, scanAnalysis);
+        } catch (fileErr) {
+          aggregate.failedFiles.push({
+            name: file && file.name ? file.name : '',
+            message: fileErr && fileErr.message ? fileErr.message : 'The screenshot scan failed.'
+          });
+        }
+      }
+
+      if (aggregate.successfulFileCount === 0) {
+        throw new Error(
+          aggregate.failedFiles.length > 0 && aggregate.failedFiles[0] && aggregate.failedFiles[0].message
+            ? aggregate.failedFiles[0].message
+            : 'The screenshot scan failed.'
+        );
+      }
+
+      var scanResult = finalizeScanBatchResult(aggregate);
+      renderScanResults(scanResult);
+      setScanStatus(
+        scanResult.failedFiles.length > 0 ? 'error' : 'success',
+        scanResult.failedFiles.length > 0
+          ? 'Batch completed with some issues'
+          : (scanResult.scannedFileCount > 1
+              ? (scanResult.matchedItems.length > 0 ? 'Batch processed' : 'Batch scanned')
+              : (scanResult.matchedItems.length > 0 ? 'Screenshot processed' : 'Screenshot scanned')),
+        buildScanCompletionCopy(scanResult),
+        1,
+        'Complete 100%'
+      );
+      setScanDropzoneMetaText(
+        scanResult.scannedFileCount > 1
+          ? (scanResult.scannedFileCount + ' screenshots scanned. Drop more images or choose another batch.')
+          : '1 screenshot scanned. Drop or choose another image to scan again.'
+      );
+    } catch (err) {
+      resetScanModalView({ preservePreview: true });
+      setScanStatus(
+        'error',
+        'Scan failed',
+        err && err.message ? err.message : 'Something went wrong while analyzing the screenshot.',
+        0,
+        'Failed'
+      );
+      setScanDropzoneMetaText('Drop more images or choose another batch to try again.');
+    } finally {
+      setScanBatchContext(0, 0, '');
+      setScanModalBusy(false);
+    }
+  }
+
+  function triggerScreenshotItemScan() {
+    if (ocrScanInProgress) return;
+    prepareScanModalForSelection();
+  }
+
   function formatPercentChance(chance) {
-    if (typeof chance !== 'number') return '';
-    return (chance * 100).toFixed(chance < 0.01 ? 2 : 1).replace(/\.0$/, '') + '%';
+    var numeric = Number(chance);
+    if (!Number.isFinite(numeric)) return '';
+    var percent = numeric > 1 ? numeric : numeric * 100;
+    var precision = percent < 1 ? 2 : (percent < 10 ? 1 : 2);
+    return percent.toFixed(precision).replace(/\.0+$/, '').replace(/(\.\d*[1-9])0+$/, '$1') + '%';
   }
 
   function setActiveInfoTab(tab) {
@@ -3669,11 +5365,21 @@
   function renderSummary(item) {
     if (!els.itemInfoSummary) return;
     els.itemInfoSummary.textContent = '';
-    var masteryXpValue = item.category === 'Mods' ? 'N/A' : getItemXP(item).toLocaleString() + ' XP';
+    var masteryXpValue = item.category === 'Mods'
+      ? 'N/A'
+      : getTrackedItemXp(item).toLocaleString() + ' / ' + getItemXP(item).toLocaleString() + ' XP';
+    var masteryRankValue = item.category === 'Mods'
+      ? 'N/A'
+      : getStoredItemRank(item) + ' / ' + getItemMaxRank(item);
+    if (item.category !== 'Mods' && getItemMaxRank(item) <= 0) {
+      masteryRankValue = isItemFullyRanked(item) ? 'Checked' : 'Not checked';
+      masteryXpValue = 'No mastery XP';
+    }
 
     var summary = [
       { label: 'Category', value: item.category || '-' },
       { label: 'Type', value: item.type || '-' },
+      { label: 'Level', value: masteryRankValue },
       { label: 'Mastery XP', value: masteryXpValue },
       { label: 'Mastery Req', value: String(item.masteryReq || 0) }
     ];
@@ -3710,8 +5416,17 @@
 
     currentItemInfo = item;
     els.itemInfoName.textContent = item.name || 'Item';
-    els.itemInfoImg.src = getChecklistImageUrl(item.imageName);
+    var itemInfoImageUrl = getItemImageUrl(item);
+    if (itemInfoImageUrl) {
+      els.itemInfoImg.src = itemInfoImageUrl;
+    } else {
+      els.itemInfoImg.removeAttribute('src');
+    }
     els.itemInfoImg.alt = item.name || 'Item';
+    els.itemInfoImg.onerror = function() {
+      els.itemInfoImg.removeAttribute('src');
+      els.itemInfoImg.onerror = null;
+    };
     els.itemInfoDescription.textContent = item.description || 'No description available.';
     updateItemInfoPrimeStatus(item);
 
@@ -3774,8 +5489,8 @@
     var bpUniqueLower = getBlueprintUniqueName(item).toLowerCase();
 
     function add(main, sub) {
-      var m = String(main || '').trim();
-      var s = String(sub || '').trim();
+      var m = cleanDisplayText(main || '');
+      var s = cleanDisplayText(sub || '');
       if (!m || !s) return;
       var key = m + '|' + s;
       if (seen[key]) return;
@@ -3824,30 +5539,31 @@
 
     function ingestDrops(drops, sourceLabel) {
       if (!Array.isArray(drops)) return;
+      var sourceName = cleanDisplayText(sourceLabel || '');
       for (var i = 0; i < drops.length; i++) {
         var d = drops[i] || {};
-        var location = d.location || 'Unknown Location';
+        var location = cleanDisplayText(d.location || 'Unknown Location');
         var parts = String(location).split(' - ');
-        var mission = parts[0] || location;
-        var zone = parts.length > 1 ? parts.slice(1).join(' - ') : '';
+        var mission = cleanDisplayText(parts[0] || location);
+        var zone = cleanDisplayText(parts.length > 1 ? parts.slice(1).join(' - ') : '');
         var chanceText = formatPercentChance(d.chance);
-        var rarity = d.rarity ? String(d.rarity) : '';
-        var key = location + '|' + sourceLabel + '|' + rarity;
+        var rarity = cleanDisplayText(d.rarity || '');
+        var key = location + '|' + sourceName + '|' + rarity;
         var rightParts = [];
         if (zone) rightParts.push(zone);
-        if (sourceLabel) rightParts.push(sourceLabel);
+        if (sourceName) rightParts.push(sourceName);
         if (chanceText) rightParts.push(chanceText);
         if (rarity) rightParts.push(rarity);
 
         if (!byKey[key]) {
           byKey[key] = {
             main: mission,
-            sub: rightParts.join(' • ') || 'Drop source',
+            sub: joinDisplayParts(rightParts) || 'Drop source',
             score: typeof d.chance === 'number' ? d.chance : 0
           };
         } else if (typeof d.chance === 'number' && d.chance > byKey[key].score) {
           byKey[key].score = d.chance;
-          byKey[key].sub = rightParts.join(' • ') || 'Drop source';
+          byKey[key].sub = joinDisplayParts(rightParts) || 'Drop source';
         }
       }
     }
@@ -3857,7 +5573,7 @@
     if (Array.isArray(item.components)) {
       for (var c = 0; c < item.components.length; c++) {
         var comp = item.components[c];
-        ingestDrops(comp && comp.drops ? comp.drops : [], comp && comp.name ? comp.name : 'Component');
+        ingestDrops(comp && comp.drops ? comp.drops : [], comp && comp.name ? cleanDisplayText(comp.name) : 'Component');
       }
     }
 
@@ -3867,11 +5583,12 @@
     });
 
     var hints = buildAcquisitionHintEntries(item);
-    for (var h = 0; h < hints.length && entries.length < 16; h++) {
+    var farmEntryLimit = 40;
+    for (var h = 0; h < hints.length && entries.length < farmEntryLimit; h++) {
       entries.push(hints[h]);
     }
 
-    for (var v = 0; v < values.length && entries.length < 16; v++) {
+    for (var v = 0; v < values.length && entries.length < farmEntryLimit; v++) {
       entries.push({ main: values[v].main, sub: values[v].sub || 'Drop source' });
     }
     return entries;
@@ -3889,12 +5606,12 @@
         for (var c = 0; c < comp.components.length; c++) {
           var sub = comp.components[c] || {};
           var subCount = typeof sub.itemCount === 'number' ? sub.itemCount : 1;
-          if (sub.name) needs.push(sub.name + ' x' + subCount);
+          if (sub.name) needs.push(cleanDisplayText(sub.name) + ' x' + subCount);
         }
       }
       entries.push({
-        main: comp.name || 'Unknown Resource',
-        sub: needs.length > 0 ? ('x' + count + ' • Needs: ' + needs.slice(0, 4).join(', ')) : ('x' + count)
+        main: cleanDisplayText(comp.name || 'Unknown Resource'),
+        sub: needs.length > 0 ? ('x' + count + ' - Needs: ' + needs.slice(0, 4).join(', ')) : ('x' + count)
       });
     }
 
@@ -3916,10 +5633,10 @@
       row.className = 'item-info-row';
       var main = document.createElement('span');
       main.className = 'item-info-row-main';
-      main.textContent = entries[i].main;
+      main.textContent = cleanDisplayText(entries[i].main);
       var sub = document.createElement('span');
       sub.className = 'item-info-row-sub';
-      sub.textContent = entries[i].sub || '';
+      sub.textContent = cleanDisplayText(entries[i].sub || '');
       row.appendChild(main);
       row.appendChild(sub);
       container.appendChild(row);
@@ -3959,11 +5676,11 @@
 
       var main = document.createElement('span');
       main.className = 'item-info-row-main';
-      main.textContent = entries[e].main;
+      main.textContent = cleanDisplayText(entries[e].main);
 
       var sub = document.createElement('span');
       sub.className = 'item-info-row-sub';
-      sub.textContent = entries[e].sub || '';
+      sub.textContent = cleanDisplayText(entries[e].sub || '');
 
       var partResources = partMap[toLookupKey(entries[e].main)] || null;
       var shouldForceToggle = isFrameOrMech && String(entries[e].main || '').toLowerCase() !== 'credits';
@@ -3985,7 +5702,7 @@
         var detail = document.createElement('div');
         detail.className = 'item-info-part-details hidden';
         if (partResources && partResources.length > 0) {
-          detail.textContent = partResources.slice(0, 10).join(' • ');
+          detail.textContent = joinDisplayParts(partResources.slice(0, 10));
         } else {
           detail.textContent = 'No detailed sub-recipe is listed for this part in the current API data.';
         }
@@ -4091,10 +5808,17 @@
 
     var pending = (async function() {
       try {
-        var resp = await fetch(buildWikiApiUrl(item), { cache: 'no-store' });
-        if (!resp.ok) throw new Error('Warframe Wiki returned HTTP ' + resp.status + '.');
-
-        var json = await resp.json();
+        var json = null;
+        var lastError = null;
+        for (var apiIndex = 0; apiIndex < WIKI_API_URLS.length; apiIndex++) {
+          try {
+            json = await fetchJsonWithTimeout(buildWikiApiUrl(item, WIKI_API_URLS[apiIndex]), WIKI_FETCH_TIMEOUT_MS);
+            break;
+          } catch (apiErr) {
+            lastError = apiErr;
+          }
+        }
+        if (!json && lastError) throw lastError;
         if (json && json.error) {
           throw new Error(String(json.error.info || json.error.code || 'Wiki page could not be loaded.'));
         }
@@ -4155,13 +5879,165 @@
     if (currentItemInfo) fetchWikiArticle(currentItemInfo);
   }
 
+  function setSimarisStatus(state, icon, text) {
+    if (els.simarisStatus) {
+      els.simarisStatus.setAttribute('data-state', state || 'idle');
+    }
+    if (els.simarisStatusIcon) {
+      els.simarisStatusIcon.textContent = icon || 'psychology';
+    }
+    if (els.simarisStatusText) {
+      els.simarisStatusText.textContent = text || '';
+    }
+  }
+
+  function findSimarisChecklistItem(query) {
+    var key = toLookupKey(query);
+    if (!key) return null;
+
+    for (var i = 0; i < allItems.length; i++) {
+      if (toLookupKey(allItems[i] && allItems[i].name) === key) return allItems[i];
+    }
+
+    for (var j = 0; j < allItems.length; j++) {
+      var itemKey = toLookupKey(allItems[j] && allItems[j].name);
+      if (itemKey && (itemKey.indexOf(key) !== -1 || key.indexOf(itemKey) !== -1)) {
+        return allItems[j];
+      }
+    }
+
+    return null;
+  }
+
+  function buildSimarisQueryItem(query) {
+    var item = findSimarisChecklistItem(query);
+    if (item) return item;
+
+    var cleanQuery = cleanDisplayText(query);
+    return {
+      uniqueName: 'simaris://' + toLookupKey(cleanQuery),
+      name: cleanQuery,
+      category: 'Wiki',
+      type: 'Wiki Query',
+      masterable: false,
+      tradable: false,
+      imageName: '',
+      description: '',
+      wikiaUrl: buildWikiUrl({ name: cleanQuery }),
+      wikiAvailable: true,
+      drops: [],
+      components: [],
+      productCategory: '',
+      profileOnly: true
+    };
+  }
+
+  function renderSimarisResult(item, entry) {
+    if (!els.simarisResult || !entry || entry.status !== 'ready') return;
+
+    var title = cleanDisplayText(entry.title || getWikiPageTitle(item) || item.name || 'Result');
+    if (els.simarisResultTitle) els.simarisResultTitle.textContent = title;
+    if (els.simarisResultLink) {
+      els.simarisResultLink.href = entry.url || buildWikiUrl(item);
+      els.simarisResultLink.textContent = 'Open full wiki page';
+    }
+
+    var imageUrl = getItemImageUrl(item);
+    if (els.simarisResultImg) {
+      if (imageUrl) {
+        els.simarisResultImg.src = imageUrl;
+        els.simarisResultImg.alt = title;
+        els.simarisResultImg.classList.remove('hidden');
+      } else {
+        els.simarisResultImg.removeAttribute('src');
+        els.simarisResultImg.classList.add('hidden');
+      }
+    }
+
+    if (els.simarisResultContent) {
+      els.simarisResultContent.textContent = '';
+      var source = document.createElement('div');
+      source.className = 'item-info-wiki-source';
+      source.textContent = 'Content from Warframe Wiki';
+
+      var article = document.createElement('div');
+      article.className = 'item-info-wiki-article simaris-article';
+      article.innerHTML = entry.html || '';
+      applyAppTradeStatusToWikiArticle(article, item);
+
+      els.simarisResultContent.appendChild(source);
+      els.simarisResultContent.appendChild(article);
+    }
+
+    els.simarisResult.classList.remove('hidden');
+  }
+
+  async function fetchSimarisQuery(rawQuery) {
+    var query = cleanDisplayText(rawQuery);
+    if (!query) {
+      setSimarisStatus('error', 'error', 'Enter an item name first, Tenno.');
+      return;
+    }
+    if (simarisFetchInProgress) return;
+
+    simarisFetchInProgress = true;
+    if (els.simarisSearchBtn) els.simarisSearchBtn.disabled = true;
+    if (els.simarisResult) els.simarisResult.classList.add('hidden');
+    setSimarisStatus('busy', 'sync', 'Cephalon Simaris is searching the Warframe Wiki for "' + query + '"...');
+
+    try {
+      var item = buildSimarisQueryItem(query);
+      var entry = await fetchWikiArticle(item);
+      if (!entry || entry.status !== 'ready') {
+        throw new Error(entry && entry.message ? entry.message : 'No Warframe Wiki page was found for "' + query + '".');
+      }
+
+      renderSimarisResult(item, entry);
+      setSimarisStatus('success', 'check_circle', 'Information synthesized for ' + cleanDisplayText(entry.title || item.name) + '.');
+    } catch (err) {
+      setSimarisStatus('error', 'error', err && err.message ? err.message : 'Simaris could not fetch that wiki entry.');
+    } finally {
+      simarisFetchInProgress = false;
+      if (els.simarisSearchBtn) els.simarisSearchBtn.disabled = false;
+    }
+  }
+
+  function openSimarisModal() {
+    if (!els.simarisModal) return;
+    els.simarisModal.classList.remove('hidden');
+    setSimarisStatus('idle', 'psychology', 'Ask Simaris for a specific item to fetch fresh wiki information.');
+    if (els.simarisQueryInput) {
+      window.setTimeout(function() {
+        els.simarisQueryInput.focus();
+        els.simarisQueryInput.select();
+      }, 40);
+    }
+  }
+
+  function closeSimarisModal() {
+    if (!els.simarisModal) return;
+    els.simarisModal.classList.add('hidden');
+  }
+
   function openItemInfoModal(item) {
     if (!els.itemInfoModal) return;
     syncItemInfoModalContent(item, {
       preserveActiveTab: false,
-      prefetchWiki: true
+      prefetchWiki: false
     });
     els.itemInfoModal.classList.remove('hidden');
+    if (tradeModeEnabled && !tradabilityEnriched) {
+      var scheduleTradabilityLoad = typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback.bind(window)
+        : function(callback) { return window.setTimeout(callback, 80); };
+      scheduleTradabilityLoad(function() {
+        ensureTradabilityLoaded(allItems).then(function(ready) {
+          if (!ready) return;
+          saveToCache(allItems);
+          refreshCurrentItemInfoFromLatestData();
+        });
+      });
+    }
   }
 
   function closeItemInfoModal() {
@@ -4827,10 +6703,422 @@
     updateWorldstateTimers();
   }
 
+  function cleanNightwaveRewardText(text) {
+    return String(text || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function normalizeNightwaveSeriesLabel(rawTitle) {
+    var cleaned = String(rawTitle || '')
+      .replace(/^nightwave:\s*/i, '')
+      .replace(/\s+is live!?$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned) return '';
+    if (/^nora'?s mix/i.test(cleaned)) return cleaned;
+    return 'Nora\'s Mix: ' + cleaned;
+  }
+
+  function buildNightwaveBannerSubtitle(rawTitle, nightwave) {
+    var label = normalizeNightwaveSeriesLabel(rawTitle);
+    if (label) return label.toUpperCase();
+    if (nightwave && nightwave.season) return ('SEASON ' + String(nightwave.season)).toUpperCase();
+    return 'CURRENT BROADCAST';
+  }
+
+  function getNightwaveResetTs(acts, predicate) {
+    var now = Date.now();
+    var target = 0;
+    var list = ensureArray(acts);
+    for (var i = 0; i < list.length; i++) {
+      var act = list[i] || {};
+      if (typeof predicate === 'function' && !predicate(act)) continue;
+      var expiryTs = resolveWorldstateExpiryTs(act, now);
+      if (!expiryTs || expiryTs <= now) continue;
+      if (!target || expiryTs < target) target = expiryTs;
+    }
+    return target;
+  }
+
+  function parseNightwaveRewardEntry(text, index) {
+    var clean = cleanNightwaveRewardText(text);
+    var count = 0;
+    var name = clean;
+    var countMatch = clean.match(/^(\d+)\s*x\s+(.*)$/i);
+    if (countMatch) {
+      count = parseInt(countMatch[1], 10) || 0;
+      name = cleanNightwaveRewardText(countMatch[2]);
+    }
+
+    var searchNames = [name];
+    if (/\s+bundle$/i.test(name)) {
+      searchNames.push(name.replace(/\s+bundle$/i, '').trim());
+    }
+    if (/slots?$/i.test(name)) {
+      searchNames.push(name.replace(/slots?$/i, 'Slot').trim());
+    }
+    if (/forma bundle$/i.test(name)) {
+      searchNames.push('Forma');
+    }
+
+    return {
+      id: 'nightwave-reward-' + String(index + 1),
+      raw: clean,
+      name: name || clean || 'Reward',
+      count: count,
+      searchNames: searchNames.filter(Boolean)
+    };
+  }
+
+  function findNightwaveRewardItem(reward) {
+    var names = ensureArray(reward && reward.searchNames);
+    var seen = Object.create(null);
+    for (var i = 0; i < names.length; i++) {
+      var candidate = cleanNightwaveRewardText(names[i]);
+      if (!candidate) continue;
+      var key = candidate.toLowerCase();
+      if (seen[key]) continue;
+      seen[key] = true;
+      var item = findItemByLooseName(candidate);
+      if (item) return item;
+    }
+    return null;
+  }
+
+  function getNightwaveRewardPlaceholderText(name) {
+    var words = cleanNightwaveRewardText(name).split(' ').filter(Boolean);
+    var out = '';
+    for (var i = 0; i < words.length && out.length < 2; i++) {
+      var firstChar = String(words[i] || '').charAt(0).toUpperCase();
+      if (/[A-Z0-9]/.test(firstChar)) out += firstChar;
+    }
+    return out || 'NW';
+  }
+
+  function buildNightwaveRewardCardHtml(reward) {
+    var item = findNightwaveRewardItem(reward);
+    var displayName = cleanNightwaveRewardText(reward && reward.name) || 'Nightwave Reward';
+    var imageSources = item ? getItemImageSources(item) : { primary: '', fallback: '' };
+    var metaParts = [];
+
+    if (Number.isFinite(reward && reward.count) && reward.count > 1) {
+      metaParts.push(String(reward.count) + 'x');
+    }
+    metaParts.push(item && item.category ? item.category : 'Tier Reward');
+
+    var mediaHtml = imageSources.primary
+      ? (
+        '<div class="starchart-nightwave-reward-media">' +
+          '<img class="starchart-nightwave-reward-image" src="' + escapeHtml(imageSources.primary) + '" data-primary-src="' + escapeHtml(imageSources.primary) + '"' +
+            (imageSources.fallback ? ' data-fallback-src="' + escapeHtml(imageSources.fallback) + '"' : '') +
+            ' data-final-src="' + escapeHtml(getChecklistImageUrl('assets/icon.png')) + '" alt="' + escapeHtml(displayName) + '">' +
+        '</div>'
+      )
+      : ('<div class="starchart-nightwave-reward-placeholder">' + escapeHtml(getNightwaveRewardPlaceholderText(displayName)) + '</div>');
+
+    return '' +
+      '<article class="starchart-nightwave-reward-card">' +
+        mediaHtml +
+        '<div class="starchart-nightwave-reward-copy">' +
+          '<div class="starchart-nightwave-reward-name">' + escapeHtml(displayName) + '</div>' +
+          '<div class="starchart-nightwave-reward-meta">' + escapeHtml(metaParts.join(' | ')) + '</div>' +
+        '</div>' +
+      '</article>';
+  }
+
+  function buildNightwaveActCardHtml(act, seasonExpiryTs) {
+    var title = firstNonEmptyText(act && act.title, act && act.name, act && act.desc, 'Nightwave Act');
+    var description = firstNonEmptyText(act && act.desc, act && act.description, act && act.restricted, '');
+    var standing = firstNonEmptyText(act && act.reputation, act && act.standing, act && act.xp, act && act.value);
+    var chips = [];
+    var expiryTs = resolveWorldstateExpiryTs(act, Date.now()) || seasonExpiryTs;
+
+    if (act && act.isDaily) {
+      chips.push('Daily');
+    } else if (act && act.isElite) {
+      chips.push('Elite');
+      chips.push('Weekly');
+    } else if (act && act.isPermanent) {
+      chips.push('Permanent');
+    } else {
+      chips.push('Weekly');
+    }
+
+    var chipsHtml = '';
+    for (var i = 0; i < chips.length; i++) {
+      chipsHtml += '<span class="starchart-nightwave-chip">' + escapeHtml(chips[i]) + '</span>';
+    }
+
+    var timerHtml = expiryTs > 0
+      ? (
+        '<span class="worldstate-row-kicker">Ends In</span>' +
+        '<span class="js-worldstate-timer" data-expiry-ts="' + String(Math.floor(expiryTs)) + '">' + escapeHtml(formatCountdown(expiryTs - Date.now())) + '</span>'
+      )
+      : (
+        '<span class="worldstate-row-kicker">Series</span>' +
+        '<span class="js-worldstate-timer">' + escapeHtml(firstNonEmptyText(act && act.type, 'Ongoing')) + '</span>'
+      );
+
+    return '' +
+      '<article class="starchart-nightwave-act-card">' +
+        '<div class="starchart-nightwave-act-top">' +
+          '<h4 class="starchart-nightwave-act-title">' + escapeHtml(title) + '</h4>' +
+          (standing ? ('<div class="starchart-nightwave-act-standing">' + escapeHtml(formatStandingValue(standing)) + '</div>') : '') +
+        '</div>' +
+        (description ? ('<div class="starchart-nightwave-act-desc">' + escapeHtml(description) + '</div>') : '') +
+        '<div class="starchart-nightwave-act-meta">' +
+          '<div class="starchart-nightwave-chip-row">' + chipsHtml + '</div>' +
+          '<div class="starchart-nightwave-act-timer">' + timerHtml + '</div>' +
+        '</div>' +
+      '</article>';
+  }
+
+  function findLatestNightwaveNewsItem(newsItems) {
+    var matches = ensureArray(newsItems).filter(function(entry) {
+      var text = [
+        firstNonEmptyText(entry && entry.message),
+        firstNonEmptyText(entry && entry.title),
+        firstNonEmptyText(entry && entry.link)
+      ].join(' ');
+      return /nightwave/i.test(text) && !!firstNonEmptyText(entry && entry.link);
+    });
+
+    matches.sort(function(a, b) {
+      return toNewsTimestamp(b && b.date) - toNewsTimestamp(a && a.date);
+    });
+
+    return matches[0] || null;
+  }
+
+  function parseNightwaveArticlePayload(html, articleMeta) {
+    var doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+    var postBody = doc.querySelector('#post-body, .BlogPost');
+    var rewardList = null;
+    var rewards = [];
+
+    if (postBody) {
+      var headings = postBody.querySelectorAll('h1, h2, h3, h4, strong');
+      for (var i = 0; i < headings.length; i++) {
+        if (!/rewards include|rewards/i.test(cleanNightwaveRewardText(headings[i].textContent))) continue;
+        var sibling = headings[i].nextElementSibling;
+        while (sibling && !/^(UL|OL)$/i.test(String(sibling.tagName || ''))) {
+          sibling = sibling.nextElementSibling;
+        }
+        if (sibling) {
+          rewardList = sibling;
+          break;
+        }
+      }
+
+      if (!rewardList) {
+        rewardList = postBody.querySelector('ul, ol');
+      }
+    }
+
+    if (rewardList) {
+      var rewardItems = rewardList.querySelectorAll('li');
+      for (var r = 0; r < rewardItems.length; r++) {
+        var rewardText = cleanNightwaveRewardText(rewardItems[r].textContent);
+        if (!rewardText) continue;
+        rewards.push(parseNightwaveRewardEntry(rewardText, rewards.length));
+      }
+    }
+
+    return {
+      articleUrl: firstNonEmptyText(articleMeta && articleMeta.link),
+      title: firstNonEmptyText(doc.querySelector('.ArticleHeader-title') && doc.querySelector('.ArticleHeader-title').textContent, articleMeta && articleMeta.message, articleMeta && articleMeta.title, 'Nightwave'),
+      subtitle: firstNonEmptyText(doc.querySelector('.ArticleHeader-description') && doc.querySelector('.ArticleHeader-description').textContent, 'Current acts and reward track.'),
+      heroImage: firstNonEmptyText(doc.querySelector('.post-image') && doc.querySelector('.post-image').getAttribute('src'), articleMeta && articleMeta.imageLink),
+      rewards: rewards
+    };
+  }
+
+  async function ensureNightwaveArticleData(force) {
+    var shouldForce = force === true;
+    if (!shouldForce && nightwaveArticlePayload && (Date.now() - nightwaveArticleFetchedAt) < NIGHTWAVE_ARTICLE_REFRESH_TTL) {
+      return nightwaveArticlePayload;
+    }
+    if (nightwaveArticlePromise) {
+      return nightwaveArticlePromise;
+    }
+
+    nightwaveArticlePromise = (async function() {
+      try {
+        var newsResp = await fetch(WARFRAME_NEWS_API + '?_ts=' + Date.now(), { cache: 'no-store' });
+        if (!newsResp.ok) throw new Error('Nightwave news feed is unavailable.');
+
+        var newsItems = await newsResp.json();
+        var articleMeta = findLatestNightwaveNewsItem(newsItems);
+        if (!articleMeta) throw new Error('Nightwave article is unavailable.');
+
+        if (
+          !shouldForce &&
+          nightwaveArticlePayload &&
+          nightwaveArticlePayload.articleUrl === firstNonEmptyText(articleMeta.link) &&
+          (Date.now() - nightwaveArticleFetchedAt) < (NIGHTWAVE_ARTICLE_REFRESH_TTL * 3)
+        ) {
+          return nightwaveArticlePayload;
+        }
+
+        var articleResp = await fetch(firstNonEmptyText(articleMeta.link), { cache: 'no-store' });
+        if (!articleResp.ok) throw new Error('Nightwave article failed to load.');
+
+        var articleHtml = await articleResp.text();
+        nightwaveArticlePayload = parseNightwaveArticlePayload(articleHtml, articleMeta);
+        nightwaveArticleFetchedAt = Date.now();
+        return nightwaveArticlePayload;
+      } catch (err) {
+        if (nightwaveArticlePayload) return nightwaveArticlePayload;
+        throw err;
+      } finally {
+        nightwaveArticlePromise = null;
+      }
+    })();
+
+    return nightwaveArticlePromise;
+  }
+
+  function setNightwaveStatContent(node, targetTs, fallbackText) {
+    if (!node) return;
+    if (Number.isFinite(targetTs) && targetTs > 0) {
+      node.innerHTML = '<span class="js-worldstate-timer" data-expiry-ts="' + String(Math.floor(targetTs)) + '">' + escapeHtml(formatCountdown(targetTs - Date.now())) + '</span>';
+      return;
+    }
+    node.textContent = fallbackText || '--';
+  }
+
+  function syncStarchartNightwaveBanner(nightwave, article) {
+    if (els.starchartNightwaveBannerLabel) {
+      els.starchartNightwaveBannerLabel.textContent = 'NIGHTWAVE';
+    }
+    if (els.starchartNightwaveBannerSub) {
+      els.starchartNightwaveBannerSub.textContent = buildNightwaveBannerSubtitle(firstNonEmptyText(article && article.title), nightwave);
+    }
+  }
+
+  function renderStarchartNightwavePanel(options) {
+    var loading = !!(options && options.loading);
+    var worldstate = cycleSnapshot && cycleSnapshot.worldstate ? cycleSnapshot.worldstate : null;
+    var nightwave = worldstate && worldstate.nightwave ? worldstate.nightwave : null;
+    var article = nightwaveArticlePayload;
+    var panelSubtitle = firstNonEmptyText(article && article.subtitle, 'Current acts, reward track, and rollover timers.');
+    var seasonTitle = normalizeNightwaveSeriesLabel(firstNonEmptyText(article && article.title));
+
+    syncStarchartNightwaveBanner(nightwave, article);
+
+    if (!els.starchartNightwavePanel) return;
+
+    if (els.starchartNightwaveTitle) {
+      els.starchartNightwaveTitle.textContent = seasonTitle || (nightwave && nightwave.season ? ('Nightwave Season ' + String(nightwave.season)) : 'Nightwave');
+    }
+    if (els.starchartNightwaveSubtitle) {
+      els.starchartNightwaveSubtitle.textContent = nightwavePanelError || panelSubtitle;
+    }
+
+    if (!nightwave) {
+      if (els.starchartNightwaveActsCount) els.starchartNightwaveActsCount.textContent = '--';
+      setNightwaveStatContent(els.starchartNightwaveDailyReset, 0, loading || cycleRefreshInProgress ? 'Loading...' : '--');
+      setNightwaveStatContent(els.starchartNightwaveWeeklyReset, 0, loading || cycleRefreshInProgress ? 'Loading...' : '--');
+      setNightwaveStatContent(els.starchartNightwaveSeasonEnd, 0, loading || cycleRefreshInProgress ? 'Loading...' : '--');
+
+      if (els.starchartNightwaveActs) {
+        els.starchartNightwaveActs.innerHTML = '<div class="starchart-nightwave-empty">' + escapeHtml(nightwavePanelError || (loading || cycleRefreshInProgress ? 'Loading live Nightwave acts...' : 'Nightwave data is unavailable right now.')) + '</div>';
+      }
+      if (els.starchartNightwaveRewards) {
+        if (article && Array.isArray(article.rewards) && article.rewards.length > 0) {
+          els.starchartNightwaveRewards.innerHTML = article.rewards.map(buildNightwaveRewardCardHtml).join('');
+          hydrateManagedImageFallbacks(els.starchartNightwaveRewards);
+        } else {
+          els.starchartNightwaveRewards.innerHTML = '<div class="starchart-nightwave-empty">' + escapeHtml(nightwaveArticlePromise ? 'Loading current reward track...' : 'Reward images and names are unavailable right now.') + '</div>';
+        }
+      }
+
+      updateWorldstateTimers();
+      return;
+    }
+
+    var acts = ensureArray(nightwave.acts).filter(function(entry) {
+      return entry && entry.active !== false;
+    });
+    var seasonExpiryTs = toNewsTimestamp(nightwave.expiry);
+    var dailyResetTs = getNightwaveResetTs(acts, function(act) { return !!(act && act.isDaily); });
+    var weeklyResetTs = getNightwaveResetTs(acts, function(act) { return !!(act && !act.isDaily); });
+
+    if (els.starchartNightwaveActsCount) {
+      els.starchartNightwaveActsCount.textContent = String(acts.length);
+    }
+    setNightwaveStatContent(els.starchartNightwaveDailyReset, dailyResetTs, acts.some(function(act) { return !!(act && act.isDaily); }) ? '--' : 'No dailies');
+    setNightwaveStatContent(els.starchartNightwaveWeeklyReset, weeklyResetTs, acts.some(function(act) { return !!(act && !act.isDaily); }) ? '--' : 'No weeklies');
+    setNightwaveStatContent(els.starchartNightwaveSeasonEnd, seasonExpiryTs, firstNonEmptyText(nightwave.expiry, '--'));
+
+    if (els.starchartNightwaveActs) {
+      els.starchartNightwaveActs.innerHTML = acts.length > 0
+        ? acts.map(function(act) { return buildNightwaveActCardHtml(act, seasonExpiryTs); }).join('')
+        : '<div class="starchart-nightwave-empty">No Nightwave acts are active right now.</div>';
+    }
+
+    if (els.starchartNightwaveRewards) {
+      if (article && Array.isArray(article.rewards) && article.rewards.length > 0) {
+        els.starchartNightwaveRewards.innerHTML = article.rewards.map(buildNightwaveRewardCardHtml).join('');
+        hydrateManagedImageFallbacks(els.starchartNightwaveRewards);
+      } else {
+        els.starchartNightwaveRewards.innerHTML = '<div class="starchart-nightwave-empty">' + escapeHtml(nightwaveArticlePromise ? 'Loading current reward track...' : 'Reward images and names are unavailable right now.') + '</div>';
+      }
+    }
+
+    updateWorldstateTimers();
+  }
+
+  function isStarchartNightwaveOpen() {
+    return !!(els.starchartNightwavePanel && !els.starchartNightwavePanel.classList.contains('hidden'));
+  }
+
+  function openStarchartNightwavePanel() {
+    if (!els.starchartNightwavePanel) return;
+    nightwavePanelError = '';
+    els.starchartNightwavePanel.classList.remove('hidden');
+    els.starchartNightwavePanel.setAttribute('aria-hidden', 'false');
+    if (els.starchartNightwaveBanner) {
+      els.starchartNightwaveBanner.classList.add('active');
+      els.starchartNightwaveBanner.setAttribute('aria-expanded', 'true');
+    }
+
+    renderStarchartNightwavePanel({ loading: !cycleSnapshot || !cycleSnapshot.worldstate });
+    loadCycles();
+    ensureNightwaveArticleData(false).then(function() {
+      renderStarchartNightwavePanel();
+    }).catch(function() {
+      renderStarchartNightwavePanel();
+    });
+  }
+
+  function closeStarchartNightwavePanel(stopTimers) {
+    if (els.starchartNightwavePanel) {
+      els.starchartNightwavePanel.classList.add('hidden');
+      els.starchartNightwavePanel.setAttribute('aria-hidden', 'true');
+    }
+    if (els.starchartNightwaveBanner) {
+      els.starchartNightwaveBanner.classList.remove('active');
+      els.starchartNightwaveBanner.setAttribute('aria-expanded', 'false');
+    }
+    if (stopTimers !== false && getCurrentPanelName() !== 'cycles') {
+      stopCycleCountdown();
+    }
+  }
+
+  function toggleStarchartNightwavePanel() {
+    if (isStarchartNightwaveOpen()) {
+      closeStarchartNightwavePanel(true);
+      return;
+    }
+    openStarchartNightwavePanel();
+  }
+
   function updateWorldstateTimers() {
-    if (!els.cyclesPanel) return;
+    if (!document || typeof document.querySelectorAll !== 'function') return false;
     var hasExpired = false;
-    els.cyclesPanel.querySelectorAll('.js-worldstate-timer[data-expiry-ts]').forEach(function(node) {
+    document.querySelectorAll('.js-worldstate-timer[data-expiry-ts]').forEach(function(node) {
       var targetTs = parseInt(node.getAttribute('data-expiry-ts'), 10);
       if (!Number.isFinite(targetTs) || targetTs <= 0) {
         node.textContent = '--';
@@ -5072,7 +7360,7 @@
     var remaining = expiryTs > 0 ? (expiryTs - Date.now()) : 0;
     var remainingText = remaining > 0 ? formatCountdown(remaining) : String(fallbackTimeLeft || '--');
     var expiryText = expiryTs > 0 ? new Date(expiryTs).toLocaleString() : '--';
-    return 'Ends in ' + remainingText + ' • Expires ' + expiryText;
+    return 'Ends in ' + remainingText + ' - Expires ' + expiryText;
   }
 
   function parseCycleTimeLeftToMs(raw) {
@@ -5135,7 +7423,7 @@
     var remaining = expiryTs > 0 ? (expiryTs - now) : 0;
     var remainingText = remaining > 0 ? formatCountdown(remaining) : String(cycle.timeLeft || '--');
     var expiryText = expiryTs > 0 ? new Date(expiryTs).toLocaleString() : '--';
-    return 'Ends in ' + remainingText + ' • Expires ' + expiryText;
+    return 'Ends in ' + remainingText + ' - Expires ' + expiryText;
   }
 
   function applyCycleCardStateVisuals(cetusState) {
@@ -5303,7 +7591,7 @@
       } else {
         item = findItemByLooseName(displayName);
       }
-      var imageUrl = item && item.imageName ? getChecklistImageUrl(item.imageName) : '';
+      var imageSources = getItemImageSources(item);
 
       var card = document.createElement('article');
       card.className = 'cycle-item-card';
@@ -5311,9 +7599,11 @@
       var img = document.createElement('img');
       img.className = 'cycle-item-image';
       if (opts.preferIncarnon) img.classList.add('incarnon-image');
-      img.src = imageUrl || 'assets/icon.png';
       img.alt = displayName;
       img.loading = 'lazy';
+      bindImageFallback(img, imageSources, function() {
+        img.src = getChecklistImageUrl('assets/icon.png');
+      });
 
       var textWrap = document.createElement('div');
 
@@ -5323,7 +7613,7 @@
 
       var noteEl = document.createElement('div');
       noteEl.className = 'cycle-item-note';
-      noteEl.textContent = opts.preferIncarnon ? ('Incarnon form • ' + noteText) : noteText;
+      noteEl.textContent = opts.preferIncarnon ? ('Incarnon form - ' + noteText) : noteText;
 
       textWrap.appendChild(nameEl);
       textWrap.appendChild(noteEl);
@@ -5360,6 +7650,15 @@
       var data = await fetchCycleSnapshot();
       cycleSnapshot = data;
       renderWorldstateHub(data.worldstate);
+      nightwavePanelError = '';
+      renderStarchartNightwavePanel();
+      if (isStarchartNightwaveOpen()) {
+        ensureNightwaveArticleData(false).then(function() {
+          renderStarchartNightwavePanel();
+        }).catch(function() {
+          renderStarchartNightwavePanel();
+        });
+      }
 
       var cetusState = String((data.cetus && data.cetus.state) || '--').toUpperCase();
       var fortunaState = String((data.fortuna && data.fortuna.state) || '--').toUpperCase();
@@ -5415,6 +7714,7 @@
     } catch (err) {
       cycleSnapshot = null;
       stopCycleCountdown();
+      nightwavePanelError = 'Unable to load live Nightwave data right now.';
       if (els.cyclesLocationText) {
         els.cyclesLocationText.textContent = 'Failed to load live worldstate data. Try refresh.';
       }
@@ -5442,6 +7742,7 @@
       if (els.cycleDuviriHardItems) {
         els.cycleDuviriHardItems.innerHTML = '<div class="cycle-empty">Unable to load steel path rewards right now.</div>';
       }
+      renderStarchartNightwavePanel();
       cycleRetryDelayMs = 3000;
       scheduleCycleRetry(3000);
     }
@@ -5458,7 +7759,12 @@
 
   function isNecramechItem(item) {
     var name = String(item && item.name ? item.name : '').toLowerCase();
-    return !!NECRAMECH_NAMES[name] || name.indexOf('necramech') !== -1;
+    var uniqueName = String(item && item.uniqueName ? item.uniqueName : '').toLowerCase();
+    var productCategory = String(item && item.productCategory ? item.productCategory : '').toLowerCase();
+    return !!NECRAMECH_NAMES[name] ||
+      name.indexOf('necramech') !== -1 ||
+      productCategory === 'mechsuits' ||
+      uniqueName.indexOf('/entrati') !== -1 && uniqueName.indexOf('mech') !== -1;
   }
 
   function isKuvaTenetCodaWeapon(item) {
@@ -5470,26 +7776,48 @@
   }
 
   function normalizeApiItems(data) {
-    relicProjectionLookup = buildRelicProjectionLookup(data);
-    saveRelicLookupCache(relicProjectionLookup);
-    relicDirectory = buildRelicDirectory(data);
-    cacheRelicRewardsDirectory(relicDirectory);
-    saveRelicDirectoryCache(relicDirectory);
+    return applyChecklistItemPatches(
+      data
+        .filter(function(item) { return item.masterable === true || item.category === 'Mods' || isMasterableAmpItem(item) || isProfileMasterableException(item); })
+        .map(normalizeItem)
+        .filter(function(item) { return !!item.uniqueName && !!item.name; })
+    );
+  }
+
+  async function fetchMarketChecklistSupplements() {
+    var response = await fetch(MARKET_ITEMS_API_URL);
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+
+    var json = await response.json();
+    var data = Array.isArray(json && json.data) ? json.data : [];
 
     return data
-      .filter(function(item) { return item.masterable === true || item.category === 'Mods' || isMasterableAmpItem(item); })
-      .map(normalizeItem)
-      .filter(function(item) { return !!item.uniqueName && !!item.name; })
-      .sort(function(a, b) { return a.name.localeCompare(b.name); });
+      .filter(function(entry) {
+        var tags = Array.isArray(entry && entry.tags)
+          ? entry.tags.map(function(tag) { return String(tag || '').trim().toLowerCase(); }).filter(Boolean)
+          : [];
+        var hasCategory = !!normalizeMarketChecklistCategory(tags);
+        var isSetEntry = tags.indexOf('set') !== -1;
+        var isDirectMasteryItem =
+          tags.indexOf('mod') === -1 &&
+          tags.indexOf('riven') === -1 &&
+          tags.indexOf('arcane') === -1 &&
+          tags.indexOf('imprint') === -1 &&
+          tags.indexOf('part') === -1 &&
+          tags.indexOf('blueprint') === -1 &&
+          tags.indexOf('recipe') === -1 &&
+          tags.indexOf('component') === -1;
+        return hasCategory && (isSetEntry || isDirectMasteryItem);
+      })
+      .map(normalizeMarketChecklistItem)
+      .filter(Boolean);
   }
 
   async function fetchLatestItemsFromApi() {
     const response = await fetch(API_URL);
     if (!response.ok) throw new Error('HTTP ' + response.status);
     const data = await response.json();
-    const normalizedItems = normalizeApiItems(data);
-    await enrichItemsTradability(normalizedItems);
-    return normalizedItems;
+    return normalizeApiItems(data);
   }
 
   function areItemsEquivalent(left, right) {
@@ -5509,6 +7837,9 @@
       if ((a.imageName || '') !== (b.imageName || '')) return false;
       if ((a.description || '') !== (b.description || '')) return false;
       if ((a.masteryReq || 0) !== (b.masteryReq || 0)) return false;
+      if ((a.maxLevelCap || 0) !== (b.maxLevelCap || 0)) return false;
+      if (!!a.profileOnly !== !!b.profileOnly) return false;
+      if (!!a.syncOptional !== !!b.syncOptional) return false;
     }
 
     return true;
@@ -5516,8 +7847,13 @@
 
   function applyLatestItems(items, initialLoad) {
     var changed = !areItemsEquivalent(allItems, items);
+    tradabilityPromise = null;
+    tradabilityEnriched = false;
     allItems = items;
     saveToCache(allItems);
+    if (!initialLoad) {
+      reconcileMasteryProgressWithItems();
+    }
 
     if (initialLoad) {
       onItemsLoaded();
@@ -5530,28 +7866,89 @@
     updateCounts();
     applyFilters();
     updateStats();
+    renderStarchartNightwavePanel();
   }
 
-  async function refreshItemsInBackground() {
+  async function refreshItemsInBackground(force) {
+    var shouldForce = force === true;
+    if (itemsRefreshInProgress) return false;
+    if (!shouldForce && lastItemsRefreshAt && (Date.now() - lastItemsRefreshAt) < ITEMS_BACKGROUND_REFRESH_MIN_GAP_MS) {
+      return false;
+    }
+
+    itemsRefreshInProgress = true;
     try {
       var latestItems = await fetchLatestItemsFromApi();
       applyLatestItems(latestItems, false);
+      lastItemsRefreshAt = Date.now();
+      return true;
     } catch (err) {
       console.warn('Background item refresh failed:', err);
+      return false;
+    } finally {
+      itemsRefreshInProgress = false;
     }
   }
 
-  function getItemXP(item) {
+  function handleItemsAutoRefreshWake() {
+    refreshItemsInBackground(false);
+  }
+
+  function initItemsAutoRefresh() {
+    if (itemsAutoRefreshInitialized) return;
+    itemsAutoRefreshInitialized = true;
+
+    itemsRefreshInterval = window.setInterval(function() {
+      refreshItemsInBackground(false);
+    }, ITEMS_BACKGROUND_REFRESH_INTERVAL_MS);
+
+    window.addEventListener('focus', handleItemsAutoRefreshWake);
+    window.addEventListener('online', handleItemsAutoRefreshWake);
+    document.addEventListener('visibilitychange', function() {
+      if (document.hidden) return;
+      handleItemsAutoRefreshWake();
+    });
+  }
+
+  function getItemMaxRank(item) {
+    if (!item || item.category === 'Mods' || item.profileOnly) return 0;
+
+    var apiCap = normalizeMaxLevelCap(item);
+    if (apiCap > 0) return apiCap;
+
+    if (isNecramechItem(item)) return 40;
+    if (isKuvaTenetCodaWeapon(item)) return 40;
+    if (toLookupKey(item.name) === 'paracesis') return 40;
+    return 30;
+  }
+
+  function getItemXpPerRank(item) {
     var type = String(item.type || '').toLowerCase();
-    if (item.category === 'Mods') return 0;
-    if (isNecramechItem(item)) return 8000;
-    if (isKuvaTenetCodaWeapon(item)) return 4000;
-    if (type.indexOf('arch-gun') !== -1 || type.indexOf('arch-melee') !== -1) return 3000;
-    if (item.category === 'Warframes') return 6000;
-    if (item.category === 'Companions' || item.category === 'Pets') return 6000;
-    if (item.category === 'Sentinels') return 6000;
-    if (item.category === 'Vehicles') return 6000;
-    return DEFAULT_XP;
+    if (item.category === 'Mods' || item.profileOnly) return 0;
+    if (isSentinelWeaponItem(item)) return 100;
+    if (item.category === 'Archgun' || item.category === 'Archmelee' || type.indexOf('arch-gun') !== -1 || type.indexOf('arch-melee') !== -1) return 100;
+    if (item.category === 'Warframes') return 200;
+    if (item.category === 'Companions' || item.category === 'Pets') return 200;
+    if (item.category === 'Robotic') return 200;
+    if (item.category === 'Vehicles') return 200;
+    return 100;
+  }
+
+  function getItemAffinityPerRankSquared(item) {
+    return getItemXpPerRank(item) * 5;
+  }
+
+  function getItemAffinityForRank(item, rank) {
+    var maxRank = getItemMaxRank(item);
+    var safeRank = clampWholeNumber(rank, 0, maxRank);
+    return getItemAffinityPerRankSquared(item) * safeRank * safeRank;
+  }
+
+  function getItemXP(item) {
+    var maxRank = getItemMaxRank(item);
+    var xpPerRank = getItemXpPerRank(item);
+    if (maxRank <= 0 || xpPerRank <= 0) return 0;
+    return maxRank * xpPerRank;
   }
 
   function isMasteryRelevantItem(item) {
@@ -5563,8 +7960,8 @@
     const cached = loadFromCache();
     if (cached) {
       allItems = cached;
-      ensureRelicLookupLoaded().catch(function() { /* ignore lookup preload failure */ });
-      await enrichItemsTradability(allItems);
+      tradabilityPromise = null;
+      tradabilityEnriched = false;
       saveToCache(allItems);
       onItemsLoaded();
       refreshItemsInBackground();
@@ -5573,6 +7970,7 @@
 
     try {
       const latestItems = await fetchLatestItemsFromApi();
+      lastItemsRefreshAt = Date.now();
       applyLatestItems(latestItems, true);
     } catch (err) {
       console.error('Failed to fetch items:', err);
@@ -5617,9 +8015,11 @@
       var cached = JSON.parse(raw);
       if (Date.now() - cached.timestamp > CACHE_TTL) return null;
       if (!cached.items || !Array.isArray(cached.items)) return null;
-      var migrated = cached.items.map(normalizeItem).filter(function(item) {
-        return !!item.uniqueName && !!item.name;
-      });
+      var migrated = applyChecklistItemPatches(
+        cached.items.map(normalizeItem).filter(function(item) {
+          return !!item.uniqueName && !!item.name;
+        })
+      );
       var valid = migrated.every(function(item) {
         return item && typeof item.uniqueName === 'string' && typeof item.name === 'string';
       });
@@ -5657,6 +8057,7 @@
 
   function initRemovedProfileStorageMigration() {
     migrateRemovedProfileStorage(MASTERED_STORAGE_KEY);
+    migrateRemovedProfileStorage(ITEM_LEVELS_STORAGE_KEY);
     migrateRemovedProfileStorage(MASTERY_EXTRAS_STORAGE_KEY);
     try {
       localStorage.removeItem(REMOVED_PROFILE_NAME_KEY);
@@ -5691,6 +8092,14 @@
     };
   }
 
+  function getNormalStarChartXpCap() {
+    return NORMAL_STAR_CHART_XP_MAX;
+  }
+
+  function getSteelPathXpCap() {
+    return STEEL_PATH_XP_MAX;
+  }
+
   function getMasteryExtrasBreakdown(source) {
     var normalized = normalizeMasteryExtras(source || masteryExtras);
     var railjackXp = normalized.railjackRanks * INTRINSIC_RANK_XP;
@@ -5707,13 +8116,160 @@
     };
   }
 
+  function findChecklistItemByUniqueName(uniqueName) {
+    var key = String(uniqueName || '');
+    if (!key) return null;
+    for (var i = 0; i < allItems.length; i++) {
+      if (allItems[i] && allItems[i].uniqueName === key) return allItems[i];
+    }
+    return null;
+  }
+
+  function getStoredItemRank(item) {
+    if (!item || !item.uniqueName) return 0;
+    if (item.category === 'Mods') return masteredSet.has(item.uniqueName) ? 1 : 0;
+
+    var maxRank = getItemMaxRank(item);
+    if (maxRank <= 0) return masteredSet.has(item.uniqueName) ? 1 : 0;
+    var hasStoredRank = Object.prototype.hasOwnProperty.call(itemLevelMap, item.uniqueName);
+    if (!hasStoredRank && masteredSet.has(item.uniqueName)) return maxRank;
+
+    return clampWholeNumber(itemLevelMap[item.uniqueName], 0, maxRank);
+  }
+
+  function getTrackedItemXp(item) {
+    if (!isMasteryRelevantItem(item)) return 0;
+    var maxXp = getItemXP(item);
+    var rank = getStoredItemRank(item);
+    var xpPerRank = getItemXpPerRank(item);
+    return Math.min(maxXp, Math.max(0, rank * xpPerRank));
+  }
+
+  function isItemFullyRanked(item) {
+    if (!item || !item.uniqueName) return false;
+    if (item.category === 'Mods') return masteredSet.has(item.uniqueName);
+    var maxRank = getItemMaxRank(item);
+    if (maxRank <= 0) return masteredSet.has(item.uniqueName);
+    return maxRank > 0 && getStoredItemRank(item) >= maxRank;
+  }
+
+  function setItemRank(item, rank) {
+    if (!item || !item.uniqueName) return false;
+
+    if (item.category === 'Mods') {
+      var shouldOwn = Number(rank) > 0;
+      var wasOwned = masteredSet.has(item.uniqueName);
+      if (shouldOwn) {
+        masteredSet.add(item.uniqueName);
+      } else {
+        masteredSet.delete(item.uniqueName);
+      }
+      return shouldOwn !== wasOwned;
+    }
+
+    var maxRank = getItemMaxRank(item);
+    if (maxRank <= 0) {
+      var shouldMark = Number(rank) > 0;
+      var wasMarked = masteredSet.has(item.uniqueName);
+      if (shouldMark) {
+        masteredSet.add(item.uniqueName);
+      } else {
+        masteredSet.delete(item.uniqueName);
+      }
+      delete itemLevelMap[item.uniqueName];
+      return shouldMark !== wasMarked;
+    }
+
+    var nextRank = clampWholeNumber(rank, 0, maxRank);
+    var previousRank = getStoredItemRank(item);
+    if (nextRank === previousRank) return false;
+
+    if (nextRank > 0) {
+      itemLevelMap[item.uniqueName] = nextRank;
+    } else {
+      delete itemLevelMap[item.uniqueName];
+    }
+
+    if (nextRank >= maxRank) {
+      masteredSet.add(item.uniqueName);
+    } else {
+      masteredSet.delete(item.uniqueName);
+    }
+
+    return true;
+  }
+
+  function setItemRankByUniqueName(uniqueName, rank) {
+    var item = findChecklistItemByUniqueName(uniqueName);
+    return setItemRank(item, rank);
+  }
+
+  function saveItemLevels() {
+    var compact = Object.create(null);
+    Object.keys(itemLevelMap).forEach(function(uniqueName) {
+      var item = findChecklistItemByUniqueName(uniqueName);
+      if (!item || item.category === 'Mods') return;
+      var rank = clampWholeNumber(itemLevelMap[uniqueName], 0, getItemMaxRank(item));
+      if (rank > 0) compact[uniqueName] = rank;
+    });
+    itemLevelMap = compact;
+    localStorage.setItem(ITEM_LEVELS_STORAGE_KEY, JSON.stringify(compact));
+  }
+
+  function saveMasteryProgress() {
+    saveItemLevels();
+    saveMastered();
+  }
+
+  function reconcileMasteryProgressWithItems() {
+    var changed = false;
+
+    for (var i = 0; i < allItems.length; i++) {
+      var item = allItems[i];
+      if (!item || !item.uniqueName || item.category === 'Mods') continue;
+
+      var maxRank = getItemMaxRank(item);
+      if (maxRank <= 0) {
+        if (Object.prototype.hasOwnProperty.call(itemLevelMap, item.uniqueName)) {
+          delete itemLevelMap[item.uniqueName];
+          changed = true;
+        }
+        continue;
+      }
+
+      var hasStoredRank = Object.prototype.hasOwnProperty.call(itemLevelMap, item.uniqueName);
+      if (!hasStoredRank && masteredSet.has(item.uniqueName)) {
+        itemLevelMap[item.uniqueName] = maxRank;
+        changed = true;
+      }
+
+      var rank = clampWholeNumber(itemLevelMap[item.uniqueName], 0, maxRank);
+      if (rank > 0 && rank !== itemLevelMap[item.uniqueName]) {
+        itemLevelMap[item.uniqueName] = rank;
+        changed = true;
+      } else if (rank <= 0 && hasStoredRank) {
+        delete itemLevelMap[item.uniqueName];
+        changed = true;
+      }
+
+      if (rank >= maxRank) {
+        if (!masteredSet.has(item.uniqueName)) {
+          masteredSet.add(item.uniqueName);
+          changed = true;
+        }
+      } else if (masteredSet.delete(item.uniqueName)) {
+        changed = true;
+      }
+    }
+
+    if (changed) saveMasteryProgress();
+  }
+
   function getTrackedItemMasteryXp() {
     var totalXP = 0;
     for (var i = 0; i < allItems.length; i++) {
       if (!isMasteryRelevantItem(allItems[i])) continue;
-      if (masteredSet.has(allItems[i].uniqueName)) {
-        totalXP += getItemXP(allItems[i]);
-      }
+      totalXP += getTrackedItemXp(allItems[i]);
     }
     return totalXP;
   }
@@ -5792,13 +8348,37 @@
     localStorage.setItem(MASTERED_STORAGE_KEY, JSON.stringify(Array.from(masteredSet)));
   }
 
-  function toggleMastered(uniqueName) {
-    if (masteredSet.has(uniqueName)) {
-      masteredSet.delete(uniqueName);
-    } else {
-      masteredSet.add(uniqueName);
+  function loadItemLevels() {
+    itemLevelMap = Object.create(null);
+    try {
+      var raw = localStorage.getItem(ITEM_LEVELS_STORAGE_KEY);
+      if (!raw) return;
+      var parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+
+      Object.keys(parsed).forEach(function(uniqueName) {
+        var rank = Number(parsed[uniqueName]);
+        if (Number.isFinite(rank) && rank > 0) {
+          itemLevelMap[uniqueName] = Math.floor(rank);
+        }
+      });
+    } catch (e) {
+      itemLevelMap = Object.create(null);
     }
-    saveMastered();
+  }
+
+  function toggleMastered(uniqueName) {
+    var item = findChecklistItemByUniqueName(uniqueName);
+    if (!item) return;
+
+    if (item.category === 'Mods') {
+      setItemRank(item, masteredSet.has(uniqueName) ? 0 : 1);
+    } else {
+      var maxRank = getItemMaxRank(item);
+      setItemRank(item, isItemFullyRanked(item) ? 0 : (maxRank > 0 ? maxRank : 1));
+    }
+
+    saveMasteryProgress();
     updateStats();
   }
 
@@ -5807,10 +8387,15 @@
     els.loadingContainer.classList.add('hidden');
     loadBuilds();
     loadMastered();
+    loadItemLevels();
+    reconcileMasteryProgressWithItems();
     loadMasteryExtras();
     updateCounts();
     applyFilters();
     updateStats();
+    renderStarchartNightwavePanel();
+    initItemsAutoRefresh();
+    initProfileAutoSync();
   }
 
   function applyFilters() {
@@ -5819,30 +8404,515 @@
     filteredItems = allItems.filter(function(item) {
       if (currentCategory === 'all' && item.category === 'Mods') return false;
       if (currentCategory !== 'all' && item.category !== currentCategory) return false;
-      if (currentFilter === 'mastered' && !masteredSet.has(item.uniqueName)) return false;
-      if (currentFilter === 'unmastered' && masteredSet.has(item.uniqueName)) return false;
+      if (currentFilter === 'mastered' && !isItemFullyRanked(item)) return false;
+      if (currentFilter === 'unmastered' && isItemFullyRanked(item)) return false;
       if (normalizedSearchQuery && normalizeSearchText(item.name).indexOf(normalizedSearchQuery) === -1) return false;
       return true;
     });
 
+    allVisibleCount = ALL_ITEMS_RENDER_BATCH_SIZE;
     modVisibleCount = MOD_RENDER_BATCH_SIZE;
     renderItems();
   }
 
+  function getModRarityClass(rarity) {
+    var r = String(rarity || '').toLowerCase().trim();
+    if (r === 'rare') return 'mod-rarity-rare';
+    if (r === 'uncommon') return 'mod-rarity-uncommon';
+    if (r === 'common') return 'mod-rarity-common';
+    if (r === 'legendary') return 'mod-rarity-legendary';
+    if (r.indexOf('amalgam') !== -1) return 'mod-rarity-amalgam';
+    return 'mod-rarity-common';
+  }
+
+  function getPolaritySymbol(polarity) {
+    var p = String(polarity || '').toLowerCase().trim();
+    var symbols = {
+      'madurai': 'V',
+      'vazarin': 'D',
+      'naramon': '-',
+      'zenurik': '=',
+      'unairu': 'U',
+      'penjaga': 'Y',
+      'umbra': 'W'
+    };
+    return symbols[p] || '';
+  }
+
+  function classifyModStat(text) {
+    var t = String(text || '').trim();
+    if (!t) return 'neutral';
+    if (/^[+]/.test(t)) return 'buff';
+    if (/^[-]/.test(t) || /^−/.test(t)) return 'nerf';
+    // Check for negative values embedded in text
+    if (/\-\d/.test(t) || /−\d/.test(t)) return 'nerf';
+    if (/\+\d/.test(t)) return 'buff';
+    return 'neutral';
+  }
+
+  function buildModCard(item) {
+    var rarityClass = getModRarityClass(item.rarity);
+    var polaritySymbol = getPolaritySymbol(item.polarity);
+    var fusionLimit = item.fusionLimit || 0;
+    var drain = item.baseDrain || 0;
+    var compatName = item.compatName || '';
+
+    // Get max-rank stats
+    var maxRankStats = [];
+    var maxRankLabel = 'Rank 0';
+    if (Array.isArray(item.levelStats) && item.levelStats.length > 0) {
+      var lastRank = item.levelStats[item.levelStats.length - 1];
+      if (lastRank && Array.isArray(lastRank.stats)) {
+        maxRankStats = lastRank.stats;
+      }
+      maxRankLabel = 'Rank ' + (item.levelStats.length - 1);
+    }
+
+    var modCard = document.createElement('div');
+    modCard.className = 'mod-card ' + rarityClass;
+
+    // Image wrap
+    var imgWrap = document.createElement('div');
+    imgWrap.className = 'mod-card-img-wrap';
+
+    // Use wikiaThumbnail as primary (direct mod card image from wiki), CDN as fallback
+    var primaryImgSrc = item.imageName ? getChecklistImageUrl(item.imageName) : '';
+    var fallbackImgSrc = item.wikiaThumbnail ? getChecklistImageUrl(item.wikiaThumbnail) : '';
+    if (primaryImgSrc && fallbackImgSrc && primaryImgSrc === fallbackImgSrc) {
+      fallbackImgSrc = '';
+    }
+    var hasAnySrc = !!(primaryImgSrc || fallbackImgSrc);
+
+    if (hasAnySrc) {
+      var img = document.createElement('img');
+      img.src = primaryImgSrc || fallbackImgSrc;
+      img.alt = item.name;
+      img.loading = 'lazy';
+      img.addEventListener('error', function() {
+        // Try fallback if primary failed
+        if (img.src !== fallbackImgSrc && fallbackImgSrc) {
+          img.src = fallbackImgSrc;
+        } else {
+          img.style.display = 'none';
+          var ph = imgWrap.querySelector('.placeholder-icon');
+          if (ph) ph.style.display = 'block';
+        }
+      });
+      imgWrap.appendChild(img);
+    }
+
+    var placeholder = document.createElement('span');
+    placeholder.className = 'material-icons-round placeholder-icon';
+    placeholder.textContent = 'auto_awesome';
+    if (hasAnySrc) placeholder.style.display = 'none';
+    imgWrap.appendChild(placeholder);
+
+    // Drain badge
+    if (drain > 0) {
+      var drainEl = document.createElement('span');
+      drainEl.className = 'mod-card-drain';
+      drainEl.textContent = drain;
+      imgWrap.appendChild(drainEl);
+    }
+
+    // Polarity badge
+    if (polaritySymbol) {
+      var polEl = document.createElement('span');
+      polEl.className = 'mod-card-polarity';
+      polEl.textContent = polaritySymbol;
+      polEl.title = item.polarity || '';
+      imgWrap.appendChild(polEl);
+    }
+
+    // Rank badge
+    if (fusionLimit > 0) {
+      var rankBadge = document.createElement('span');
+      rankBadge.className = 'mod-card-rank-badge';
+      rankBadge.textContent = fusionLimit + '^';
+      imgWrap.appendChild(rankBadge);
+    }
+
+    // Owned badge
+    var ownedBadge = document.createElement('span');
+    ownedBadge.className = 'mod-card-owned-badge';
+    ownedBadge.textContent = 'OWNED';
+    imgWrap.appendChild(ownedBadge);
+
+    modCard.appendChild(imgWrap);
+
+    // Bottom section (name + pips)
+    var bottom = document.createElement('div');
+    bottom.className = 'mod-card-bottom';
+
+    var nameEl = document.createElement('div');
+    nameEl.className = 'mod-card-name';
+    nameEl.textContent = item.name;
+    nameEl.title = item.name;
+    bottom.appendChild(nameEl);
+
+    // Compat label
+    if (compatName) {
+      var compatEl = document.createElement('div');
+      compatEl.className = 'mod-card-compat';
+      compatEl.textContent = compatName;
+      bottom.appendChild(compatEl);
+    }
+
+    // Rank pips
+    if (fusionLimit > 0) {
+      var pipsRow = document.createElement('div');
+      pipsRow.className = 'mod-card-pips';
+      for (var p = 0; p < fusionLimit; p++) {
+        var pip = document.createElement('span');
+        pip.className = 'mod-card-pip filled';
+        pipsRow.appendChild(pip);
+      }
+      bottom.appendChild(pipsRow);
+    }
+
+    modCard.appendChild(bottom);
+
+    // Check overlay
+    var checkOverlay = document.createElement('div');
+    checkOverlay.className = 'mod-card-check';
+    var checkIcon = document.createElement('span');
+    checkIcon.className = 'material-icons-round';
+    checkIcon.textContent = 'check';
+    checkOverlay.appendChild(checkIcon);
+    modCard.appendChild(checkOverlay);
+
+    // Hover tooltip
+    if (maxRankStats.length > 0 || compatName) {
+      var tooltip = document.createElement('div');
+      tooltip.className = 'mod-card-tooltip';
+
+      var ttTitle = document.createElement('div');
+      ttTitle.className = 'mod-card-tooltip-title';
+      ttTitle.textContent = item.name;
+      tooltip.appendChild(ttTitle);
+
+      // Meta row (rarity + rank)
+      var meta = document.createElement('div');
+      meta.className = 'mod-card-tooltip-meta';
+
+      var raritySpan = document.createElement('span');
+      raritySpan.textContent = item.rarity || 'Mod';
+      meta.appendChild(raritySpan);
+
+      if (fusionLimit > 0) {
+        var rankSpan = document.createElement('span');
+        rankSpan.className = 'mod-card-tooltip-rank';
+        rankSpan.textContent = maxRankLabel;
+        meta.appendChild(rankSpan);
+      }
+
+      tooltip.appendChild(meta);
+
+      // Stats
+      if (maxRankStats.length > 0) {
+        var statsDiv = document.createElement('div');
+        statsDiv.className = 'mod-card-tooltip-stats';
+
+        for (var s = 0; s < maxRankStats.length; s++) {
+          var statText = String(maxRankStats[s] || '').trim();
+          if (!statText) continue;
+          var statEl = document.createElement('div');
+          statEl.className = 'mod-card-stat ' + classifyModStat(statText);
+          statEl.textContent = statText;
+          statsDiv.appendChild(statEl);
+        }
+
+        tooltip.appendChild(statsDiv);
+      }
+
+      // Compat footer
+      if (compatName) {
+        var compatFooter = document.createElement('div');
+        compatFooter.className = 'mod-card-tooltip-compat';
+        compatFooter.textContent = compatName;
+        tooltip.appendChild(compatFooter);
+      }
+
+      modCard.appendChild(tooltip);
+    }
+
+    // Click on image opens item info
+    imgWrap.title = 'Open mod details';
+    imgWrap.addEventListener('click', function(e) {
+      e.stopPropagation();
+      openItemInfoModal(item);
+    });
+
+    return modCard;
+  }
+
+  function getModernPolaritySymbol(polarity) {
+    var key = String(polarity || '').trim().toLowerCase();
+    var symbols = {
+      'madurai': 'V',
+      'vazarin': 'D',
+      'naramon': '-',
+      'zenurik': '=',
+      'unairu': 'U',
+      'penjaga': 'Y',
+      'umbra': 'W'
+    };
+    return symbols[key] || '';
+  }
+
+  function getModernPolarityLabel(polarity) {
+    var raw = String(polarity || '').trim().toLowerCase();
+    if (!raw) return '';
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  }
+
+  function buildModernModCard(item) {
+    var rarityClass = getModRarityClass(item.rarity);
+    var polaritySymbol = getModernPolaritySymbol(item.polarity);
+    var fusionLimit = item.fusionLimit || 0;
+    var compatName = String(item.compatName || item.type || 'Mod').trim();
+    var primaryImgSrc = getItemImageUrl(item);
+    var fallbackImgSrc = '';
+
+    function appendArtwork(container, imageClass, placeholderClass, placeholderIcon) {
+      var hasAnySrc = !!(primaryImgSrc || fallbackImgSrc);
+
+      if (hasAnySrc) {
+        var img = document.createElement('img');
+        img.className = imageClass || '';
+        img.src = primaryImgSrc || fallbackImgSrc;
+        img.alt = item.name || 'Mod artwork';
+        img.loading = 'lazy';
+        img.addEventListener('error', function() {
+          if (img.src !== fallbackImgSrc && fallbackImgSrc) {
+            img.src = fallbackImgSrc;
+          } else {
+            img.style.display = 'none';
+            var ph = container.querySelector('.' + placeholderClass);
+            if (ph) ph.style.display = 'flex';
+          }
+        });
+        container.appendChild(img);
+      }
+
+      var placeholder = document.createElement('span');
+      placeholder.className = 'material-icons-round ' + placeholderClass;
+      placeholder.textContent = placeholderIcon || 'auto_awesome';
+      if (hasAnySrc) placeholder.style.display = 'none';
+      container.appendChild(placeholder);
+    }
+
+    var modCard = document.createElement('div');
+    modCard.className = 'mod-card mod-card-modern ' + rarityClass;
+
+    var front = document.createElement('div');
+    front.className = 'mod-card-front';
+
+    var topRow = document.createElement('div');
+    topRow.className = 'mod-card-top-row';
+
+    var badges = document.createElement('div');
+    badges.className = 'mod-card-badges';
+
+    if (polaritySymbol) {
+      var polarityBadge = document.createElement('span');
+      polarityBadge.className = 'mod-card-polarity';
+      polarityBadge.title = getModernPolarityLabel(item.polarity) || '';
+
+      var glyph = document.createElement('span');
+      glyph.className = 'mod-card-polarity-glyph';
+      glyph.textContent = polaritySymbol;
+      polarityBadge.appendChild(glyph);
+
+      badges.appendChild(polarityBadge);
+    }
+
+    topRow.appendChild(badges);
+    front.appendChild(topRow);
+
+    var ownedBadge = document.createElement('span');
+    ownedBadge.className = 'mod-card-owned-badge';
+    ownedBadge.textContent = 'OWNED';
+    front.appendChild(ownedBadge);
+
+    var imgWrap = document.createElement('div');
+    imgWrap.className = 'mod-card-img-wrap';
+    appendArtwork(imgWrap, 'mod-card-art', 'mod-card-art-placeholder', 'shield_moon');
+    imgWrap.title = 'Open mod details';
+    imgWrap.addEventListener('click', function(e) {
+      e.stopPropagation();
+      openItemInfoModal(item);
+    });
+    front.appendChild(imgWrap);
+
+    var bottom = document.createElement('div');
+    bottom.className = 'mod-card-bottom';
+
+    var nameEl = document.createElement('div');
+    nameEl.className = 'mod-card-name';
+    nameEl.textContent = item.name;
+    nameEl.title = item.name;
+    bottom.appendChild(nameEl);
+
+    if (compatName) {
+      var compatEl = document.createElement('div');
+      compatEl.className = 'mod-card-compat';
+      compatEl.textContent = compatName;
+      bottom.appendChild(compatEl);
+    }
+
+    if (fusionLimit > 0) {
+      var pipsRow = document.createElement('div');
+      pipsRow.className = 'mod-card-pips';
+      for (var p = 0; p < fusionLimit; p++) {
+        var pip = document.createElement('span');
+        pip.className = 'mod-card-pip filled';
+        pipsRow.appendChild(pip);
+      }
+      bottom.appendChild(pipsRow);
+    }
+
+    front.appendChild(bottom);
+    modCard.appendChild(front);
+
+    var checkOverlay = document.createElement('div');
+    checkOverlay.className = 'mod-card-check';
+    var checkIcon = document.createElement('span');
+    checkIcon.className = 'material-icons-round';
+    checkIcon.textContent = 'check';
+    checkOverlay.appendChild(checkIcon);
+    modCard.appendChild(checkOverlay);
+
+    return modCard;
+  }
+
+  function getItemProgressLabel(item) {
+    if (!item || item.category === 'Mods') return '';
+    var rank = getStoredItemRank(item);
+    var maxRank = getItemMaxRank(item);
+    var trackedXp = getTrackedItemXp(item);
+    var totalXp = getItemXP(item);
+    if (maxRank <= 0 || totalXp <= 0) {
+      return isItemFullyRanked(item) ? 'Checked - no mastery XP' : 'No mastery XP';
+    }
+    return 'Rank ' + rank + '/' + maxRank + ' - ' + trackedXp.toLocaleString() + '/' + totalXp.toLocaleString() + ' XP';
+  }
+
+  function updateItemCardProgress(card, item) {
+    if (!card || !item) return;
+    var fullyRanked = isItemFullyRanked(item);
+    card.classList.toggle('mastered', fullyRanked);
+
+    var xpEl = card.querySelector('.item-card-xp');
+    if (xpEl && item.category !== 'Mods') {
+      xpEl.textContent = getItemProgressLabel(item);
+    }
+
+    var maxRank = getItemMaxRank(item);
+    var rank = getStoredItemRank(item);
+    var levelLabel = card.querySelector('.item-level-label');
+    if (levelLabel) {
+      levelLabel.textContent = maxRank > 0 ? ('Level ' + rank + ' / ' + maxRank) : 'No mastery XP';
+    }
+
+    var levelFill = card.querySelector('.item-level-fill');
+    if (levelFill) {
+      levelFill.style.width = (maxRank > 0 ? (rank / maxRank * 100) : 0) + '%';
+    }
+
+    var decrementBtn = card.querySelector('[data-level-action="decrease"]');
+    if (decrementBtn) decrementBtn.disabled = rank <= 0;
+    var incrementBtn = card.querySelector('[data-level-action="increase"]');
+    if (incrementBtn) incrementBtn.disabled = maxRank <= 0 || rank >= maxRank;
+  }
+
+  function commitItemRankChange(card, item) {
+    saveMasteryProgress();
+    updateCounts();
+    updateStats();
+
+    if (currentFilter === 'mastered' || currentFilter === 'unmastered') {
+      applyFilters();
+      return;
+    }
+
+    updateItemCardProgress(card, item);
+  }
+
+  function createItemLevelControl(item, card) {
+    var maxRank = getItemMaxRank(item);
+    if (maxRank <= 0) return null;
+
+    var levelDiv = document.createElement('div');
+    levelDiv.className = 'item-card-level';
+
+    var topRow = document.createElement('div');
+    topRow.className = 'item-level-top';
+
+    var label = document.createElement('span');
+    label.className = 'item-level-label';
+    topRow.appendChild(label);
+
+    var controls = document.createElement('div');
+    controls.className = 'item-level-controls';
+
+    var decrementBtn = document.createElement('button');
+    decrementBtn.type = 'button';
+    decrementBtn.className = 'item-level-btn';
+    decrementBtn.setAttribute('data-level-action', 'decrease');
+    decrementBtn.title = 'Decrease level';
+    decrementBtn.textContent = '-';
+    decrementBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      setItemRank(item, getStoredItemRank(item) - 1);
+      commitItemRankChange(card, item);
+    });
+
+    var incrementBtn = document.createElement('button');
+    incrementBtn.type = 'button';
+    incrementBtn.className = 'item-level-btn';
+    incrementBtn.setAttribute('data-level-action', 'increase');
+    incrementBtn.title = 'Increase level';
+    incrementBtn.textContent = '+';
+    incrementBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      setItemRank(item, getStoredItemRank(item) + 1);
+      commitItemRankChange(card, item);
+    });
+
+    controls.appendChild(decrementBtn);
+    controls.appendChild(incrementBtn);
+    topRow.appendChild(controls);
+
+    var bar = document.createElement('div');
+    bar.className = 'item-level-bar';
+    var fill = document.createElement('span');
+    fill.className = 'item-level-fill';
+    bar.appendChild(fill);
+
+    levelDiv.appendChild(topRow);
+    levelDiv.appendChild(bar);
+    return levelDiv;
+  }
+
   function createItemCard(item, index) {
     var card = document.createElement('div');
-    card.className = 'item-card' + (masteredSet.has(item.uniqueName) ? ' mastered' : '');
-    if (item.category === 'Mods') card.classList.add('mod-item');
+    card.className = 'item-card' + (isItemFullyRanked(item) ? ' mastered' : '');
+    if (item.category === 'Mods') card.setAttribute('data-mastery-label', 'OWNED');
     card.setAttribute('data-unique-name', item.uniqueName);
     card.style.animationDelay = Math.min(index * 15, 400) + 'ms';
 
+
+    // ---------- STANDARD CARD ----------
     // Image container
     var imageDiv = document.createElement('div');
     imageDiv.className = 'item-card-image';
 
-    if (item.imageName) {
+    var cardImageUrl = getItemImageUrl(item);
+
+    if (cardImageUrl) {
       var img = document.createElement('img');
-      img.src = getChecklistImageUrl(item.imageName);
+      img.src = cardImageUrl;
       img.alt = item.name;
       img.loading = 'lazy';
       img.addEventListener('error', function() {
@@ -5870,7 +8940,7 @@
     var placeholderIcon = document.createElement('span');
     placeholderIcon.className = 'material-icons-round placeholder-icon';
     placeholderIcon.textContent = 'image';
-    if (item.imageName) placeholderIcon.style.display = 'none';
+    if (cardImageUrl) placeholderIcon.style.display = 'none';
     imageDiv.appendChild(placeholderIcon);
 
     // Body
@@ -5889,7 +8959,7 @@
     var xpDiv = document.createElement('div');
     xpDiv.className = 'item-card-xp';
     if (item.category !== 'Mods') {
-      xpDiv.textContent = getItemXP(item).toLocaleString() + ' XP';
+      xpDiv.textContent = getItemProgressLabel(item);
     }
 
     var checkDiv = document.createElement('div');
@@ -5904,6 +8974,8 @@
     bodyDiv.appendChild(typeDiv);
     if (item.category !== 'Mods') {
       bodyDiv.appendChild(xpDiv);
+      var levelControl = createItemLevelControl(item, card);
+      if (levelControl) bodyDiv.appendChild(levelControl);
     }
     bodyDiv.appendChild(checkDiv);
 
@@ -5911,46 +8983,83 @@
     card.appendChild(bodyDiv);
 
     card.addEventListener('click', function() {
-      toggleMastered(item.uniqueName);
-      card.classList.toggle('mastered');
-      updateCounts();
+      if (item.category === 'Mods') {
+        setItemRank(item, masteredSet.has(item.uniqueName) ? 0 : 1);
+      } else {
+        var maxRank = getItemMaxRank(item);
+        setItemRank(item, isItemFullyRanked(item) ? 0 : (maxRank > 0 ? maxRank : 1));
+      }
+      commitItemRankChange(card, item);
     });
 
+    updateItemCardProgress(card, item);
     return card;
+  }
+
+  function isAllBatchingActive() {
+    return currentCategory === 'all';
   }
 
   function isModBatchingActive() {
     return currentCategory === 'Mods';
   }
 
-  function getVisibleChecklistItems() {
-    if (!isModBatchingActive()) return filteredItems;
-    return filteredItems.slice(0, modVisibleCount);
+  function isChecklistBatchingActive() {
+    return isAllBatchingActive() || isModBatchingActive();
   }
 
-  function appendModsShowMoreCard(fragment, renderedCount, totalCount) {
+  function getChecklistBatchSize() {
+    if (isAllBatchingActive()) return ALL_ITEMS_RENDER_BATCH_SIZE;
+    if (isModBatchingActive()) return MOD_RENDER_BATCH_SIZE;
+    return filteredItems.length;
+  }
+
+  function getChecklistVisibleCount() {
+    if (isAllBatchingActive()) return allVisibleCount;
+    if (isModBatchingActive()) return modVisibleCount;
+    return filteredItems.length;
+  }
+
+  function loadMoreChecklistItems() {
+    if (isAllBatchingActive()) {
+      allVisibleCount += ALL_ITEMS_RENDER_BATCH_SIZE;
+    } else if (isModBatchingActive()) {
+      modVisibleCount += MOD_RENDER_BATCH_SIZE;
+    }
+    renderItems();
+  }
+
+  function getVisibleChecklistItems() {
+    if (!isChecklistBatchingActive()) return filteredItems;
+    return filteredItems.slice(0, getChecklistVisibleCount());
+  }
+
+  function appendChecklistShowMoreCard(fragment, renderedCount, totalCount) {
     var remaining = Math.max(0, totalCount - renderedCount);
     if (remaining <= 0) return;
+    var batchSize = getChecklistBatchSize();
+    var isAllItems = isAllBatchingActive();
 
     var showMoreCard = document.createElement('div');
     showMoreCard.className = 'item-card items-show-more-card';
 
     var showMoreTitle = document.createElement('div');
     showMoreTitle.className = 'items-show-more-title';
-    showMoreTitle.textContent = 'More Mods Ready';
+    showMoreTitle.textContent = isAllItems ? 'More Items Ready' : 'More Mods Ready';
 
     var showMoreCopy = document.createElement('div');
     showMoreCopy.className = 'items-show-more-copy';
-    showMoreCopy.textContent = remaining.toLocaleString() + ' more mods are waiting below. Load the next batch when you are ready.';
+    showMoreCopy.textContent = remaining.toLocaleString() + (isAllItems
+      ? ' more items are waiting below. Load the next batch when you are ready.'
+      : ' more mods are waiting below. Load the next batch when you are ready.');
 
     var showMoreBtn = document.createElement('button');
     showMoreBtn.className = 'items-show-more-btn';
     showMoreBtn.type = 'button';
-    showMoreBtn.innerHTML = '<span class="material-icons-round">expand_more</span><span>Show ' + Math.min(MOD_RENDER_BATCH_SIZE, remaining).toLocaleString() + ' More</span>';
+    showMoreBtn.innerHTML = '<span class="material-icons-round">expand_more</span><span>Show ' + Math.min(batchSize, remaining).toLocaleString() + ' More</span>';
     showMoreBtn.addEventListener('click', function(evt) {
       evt.stopPropagation();
-      modVisibleCount += MOD_RENDER_BATCH_SIZE;
-      renderItems();
+      loadMoreChecklistItems();
     });
 
     showMoreCard.appendChild(showMoreTitle);
@@ -5966,6 +9075,7 @@
       existingCards[i].remove();
     }
 
+
     if (filteredItems.length === 0) {
       els.emptyState.classList.remove('hidden');
     } else {
@@ -5977,8 +9087,8 @@
     for (var j = 0; j < visibleItems.length; j++) {
       fragment.appendChild(createItemCard(visibleItems[j], j));
     }
-    if (isModBatchingActive()) {
-      appendModsShowMoreCard(fragment, visibleItems.length, filteredItems.length);
+    if (isChecklistBatchingActive()) {
+      appendChecklistShowMoreCard(fragment, visibleItems.length, filteredItems.length);
     }
     els.itemsGrid.appendChild(fragment);
     updateCategoryHeader();
@@ -5987,14 +9097,16 @@
   function updateCategoryHeader() {
     var labels = {
       'all': 'All Items',
-      'Warframes': 'Warframes',
-      'Primary': 'Primary Weapons',
-      'Secondary': 'Secondary Weapons',
-      'Melee': 'Melee Weapons',
+      'Warframes': 'Warframe',
+      'Primary': 'Primary',
+      'Secondary': 'Secondary',
+      'Melee': 'Melee',
+      'Robotic': 'Robotic',
+      'Archgun': 'Archgun',
+      'Archmelee': 'Archmelee',
       'Amps': 'Amps',
       'Companions': 'Companions',
       'Vehicles': 'Vehicles',
-      'Sentinels': 'Sentinels',
       'Mods': 'Mods',
     };
     els.categoryTitle.textContent = labels[currentCategory] || currentCategory;
@@ -6005,7 +9117,26 @@
         if (allItems[i].category === 'Mods') continue;
         if (allItems[i].tradable) tradableCount++;
       }
-      els.categoryItemCount.textContent = filteredItems.length + ' items • ' + tradableCount + ' tradable';
+      var allItemsText = filteredItems.length + ' items';
+      if (filteredItems.length > ALL_ITEMS_RENDER_BATCH_SIZE) {
+        allItemsText += ' - showing ' + Math.min(filteredItems.length, allVisibleCount).toLocaleString();
+      }
+      els.categoryItemCount.textContent = allItemsText + ' - ' + tradableCount + ' tradable';
+      return;
+    }
+
+    if (isChecklistBatchingActive() && filteredItems.length > getChecklistBatchSize()) {
+      els.categoryItemCount.textContent = filteredItems.length + ' items - showing ' + Math.min(filteredItems.length, getChecklistVisibleCount()).toLocaleString();
+      return;
+    }
+
+    if (currentCategory === 'all' && tradeModeEnabled) {
+      var tradableCount = 0;
+      for (var i = 0; i < allItems.length; i++) {
+        if (allItems[i].category === 'Mods') continue;
+        if (allItems[i].tradable) tradableCount++;
+      }
+      els.categoryItemCount.textContent = filteredItems.length + ' items - ' + tradableCount + ' tradable';
       return;
     }
 
@@ -6026,9 +9157,9 @@
       var item = allItems[i];
       if (!isMasteryRelevantItem(item)) continue;
       totalItemsCount++;
-      if (masteredSet.has(item.uniqueName)) {
+      itemXP += getTrackedItemXp(item);
+      if (isItemFullyRanked(item)) {
         totalMasteredCount++;
-        itemXP += getItemXP(item);
       }
     }
 
@@ -6079,6 +9210,770 @@
     await openExternalUrl(TELEGRAM_CONTACT_URL);
   }
 
+  function setProfileSyncIndicator(state, text, title) {
+    if (!els.profileSyncPill) return;
+    var nextState = state || 'offline';
+    els.profileSyncPill.classList.remove('is-offline', 'is-syncing', 'is-online');
+    els.profileSyncPill.classList.add('is-' + nextState);
+    els.profileSyncPill.setAttribute('title', title || text || 'Warframe profile sync status');
+    if (els.profileSyncText) {
+      els.profileSyncText.textContent = text || 'profile offline';
+    }
+  }
+
+  function getProfileFetchStatusIcon(state) {
+    if (state === 'busy') return 'sync';
+    if (state === 'success') return 'check_circle';
+    if (state === 'warning') return 'travel_explore';
+    if (state === 'error') return 'error';
+    return 'info';
+  }
+
+  function setProfileFetchButtonState(options) {
+    if (!els.profileFetchBtn) return;
+    var opts = options || {};
+    els.profileFetchBtn.disabled = !!opts.disabled;
+    if (els.profileFetchBtnText && opts.text) {
+      els.profileFetchBtnText.textContent = opts.text;
+    }
+  }
+
+  function setProfileFetchStatus(state, title, copy, meta) {
+    if (els.profileFetchStatus) {
+      els.profileFetchStatus.setAttribute('data-state', state || 'idle');
+    }
+    if (els.profileFetchStatusIcon) {
+      els.profileFetchStatusIcon.textContent = getProfileFetchStatusIcon(state);
+    }
+    if (els.profileFetchStatusTitle) {
+      els.profileFetchStatusTitle.textContent = title || 'Ready when you are';
+    }
+    if (els.profileFetchStatusCopy) {
+      els.profileFetchStatusCopy.textContent = copy || '';
+    }
+    if (els.profileFetchStatusMeta) {
+      els.profileFetchStatusMeta.textContent = meta || '';
+      els.profileFetchStatusMeta.classList.toggle('hidden', !meta);
+    }
+  }
+
+  function formatProfileFetchDate(value) {
+    var timestamp = Number(value);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return '';
+    try {
+      return new Date(timestamp).toLocaleString();
+    } catch (err) {
+      return '';
+    }
+  }
+
+  function saveLastProfileFetchSummary(summary) {
+    try {
+      localStorage.setItem(PROFILE_FETCH_LAST_RESULT_KEY, JSON.stringify(summary || {}));
+    } catch (err) { /* ignore */ }
+  }
+
+  function loadLastProfileFetchSummary() {
+    try {
+      var raw = localStorage.getItem(PROFILE_FETCH_LAST_RESULT_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function initProfileFetchSetting() {
+    var summary = loadLastProfileFetchSummary();
+    if (summary && summary.importedAt) {
+      var namePart = summary.displayName ? (summary.displayName + ' - ') : '';
+      var totalPart = typeof summary.matchedCount === 'number'
+        ? (summary.matchedCount.toLocaleString() + ' matched')
+        : 'profile imported';
+      setProfileFetchStatus(
+        'success',
+        'Last profile sync loaded',
+        namePart + totalPart + ' item levels. Fetch again after you enter and leave a Relay or Dojo if you want fresh data.',
+        'Last sync: ' + formatProfileFetchDate(summary.importedAt)
+      );
+      setProfileSyncIndicator('online', 'profile synced', 'Last sync: ' + formatProfileFetchDate(summary.importedAt));
+      return;
+    }
+
+    setProfileSyncIndicator('offline', 'profile offline', 'Waiting for Warframe to open and sync.');
+    setProfileFetchStatus(
+      'idle',
+      'Automatic sync is watching',
+      'Start Warframe first for the cleanest sync. If the data looks stale, enter and leave a Relay or Dojo so the game refreshes your profile cache.',
+      ''
+    );
+  }
+
+  function stopProfileProcessWatch() {
+    if (profileProcessWatchTimer) {
+      clearInterval(profileProcessWatchTimer);
+      profileProcessWatchTimer = null;
+    }
+    profileProcessWatchStartedAt = 0;
+  }
+
+  function startProfileProcessWatch() {
+    if (!window.electronAPI || !window.electronAPI.detectWarframeProcess) return;
+    stopProfileProcessWatch();
+    profileProcessWatchStartedAt = Date.now();
+    setProfileFetchButtonState({ disabled: false, text: 'Fetch Your Profile' });
+    setProfileFetchStatus(
+      'warning',
+      'Waiting for Warframe',
+      'Open Warframe and log in. I will keep watching for the process, then ask you to refresh the profile cache.',
+      'Watching for up to 90 seconds...'
+    );
+
+    profileProcessWatchTimer = setInterval(async function() {
+      if (profileFetchInProgress) return;
+
+      if (Date.now() - profileProcessWatchStartedAt > PROFILE_PROCESS_WATCH_TIMEOUT_MS) {
+        stopProfileProcessWatch();
+        setProfileFetchStatus(
+          'warning',
+          'Warframe was not detected',
+          'Open Warframe, log in, then press Fetch Your Profile again. Tiny sentinel went on break.',
+          ''
+        );
+        return;
+      }
+
+      try {
+        var detection = await window.electronAPI.detectWarframeProcess();
+        if (detection && detection.process && detection.process.running) {
+          stopProfileProcessWatch();
+          setProfileFetchButtonState({ disabled: false, text: 'Fetch After Relay Refresh' });
+          setProfileFetchStatus(
+            'warning',
+            'Warframe detected',
+            'Enter and leave a Relay or Dojo to refresh your profile data, then press the button again to import item levels and account XP.',
+            'Detected process: ' + (detection.process.name || 'Warframe')
+          );
+        }
+      } catch (err) {
+        // Keep watching; process detection can briefly fail while the game is starting.
+      }
+    }, PROFILE_PROCESS_WATCH_INTERVAL_MS);
+  }
+
+  function normalizeProfileUniqueKey(value) {
+    return String(value || '').trim().replace(/\\/g, '/').toLowerCase();
+  }
+
+  function getProfileUniqueCandidates(value) {
+    var normalized = normalizeProfileUniqueKey(value);
+    if (!normalized) return [];
+    var candidates = [normalized];
+
+    if (normalized.indexOf('/storeitems/') !== -1) {
+      candidates.push(normalized.replace('/storeitems/', '/'));
+    }
+    if (normalized.indexOf('/types/game/') !== -1) {
+      candidates.push(normalized.replace('/types/game/', '/'));
+    }
+
+    return candidates.filter(function(candidate, index, list) {
+      return !!candidate && list.indexOf(candidate) === index;
+    });
+  }
+
+  function getProfilePathLeafKey(value) {
+    var normalized = normalizeProfileUniqueKey(value);
+    if (!normalized) return '';
+    var parts = normalized.split('/').filter(Boolean);
+    var leaf = parts.length ? parts[parts.length - 1] : normalized;
+    return toLookupKey(leaf.replace(/([a-z])([A-Z])/g, '$1 $2'));
+  }
+
+  function addProfileLookupEntry(bucket, key, item) {
+    if (!key || !item) return;
+    if (!bucket[key]) bucket[key] = [];
+    if (bucket[key].indexOf(item) === -1) {
+      bucket[key].push(item);
+    }
+  }
+
+  function getProfileLookupAliases(item) {
+    if (toLookupKey(item && item.name) !== 'plexus') return [];
+    return [
+      'Plexus',
+      'Railjack Plexus',
+      'Railjack',
+      'Railjack Harness',
+      'RailjackHarness',
+      'CrewShip Harness',
+      'Crew Ship Harness',
+      'CrewShipHarness',
+      'Default Harness',
+      'DefaultHarness',
+      '/Lotus/Types/Game/CrewShip/CrewShipHarness',
+      '/Lotus/Types/Game/CrewShip/RailJack/DefaultHarness',
+      '/Lotus/Types/Game/CrewShip/Railjack/DefaultHarness',
+      '/Lotus/Types/Game/Railjack/RailjackHarness',
+      '/Lotus/Types/Game/Railjack/Plexus'
+    ];
+  }
+
+  function buildProfileItemLookup() {
+    var lookup = {
+      byUnique: Object.create(null),
+      byLeaf: Object.create(null),
+      byName: Object.create(null),
+      byCompactName: Object.create(null)
+    };
+
+    for (var i = 0; i < allItems.length; i++) {
+      var item = allItems[i];
+      if (!isMasteryRelevantItem(item)) continue;
+
+      var uniqueCandidates = getProfileUniqueCandidates(item.uniqueName);
+      for (var c = 0; c < uniqueCandidates.length; c++) {
+        lookup.byUnique[uniqueCandidates[c]] = item;
+      }
+
+      addProfileLookupEntry(lookup.byLeaf, getProfilePathLeafKey(item.uniqueName), item);
+      addProfileLookupEntry(lookup.byName, toLookupKey(item.name), item);
+      addProfileLookupEntry(lookup.byCompactName, toCompactLookupKey(item.name), item);
+
+      var aliases = getProfileLookupAliases(item);
+      for (var a = 0; a < aliases.length; a++) {
+        var alias = aliases[a];
+        var normalizedAlias = normalizeProfileUniqueKey(alias);
+        if (normalizedAlias.indexOf('/') !== -1) {
+          lookup.byUnique[normalizedAlias] = item;
+          addProfileLookupEntry(lookup.byLeaf, getProfilePathLeafKey(alias), item);
+        }
+        addProfileLookupEntry(lookup.byName, toLookupKey(alias), item);
+        addProfileLookupEntry(lookup.byCompactName, toCompactLookupKey(alias), item);
+      }
+    }
+
+    return lookup;
+  }
+
+  function chooseProfileLookupCandidate(candidates, entryXp) {
+    if (!Array.isArray(candidates) || candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0];
+
+    var masteredCandidates = candidates.filter(function(item) {
+      return Number(entryXp || 0) >= getItemAffinityForRank(item, getItemMaxRank(item));
+    });
+    if (masteredCandidates.length === 1) return masteredCandidates[0];
+
+    var partialCandidates = candidates.filter(function(item) {
+      var itemXp = getItemXP(item);
+      var profileXp = Number(entryXp || 0);
+      return itemXp > 0 && profileXp > 0 && profileXp <= getItemAffinityForRank(item, getItemMaxRank(item));
+    });
+    return partialCandidates.length === 1 ? partialCandidates[0] : null;
+  }
+
+  function findProfileChecklistItem(entry, lookup) {
+    var itemType = String(entry && entry.itemType || '').trim();
+    if (!itemType) return null;
+
+    var uniqueCandidates = getProfileUniqueCandidates(itemType);
+    for (var i = 0; i < uniqueCandidates.length; i++) {
+      var exact = lookup.byUnique[uniqueCandidates[i]];
+      if (exact) return exact;
+    }
+
+    var leafCandidate = chooseProfileLookupCandidate(lookup.byLeaf[getProfilePathLeafKey(itemType)], entry.xp);
+    if (leafCandidate) return leafCandidate;
+
+    var nameCandidate = chooseProfileLookupCandidate(lookup.byName[toLookupKey(itemType)], entry.xp);
+    if (nameCandidate) return nameCandidate;
+
+    return chooseProfileLookupCandidate(lookup.byCompactName[toCompactLookupKey(itemType)], entry.xp);
+  }
+
+  function getProfileEntryExtraKey(entry) {
+    var key = toLookupKey(entry && entry.itemType);
+    if (!key) return '';
+    var looksLikeXpField = key.indexOf('xp') !== -1 || key.indexOf('experience') !== -1 || key.indexOf('mastery') !== -1;
+    if (!looksLikeXpField && (key.indexOf('completed') !== -1 || key.indexOf('cleared') !== -1 || key.indexOf('count') !== -1)) return '';
+
+    if ((key.indexOf('steel') !== -1 && (key.indexOf('mission') !== -1 || key.indexOf('star chart') !== -1 || key.indexOf('node') !== -1)) || key.indexOf('steel path') !== -1) {
+      return 'steelPathXp';
+    }
+    if ((key.indexOf('hard mode') !== -1 || key.indexOf('hardmode') !== -1) && (key.indexOf('mission') !== -1 || key.indexOf('node') !== -1)) {
+      return 'steelPathXp';
+    }
+    if ((key.indexOf('mission') !== -1 || key.indexOf('star chart') !== -1 || key.indexOf('starchart') !== -1 || key.indexOf('node') !== -1) && key.indexOf('steel') === -1 && key.indexOf('hardmode') === -1 && key.indexOf('hard mode') === -1) {
+      return 'normalStarChartXp';
+    }
+    if ((key.indexOf('railjack') !== -1 || key.indexOf('rail jack') !== -1 || key.indexOf('crewship') !== -1) && (key.indexOf('intrinsic') !== -1 || key.indexOf('skill') !== -1 || looksLikeXpField)) {
+      return 'railjackRanks';
+    }
+    if ((key.indexOf('duviri') !== -1 || key.indexOf('drifter') !== -1) && (key.indexOf('intrinsic') !== -1 || key.indexOf('skill') !== -1 || looksLikeXpField)) {
+      return 'duviriRanks';
+    }
+
+    return '';
+  }
+
+  function getItemRankFromProfileXp(item, profileXp) {
+    var xp = Number(profileXp);
+    if (!Number.isFinite(xp) || xp <= 0) return 0;
+
+    var maxRank = getItemMaxRank(item);
+    var affinityBase = getItemAffinityPerRankSquared(item);
+    if (maxRank <= 0 || affinityBase <= 0) return 0;
+    if (xp >= getItemAffinityForRank(item, maxRank)) return maxRank;
+    return clampWholeNumber(Math.floor(Math.sqrt(xp / affinityBase)), 0, maxRank);
+  }
+
+  function extractProfileMasteryExtras(profileResponse) {
+    var values = getDefaultMasteryExtras();
+    var found = Object.create(null);
+
+    function recordExtra(key, value, isRankValue) {
+      if (!key) return;
+      var numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric < 0) return;
+
+      if (key === 'railjackRanks' || key === 'duviriRanks') {
+        var ranks = isRankValue ? numeric : Math.floor(numeric / INTRINSIC_RANK_XP);
+        values[key] = Math.max(values[key], ranks);
+      } else {
+        values[key] = Math.max(values[key], numeric);
+      }
+      found[key] = true;
+    }
+
+    var responseExtras = profileResponse && profileResponse.masteryExtras;
+    if (responseExtras && typeof responseExtras === 'object') {
+      var foundKeys = Array.isArray(responseExtras.foundKeys) ? responseExtras.foundKeys : [];
+      ['normalStarChartXp', 'steelPathXp', 'railjackRanks', 'duviriRanks'].forEach(function(key) {
+        if (foundKeys.indexOf(key) !== -1 || Number(responseExtras[key] || 0) > 0) {
+          recordExtra(key, responseExtras[key], key === 'railjackRanks' || key === 'duviriRanks');
+        }
+      });
+    }
+
+    var xpInfo = Array.isArray(profileResponse && profileResponse.xpInfo) ? profileResponse.xpInfo : [];
+    for (var i = 0; i < xpInfo.length; i++) {
+      var entry = xpInfo[i] || {};
+      recordExtra(getProfileEntryExtraKey(entry), entry.xp, false);
+    }
+
+    return {
+      values: normalizeMasteryExtras(values),
+      foundKeys: Object.keys(found)
+    };
+  }
+
+  function applyProfileMasteryExtras(profileResponse) {
+    var imported = extractProfileMasteryExtras(profileResponse);
+    var before = normalizeMasteryExtras(masteryExtras);
+    var next = {
+      normalStarChartXp: before.normalStarChartXp,
+      steelPathXp: before.steelPathXp,
+      railjackRanks: before.railjackRanks,
+      duviriRanks: before.duviriRanks
+    };
+    var updatedKeys = [];
+
+    imported.foundKeys.forEach(function(key) {
+      if (!Object.prototype.hasOwnProperty.call(next, key)) return;
+      var importedValue = imported.values[key];
+      if (Number(importedValue) !== Number(next[key])) {
+        next[key] = importedValue;
+        updatedKeys.push(key);
+      }
+    });
+
+    if (updatedKeys.length > 0) {
+      masteryExtras = normalizeMasteryExtras(next);
+      saveMasteryExtras();
+      syncMasteryExtrasInputs();
+    }
+
+    return {
+      foundKeys: imported.foundKeys,
+      values: imported.values,
+      updatedKeys: updatedKeys,
+      changed: updatedKeys.length > 0
+    };
+  }
+
+  function analyzeProfileXpInfo(profileResponse) {
+    var xpInfo = Array.isArray(profileResponse && profileResponse.xpInfo) ? profileResponse.xpInfo : [];
+    var lookup = buildProfileItemLookup();
+    var matchedByUnique = Object.create(null);
+    var partialCount = 0;
+    var unmatchedCount = 0;
+    var ignoredCount = 0;
+
+    for (var i = 0; i < xpInfo.length; i++) {
+      var entry = xpInfo[i] || {};
+      if (getProfileEntryExtraKey(entry)) {
+        ignoredCount++;
+        continue;
+      }
+
+      var item = findProfileChecklistItem(entry, lookup);
+      if (!item) {
+        unmatchedCount++;
+        continue;
+      }
+
+      var requiredXp = getItemXP(item);
+      if (requiredXp <= 0) {
+        ignoredCount++;
+        continue;
+      }
+
+      var profileXp = Number(entry.xp || 0);
+      if (!Number.isFinite(profileXp) || profileXp <= 0) {
+        ignoredCount++;
+        continue;
+      }
+
+      var profileRank = getItemRankFromProfileXp(item, profileXp);
+      if (profileRank <= 0) {
+        partialCount++;
+        continue;
+      }
+
+      var existing = matchedByUnique[item.uniqueName];
+      if (existing && existing.profileRank >= profileRank) continue;
+
+      matchedByUnique[item.uniqueName] = {
+        item: item,
+        profileXp: profileXp,
+        requiredXp: requiredXp,
+        requiredAffinity: getItemAffinityForRank(item, getItemMaxRank(item)),
+        profileRank: profileRank,
+        maxRank: getItemMaxRank(item),
+        itemType: entry.itemType || ''
+      };
+    }
+
+    var matchedItems = Object.keys(matchedByUnique)
+      .map(function(uniqueName) { return matchedByUnique[uniqueName]; })
+      .sort(function(a, b) {
+        return String(a.item.name || '').localeCompare(String(b.item.name || ''));
+      });
+
+    return {
+      profileEntryCount: xpInfo.length,
+      matchedItems: matchedItems,
+      partialCount: partialCount + matchedItems.filter(function(match) {
+        return match.profileRank > 0 && match.profileRank < match.maxRank;
+      }).length,
+      fullCount: matchedItems.filter(function(match) {
+        return match.profileRank >= match.maxRank;
+      }).length,
+      unmatchedCount: unmatchedCount,
+      ignoredCount: ignoredCount
+    };
+  }
+
+  function applyProfileMasteryMatches(profileResponse) {
+    var analysis = analyzeProfileXpInfo(profileResponse);
+    var newlyLeveled = [];
+    var upgradedRanks = [];
+    var newlyMastered = [];
+    var alreadyAtOrAbove = [];
+    var clearedItems = [];
+    var matchedUniqueNames = Object.create(null);
+
+    for (var i = 0; i < analysis.matchedItems.length; i++) {
+      var match = analysis.matchedItems[i];
+      if (!match.item || !match.item.uniqueName) continue;
+      matchedUniqueNames[match.item.uniqueName] = true;
+
+      var previousRank = getStoredItemRank(match.item);
+      if (match.profileRank !== previousRank) {
+        setItemRank(match.item, match.profileRank);
+        upgradedRanks.push(match);
+        if (previousRank <= 0) newlyLeveled.push(match);
+        if (match.profileRank >= match.maxRank && previousRank < match.maxRank) {
+          newlyMastered.push(match);
+        }
+      } else {
+        alreadyAtOrAbove.push(match);
+      }
+    }
+
+    for (var j = 0; j < allItems.length; j++) {
+      var item = allItems[j];
+      if (!isMasteryRelevantItem(item) || !item.uniqueName || item.profileOnly || item.syncOptional || item.category === 'Mods') continue;
+      if (matchedUniqueNames[item.uniqueName]) continue;
+      if (getStoredItemRank(item) <= 0) continue;
+
+      setItemRank(item, 0);
+      clearedItems.push(item);
+    }
+
+    var extrasResult = applyProfileMasteryExtras(profileResponse);
+
+    if (upgradedRanks.length > 0 || clearedItems.length > 0 || extrasResult.changed) {
+      saveMasteryProgress();
+      updateCounts();
+      updateStats();
+      applyFilters();
+    }
+
+    analysis.newlyLeveled = newlyLeveled;
+    analysis.upgradedRanks = upgradedRanks;
+    analysis.newlyMastered = newlyMastered;
+    analysis.alreadyAtOrAbove = alreadyAtOrAbove;
+    analysis.clearedItems = clearedItems;
+    analysis.masteryExtras = extrasResult;
+    return analysis;
+  }
+
+  function buildProfileFetchMeta(profileResponse, analysis) {
+    var parts = [];
+    if (profileResponse && profileResponse.displayName) {
+      parts.push(profileResponse.displayName);
+    }
+    if (profileResponse && Number.isFinite(Number(profileResponse.masteryRank))) {
+      parts.push('MR ' + String(profileResponse.masteryRank));
+    }
+    if (analysis && typeof analysis.profileEntryCount === 'number') {
+      parts.push(analysis.profileEntryCount.toLocaleString() + ' profile XP entries');
+    }
+    if (profileResponse && profileResponse.logUpdatedAt) {
+      parts.push('EE.log ' + formatProfileFetchDate(profileResponse.logUpdatedAt));
+    }
+    return parts.join(' - ');
+  }
+
+  function handleProfileFetchFailure(result) {
+    var reason = result && result.reason ? result.reason : '';
+    var message = result && result.message ? result.message : 'Profile sync failed.';
+
+    if (reason === 'process-not-running') {
+      startProfileProcessWatch();
+      return;
+    }
+
+    if (reason === 'account-id-not-found' || reason === 'profile-empty') {
+      setProfileFetchStatus(
+        'warning',
+        'Refresh your Warframe profile',
+        message + ' Enter and leave a Relay or Dojo, then press Fetch Your Profile again.',
+        result && result.logUpdatedAt ? ('EE.log updated: ' + formatProfileFetchDate(result.logUpdatedAt)) : ''
+      );
+      return;
+    }
+
+    if (reason === 'log-not-found') {
+      setProfileFetchStatus(
+        'warning',
+        'EE.log was not found',
+        message + ' Start Warframe once so it creates the local log file, then try again.',
+        ''
+      );
+      return;
+    }
+
+    setProfileFetchStatus(
+      'error',
+      'Profile sync failed',
+      message + ' If this repeats, enter and leave a Relay or Dojo and wait a minute before retrying.',
+      ''
+    );
+  }
+
+  function applyProfileFetchSuccess(result, mode) {
+    var analysis = applyProfileMasteryMatches(result);
+    var leveledCount = analysis.upgradedRanks.length;
+    var newLevelCount = analysis.newlyLeveled.length;
+    var newlyMasteredCount = analysis.newlyMastered.length;
+    var alreadyCount = analysis.alreadyAtOrAbove.length;
+    var clearedCount = Array.isArray(analysis.clearedItems) ? analysis.clearedItems.length : 0;
+    var matchedCount = analysis.matchedItems.length;
+    var extrasUpdatedCount = analysis.masteryExtras && Array.isArray(analysis.masteryExtras.updatedKeys)
+      ? analysis.masteryExtras.updatedKeys.length
+      : 0;
+    var details = leveledCount.toLocaleString() + ' item levels updated, '
+      + newLevelCount.toLocaleString() + ' new items found, '
+      + newlyMasteredCount.toLocaleString() + ' newly mastered, '
+      + clearedCount.toLocaleString() + ' local extras cleared, '
+      + alreadyCount.toLocaleString() + ' already at or above profile rank, '
+      + extrasUpdatedCount.toLocaleString() + ' account XP fields updated, '
+      + analysis.unmatchedCount.toLocaleString() + ' unmatched profile entries.';
+
+    setProfileFetchStatus(
+      'success',
+      mode === 'auto' ? 'Profile auto-sync complete' : 'Profile levels imported',
+      'Matched ' + matchedCount.toLocaleString() + ' checklist items from your profile. ' + details,
+      buildProfileFetchMeta(result, analysis)
+    );
+    setProfileSyncIndicator(
+      'online',
+      'profile synced',
+      'Warframe detected and profile synced at ' + formatProfileFetchDate(Date.now())
+    );
+
+    saveLastProfileFetchSummary({
+      displayName: result.displayName || '',
+      masteryRank: result.masteryRank,
+      matchedCount: matchedCount,
+      leveledCount: leveledCount,
+      newlyLeveledCount: newLevelCount,
+      newlyMasteredCount: newlyMasteredCount,
+      clearedCount: clearedCount,
+      alreadyAtOrAboveCount: alreadyCount,
+      accountXpFieldsUpdated: extrasUpdatedCount,
+      unmatchedCount: analysis.unmatchedCount,
+      importedAt: Date.now()
+    });
+
+    return analysis;
+  }
+
+  async function fetchWarframeProfileFromSettings() {
+    if (profileFetchInProgress) return;
+    stopProfileProcessWatch();
+
+    if (!window.electronAPI || !window.electronAPI.fetchWarframeProfile) {
+      setProfileFetchStatus(
+        'error',
+        'Profile sync unavailable',
+        'This build does not expose the Warframe profile bridge through Electron.',
+        ''
+      );
+      return;
+    }
+
+    if (!allItems.length) {
+      setProfileFetchStatus(
+        'warning',
+        'Checklist is still loading',
+        'Wait for the item list to finish loading, then fetch your profile.',
+        ''
+      );
+      return;
+    }
+
+    profileFetchInProgress = true;
+    setProfileFetchButtonState({ disabled: true, text: 'Fetching...' });
+    setProfileFetchStatus(
+      'busy',
+      'Looking for Warframe',
+      'Checking the Warframe process, reading EE.log, and requesting your profile mastery data.',
+      ''
+    );
+
+    try {
+      var result = await window.electronAPI.fetchWarframeProfile();
+      if (!result || result.ok === false) {
+        handleProfileFetchFailure(result || {});
+        return;
+      }
+
+      applyProfileFetchSuccess(result, 'manual');
+    } catch (err) {
+      setProfileFetchStatus(
+        'error',
+        'Profile sync failed',
+        err && err.message ? err.message : 'Unexpected profile sync error.',
+        ''
+      );
+    } finally {
+      profileFetchInProgress = false;
+      setProfileFetchButtonState({ disabled: false, text: 'Fetch Your Profile' });
+    }
+  }
+
+  function handleAutoProfileFetchFailure(result) {
+    var reason = result && result.reason ? result.reason : '';
+    var message = result && result.message ? result.message : 'Profile sync failed.';
+
+    if (reason === 'process-not-running') {
+      setProfileSyncIndicator('offline', 'profile offline', 'Warframe is not running.');
+      setProfileFetchStatus(
+        'error',
+        'Warframe is not running',
+        'Automatic profile sync will turn green after Warframe opens and the profile can be fetched.',
+        ''
+      );
+      return;
+    }
+
+    setProfileSyncIndicator('offline', 'profile not fetched', message);
+    setProfileFetchStatus(
+      'error',
+      reason === 'account-id-not-found' ? 'Refresh profile cache' : 'Automatic sync failed',
+      reason === 'account-id-not-found'
+        ? message + ' Enter and leave a Relay or Dojo so EE.log receives your account id.'
+        : message,
+      result && result.logUpdatedAt ? ('EE.log updated: ' + formatProfileFetchDate(result.logUpdatedAt)) : ''
+    );
+  }
+
+  async function runAutomaticProfileSync(force) {
+    if (profileFetchInProgress) return false;
+    if (!allItems.length) return false;
+    if (!window.electronAPI || !window.electronAPI.fetchWarframeProfile) {
+      setProfileSyncIndicator('offline', 'profile bridge missing', 'This build cannot fetch Warframe profile data.');
+      return false;
+    }
+    if (!force && profileLastAutoSyncAt && Date.now() - profileLastAutoSyncAt < PROFILE_AUTO_SYNC_MIN_GAP_MS) {
+      return false;
+    }
+
+    profileFetchInProgress = true;
+    setProfileSyncIndicator('syncing', 'syncing profile', 'Checking Warframe and profile data...');
+    setProfileFetchStatus(
+      'busy',
+      'Automatic profile sync running',
+      'Checking Warframe, reading EE.log, and importing profile item levels plus account XP.',
+      ''
+    );
+
+    try {
+      var result = await window.electronAPI.fetchWarframeProfile();
+      profileLastAutoSyncAt = Date.now();
+      if (!result || result.ok === false) {
+        handleAutoProfileFetchFailure(result || {});
+        return false;
+      }
+      applyProfileFetchSuccess(result, 'auto');
+      return true;
+    } catch (err) {
+      setProfileSyncIndicator('offline', 'profile not fetched', err && err.message ? err.message : 'Automatic profile sync failed.');
+      setProfileFetchStatus(
+        'error',
+        'Automatic sync failed',
+        err && err.message ? err.message : 'Unexpected profile sync error.',
+        ''
+      );
+      return false;
+    } finally {
+      profileFetchInProgress = false;
+    }
+  }
+
+  function initProfileAutoSync() {
+    if (profileAutoSyncInitialized) return;
+    profileAutoSyncInitialized = true;
+    if (!els.profileSyncPill || !els.profileSyncPill.classList.contains('is-online')) {
+      setProfileSyncIndicator('offline', 'profile offline', 'Waiting for Warframe profile sync.');
+    }
+
+    window.setTimeout(function() {
+      runAutomaticProfileSync(true);
+    }, 1500);
+
+    profileAutoSyncTimer = window.setInterval(function() {
+      runAutomaticProfileSync(false);
+    }, PROFILE_AUTO_SYNC_INTERVAL_MS);
+
+    window.addEventListener('focus', function() {
+      runAutomaticProfileSync(false);
+    });
+  }
+
   function getMRFromXP(xp) {
     if (xp <= 0) return 0;
 
@@ -6115,15 +10010,38 @@
   }
 
   async function toggleTradeMode() {
-    if (!window.electronAPI || !window.electronAPI.setTradeMode) return;
     try {
       var nextState = !tradeModeEnabled;
-      var result = await window.electronAPI.setTradeMode(nextState);
-      tradeModeEnabled = !!(result && result.enabled);
+      tradeModeEnabled = nextState;
       updateTradeModeUI();
       applyFilters();
+
+      if (window.electronAPI && window.electronAPI.setTradeMode) {
+        var result = await window.electronAPI.setTradeMode(nextState);
+        if (result && result.ok === false) {
+          tradeModeEnabled = nextState;
+        } else if (result && Object.prototype.hasOwnProperty.call(result, 'enabled')) {
+          tradeModeEnabled = !!result.enabled;
+        }
+      }
+
+      updateTradeModeUI();
+      applyFilters();
+
+      if (tradeModeEnabled) {
+        ensureTradabilityLoaded(allItems).then(function(ready) {
+          if (!ready) return;
+          saveToCache(allItems);
+          refreshCurrentItemInfoFromLatestData();
+          if (tradeModeEnabled) {
+            applyFilters();
+          }
+        });
+      }
     } catch (err) {
       console.error('Failed to toggle trade mode:', err);
+      updateTradeModeUI();
+      applyFilters();
     }
   }
 
@@ -6198,19 +10116,27 @@
 
   async function initAppVersion() {
     if (!els.settingsAppVersion) return '';
+    var versionHint = '';
+    if (window.electronAPI && typeof window.electronAPI.getVersionHint === 'function') {
+      versionHint = String(window.electronAPI.getVersionHint() || '').trim();
+    }
     if (!window.electronAPI || !window.electronAPI.getAppVersion) {
-      els.settingsAppVersion.textContent = 'Version -';
-      return '';
+      currentAppVersion = versionHint;
+      els.settingsAppVersion.textContent = 'Version ' + (currentAppVersion || '-');
+      return currentAppVersion;
     }
     try {
       var version = await window.electronAPI.getAppVersion();
       currentAppVersion = String(version || '').trim();
+      if (!currentAppVersion && versionHint) {
+        currentAppVersion = versionHint;
+      }
       els.settingsAppVersion.textContent = 'Version ' + (currentAppVersion || '-');
       return currentAppVersion;
     } catch (err) {
-      els.settingsAppVersion.textContent = 'Version -';
-      currentAppVersion = '';
-      return '';
+      currentAppVersion = versionHint;
+      els.settingsAppVersion.textContent = 'Version ' + (currentAppVersion || '-');
+      return currentAppVersion;
     }
   }
 
@@ -6503,7 +10429,7 @@
         setUpdateStatus(
           'is-up-to-date',
           'up to date',
-          'Current ' + current.normalized + ' • Latest ' + latest.normalized + ' (' + latestInfo.source + ')'
+          'Current ' + current.normalized + ' - Latest ' + latest.normalized + ' (' + latestInfo.source + ')'
         );
       } else {
         setMainMenuUpdateButtonState({
@@ -6516,7 +10442,7 @@
         setUpdateStatus(
           'is-outdated',
           'you need to update',
-          'Current ' + current.normalized + ' • Latest ' + latest.normalized + ' (' + latestInfo.source + ')'
+          'Current ' + current.normalized + ' - Latest ' + latest.normalized + ' (' + latestInfo.source + ')'
         );
       }
     } catch (err) {
@@ -6665,6 +10591,12 @@
   }
 
   // ---------- Counts ----------
+  function shouldMirrorMasteredItemIntoPrimaryCount(item) {
+    // Warframe reports Kitgun chamber paths as Secondary/Pistol parts, but the
+    // in-game Equipment screen also counts mastered Kitgun chambers in Primary.
+    return !!item && item.category !== 'Primary' && isKitgunChamberItem(item);
+  }
+
   function updateCounts() {
     var counts = {};
     var totalAll = 0;
@@ -6674,14 +10606,18 @@
       if (!counts[item.category]) counts[item.category] = { total: 0, mastered: 0 };
       counts[item.category].total++;
       if (item.category !== 'Mods') totalAll++;
-      if (masteredSet.has(item.uniqueName)) {
+      if (isItemFullyRanked(item)) {
         counts[item.category].mastered++;
+        if (shouldMirrorMasteredItemIntoPrimaryCount(item)) {
+          if (!counts['Primary']) counts['Primary'] = { total: 0, mastered: 0 };
+          counts['Primary'].mastered++;
+        }
       }
     }
 
     var masteredCount = 0;
     for (var j = 0; j < allItems.length; j++) {
-      if (allItems[j].category !== 'Mods' && masteredSet.has(allItems[j].uniqueName)) {
+      if (allItems[j].category !== 'Mods' && isItemFullyRanked(allItems[j])) {
         masteredCount++;
       }
     }
@@ -6690,10 +10626,12 @@
     setCount('count-primary', counts['Primary']);
     setCount('count-secondary', counts['Secondary']);
     setCount('count-melee', counts['Melee']);
-    setCount('count-amps', counts['Amps']);
+    setCount('count-robotic', counts['Robotic']);
     setCount('count-companions', counts['Companions']);
     setCount('count-vehicles', counts['Vehicles']);
-    setCount('count-sentinels', counts['Sentinels']);
+    setCount('count-archgun', counts['Archgun']);
+    setCount('count-archmelee', counts['Archmelee']);
+    setCount('count-amps', counts['Amps']);
     setCount('count-mods', counts['Mods']);
   }
 
@@ -6741,9 +10679,11 @@
   function markAllInCategory() {
     var itemsToMark = filteredItems;
     for (var i = 0; i < itemsToMark.length; i++) {
-      masteredSet.add(itemsToMark[i].uniqueName);
+      var item = itemsToMark[i];
+      var maxRank = getItemMaxRank(item);
+      setItemRank(item, item.category === 'Mods' ? 1 : (maxRank > 0 ? maxRank : 1));
     }
-    saveMastered();
+    saveMasteryProgress();
     updateCounts();
     updateStats();
     applyFilters();
@@ -6752,9 +10692,9 @@
   function unmarkAllInCategory() {
     var itemsToUnmark = filteredItems;
     for (var i = 0; i < itemsToUnmark.length; i++) {
-      masteredSet.delete(itemsToUnmark[i].uniqueName);
+      setItemRank(itemsToUnmark[i], 0);
     }
-    saveMastered();
+    saveMasteryProgress();
     updateCounts();
     updateStats();
     applyFilters();
@@ -6885,6 +10825,110 @@
   }
 
   // Mark All / Unmark All buttons
+  if (els.scanItemsBtn) {
+    els.scanItemsBtn.addEventListener('click', function() {
+      triggerScreenshotItemScan();
+    });
+  }
+
+  if (els.scanModalBrowse) {
+    els.scanModalBrowse.addEventListener('click', function() {
+      openScanFilePicker();
+    });
+  }
+
+  if (els.scanItemsInput) {
+    els.scanItemsInput.addEventListener('change', function(e) {
+      var input = e.target;
+      var files = getSelectedScanFiles(input && input.files ? input.files : null);
+      if (input) input.value = '';
+      if (!files.length) return;
+      startScreenshotItemScanBatch(files);
+    });
+  }
+
+  if (els.scanDropzone) {
+    els.scanDropzone.addEventListener('click', function(e) {
+      if (ocrScanInProgress) return;
+      if (e.target === els.scanModalBrowse) return;
+      openScanFilePicker();
+    });
+
+    els.scanDropzone.addEventListener('keydown', function(e) {
+      if (ocrScanInProgress) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openScanFilePicker();
+      }
+    });
+
+    els.scanDropzone.addEventListener('dragenter', function(e) {
+      if (ocrScanInProgress) return;
+      e.preventDefault();
+      scanDragDepth += 1;
+      els.scanDropzone.classList.add('is-dragover');
+    });
+
+    els.scanDropzone.addEventListener('dragover', function(e) {
+      if (ocrScanInProgress) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      els.scanDropzone.classList.add('is-dragover');
+    });
+
+    els.scanDropzone.addEventListener('dragleave', function(e) {
+      if (ocrScanInProgress) return;
+      e.preventDefault();
+      scanDragDepth = Math.max(0, scanDragDepth - 1);
+      if (scanDragDepth === 0) {
+        els.scanDropzone.classList.remove('is-dragover');
+      }
+    });
+
+    els.scanDropzone.addEventListener('drop', function(e) {
+      if (ocrScanInProgress) return;
+      e.preventDefault();
+      scanDragDepth = 0;
+      els.scanDropzone.classList.remove('is-dragover');
+      var files = getSelectedScanFiles(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : null);
+      if (!files.length) {
+        setScanStatus(
+          'error',
+          'No image files detected',
+          'Drop one or more screenshot image files to start a scan.',
+          0,
+          'Unavailable'
+        );
+        return;
+      }
+      startScreenshotItemScanBatch(files);
+    });
+  }
+
+  if (els.scanModalClose) {
+    els.scanModalClose.addEventListener('click', function() {
+      closeScanModal(false);
+    });
+  }
+
+  if (els.scanModalDone) {
+    els.scanModalDone.addEventListener('click', function() {
+      closeScanModal(false);
+    });
+  }
+
+  if (els.scanModalPickAnother) {
+    els.scanModalPickAnother.addEventListener('click', function() {
+      openScanFilePicker();
+    });
+  }
+
+  if (els.scanModal) {
+    els.scanModal.addEventListener('click', function(e) {
+      if (e.target === els.scanModal) closeScanModal(false);
+    });
+  }
+
   $('#btn-mark-all').addEventListener('click', function() {
     markAllInCategory();
   });
@@ -6934,6 +10978,18 @@
         });
         setUpdateStatus('is-error', 'status unavailable', 'Auto update check is disabled.');
       }
+    });
+  }
+
+  if (els.profileFetchBtn) {
+    els.profileFetchBtn.addEventListener('click', function() {
+      fetchWarframeProfileFromSettings();
+    });
+  }
+
+  if (els.profileSyncPill) {
+    els.profileSyncPill.addEventListener('click', function() {
+      runAutomaticProfileSync(true);
     });
   }
 
@@ -6991,6 +11047,36 @@
     els.calculatorModal.classList.remove('hidden');
   });
 
+  if (els.cephalonSimarisBtn) {
+    els.cephalonSimarisBtn.addEventListener('click', function() {
+      openSimarisModal();
+    });
+  }
+
+  if (els.simarisModalClose) {
+    els.simarisModalClose.addEventListener('click', closeSimarisModal);
+  }
+
+  if (els.simarisModal) {
+    els.simarisModal.addEventListener('click', function(e) {
+      if (e.target === els.simarisModal) closeSimarisModal();
+    });
+  }
+
+  if (els.simarisSearchForm) {
+    els.simarisSearchForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      fetchSimarisQuery(els.simarisQueryInput ? els.simarisQueryInput.value : '');
+    });
+  }
+
+  if (els.simarisResultLink) {
+    els.simarisResultLink.addEventListener('click', function(e) {
+      e.preventDefault();
+      openExternalUrl(els.simarisResultLink.href);
+    });
+  }
+
   $('#modal-close').addEventListener('click', function() {
     els.calculatorModal.classList.add('hidden');
   });
@@ -7019,7 +11105,7 @@
   if (els.calcNormalStarChartMaxBtn) {
     els.calcNormalStarChartMaxBtn.addEventListener('click', function() {
       if (els.calcNormalStarChartXp) {
-        els.calcNormalStarChartXp.value = String(NORMAL_STAR_CHART_XP_MAX);
+        els.calcNormalStarChartXp.value = String(getNormalStarChartXpCap());
       }
       applyMasteryExtrasFromInputs(true);
     });
@@ -7028,7 +11114,7 @@
   if (els.calcSteelPathMaxBtn) {
     els.calcSteelPathMaxBtn.addEventListener('click', function() {
       if (els.calcSteelPathXp) {
-        els.calcSteelPathXp.value = String(STEEL_PATH_XP_MAX);
+        els.calcSteelPathXp.value = String(getSteelPathXpCap());
       }
       applyMasteryExtrasFromInputs(true);
     });
@@ -7053,7 +11139,8 @@
 
   $('#reset-confirm').addEventListener('click', function() {
     masteredSet.clear();
-    saveMastered();
+    itemLevelMap = Object.create(null);
+    saveMasteryProgress();
     els.resetModal.classList.add('hidden');
     updateCounts();
     updateStats();
@@ -7082,8 +11169,13 @@
       els.resetModal.classList.add('hidden');
       closeNewsModal();
       closeItemInfoModal();
+      closeScanModal(false);
     }
   });
+
+  if (window.electronAPI && window.electronAPI.onOcrScanProgress) {
+    window.electronAPI.onOcrScanProgress(handleOcrScanProgress);
+  }
 
   if (els.itemInfoClose) {
     els.itemInfoClose.addEventListener('click', closeItemInfoModal);
@@ -7128,7 +11220,7 @@
     });
   }
 
-  // ---------- Panel Switching (Checklist ↔ Market) ----------
+  // ---------- Panel Switching (Checklist Ã¢â€ â€ Market) ----------
   var marketLoaded = false;
 
   function getPanelRefs() {
@@ -7140,6 +11232,7 @@
       relics: $('#relics-panel'),
       arcanes: $('#arcanes-panel'),
       cycles: $('#cycles-panel'),
+      starchart: $('#starchart-panel'),
       settings: $('#settings-page')
     };
   }
@@ -7147,6 +11240,7 @@
   function getCurrentPanelName() {
     var refs = getPanelRefs();
     if (refs.settings && !refs.settings.classList.contains('hidden')) return 'settings';
+    if (refs.starchart && !refs.starchart.classList.contains('hidden')) return 'starchart';
     if (refs.cycles && !refs.cycles.classList.contains('hidden')) return 'cycles';
     if (refs.arcanes && !refs.arcanes.classList.contains('hidden')) return 'arcanes';
     if (refs.relics && !refs.relics.classList.contains('hidden')) return 'relics';
@@ -7164,6 +11258,7 @@
     var relicsPanel = refs.relics;
     var arcanesPanel = refs.arcanes;
     var cyclesPanel = refs.cycles;
+    var starchartPanel = refs.starchart;
     var settingsPage = refs.settings;
 
     var navMarket = $('#nav-market');
@@ -7172,6 +11267,15 @@
     var navRelics = $('#nav-relics');
     var navArcanes = $('#nav-arcanes');
     var navCycles = $('#nav-cycles');
+    var navStarchart = $('#nav-starchart');
+
+    // Stop starchart animation when leaving that panel
+    if (panel !== 'starchart' && window.warframeStarchart) {
+      window.warframeStarchart.stopAnimation();
+    }
+    if (panel !== 'starchart') {
+      closeStarchartNightwavePanel(false);
+    }
 
     if (panel === 'market') {
       contentEl.classList.add('hidden');
@@ -7181,6 +11285,7 @@
       if (relicsPanel) relicsPanel.classList.add('hidden');
       if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.add('active');
@@ -7189,6 +11294,7 @@
       if (navRelics) navRelics.classList.remove('active');
       if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
       if (!marketLoaded && window.warframeMarket) {
@@ -7204,6 +11310,7 @@
       if (relicsPanel) relicsPanel.classList.add('hidden');
       if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.remove('active');
@@ -7212,6 +11319,7 @@
       if (navRelics) navRelics.classList.remove('active');
       if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
       if (!marketLoaded && window.warframeMarket) {
@@ -7229,6 +11337,7 @@
       if (relicsPanel) relicsPanel.classList.add('hidden');
       if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.remove('active');
@@ -7237,6 +11346,7 @@
       if (navRelics) navRelics.classList.remove('active');
       if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
       stopCycleCountdown();
       loadPrimeResurgence(false);
     } else if (panel === 'relics') {
@@ -7247,6 +11357,7 @@
       if (relicsPanel) relicsPanel.classList.remove('hidden');
       if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.remove('active');
@@ -7255,6 +11366,7 @@
       if (navRelics) navRelics.classList.add('active');
       if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
       loadRelicDirectory(false);
@@ -7266,6 +11378,7 @@
       if (relicsPanel) relicsPanel.classList.add('hidden');
       if (arcanesPanel) arcanesPanel.classList.remove('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.remove('active');
@@ -7274,6 +11387,7 @@
       if (navRelics) navRelics.classList.remove('active');
       if (navArcanes) navArcanes.classList.add('active');
       if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
       loadArcaneDirectory(false);
@@ -7285,6 +11399,7 @@
       if (relicsPanel) relicsPanel.classList.add('hidden');
       if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.remove('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
       if (navMarket) navMarket.classList.remove('active');
@@ -7293,8 +11408,38 @@
       if (navRelics) navRelics.classList.remove('active');
       if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.add('active');
+      if (navStarchart) navStarchart.classList.remove('active');
       stopPrimeCountdown();
       loadCycles();
+    } else if (panel === 'starchart') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.remove('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.add('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      if (window.warframeStarchart) {
+        window.warframeStarchart.init();
+        setTimeout(function() {
+          window.warframeStarchart.resizeStarField();
+          window.warframeStarchart.resizeTwinkle();
+          window.warframeStarchart.startAnimation();
+        }, 50);
+      }
+      renderStarchartNightwavePanel({ loading: !cycleSnapshot || !cycleSnapshot.worldstate });
     } else if (panel === 'settings') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
@@ -7303,6 +11448,7 @@
       if (relicsPanel) relicsPanel.classList.add('hidden');
       if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
       settingsPage.classList.remove('hidden');
       if (navMarket) navMarket.classList.remove('active');
       if (navAnalytics) navAnalytics.classList.remove('active');
@@ -7310,6 +11456,7 @@
       if (navRelics) navRelics.classList.remove('active');
       if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
     } else {
@@ -7320,6 +11467,7 @@
       if (relicsPanel) relicsPanel.classList.add('hidden');
       if (arcanesPanel) arcanesPanel.classList.add('hidden');
       if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
       settingsPage.classList.add('hidden');
       if (navMarket) navMarket.classList.remove('active');
       if (navAnalytics) navAnalytics.classList.remove('active');
@@ -7327,6 +11475,7 @@
       if (navRelics) navRelics.classList.remove('active');
       if (navArcanes) navArcanes.classList.remove('active');
       if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
       stopPrimeCountdown();
       stopCycleCountdown();
     }
@@ -7425,6 +11574,13 @@
     });
   }
 
+  var navStarchartEl = $('#nav-starchart');
+  if (navStarchartEl) {
+    navStarchartEl.addEventListener('click', function() {
+      showPanel('starchart', true);
+    });
+  }
+
   document.querySelectorAll('.cycles-nav-btn[data-cycle-tab]').forEach(function(btn) {
     btn.addEventListener('click', function() {
       setActiveCycleTab(btn.getAttribute('data-cycle-tab'));
@@ -7455,6 +11611,24 @@
     });
   }
 
+  if (els.starchartNightwaveBanner) {
+    els.starchartNightwaveBanner.addEventListener('click', function() {
+      toggleStarchartNightwavePanel();
+    });
+  }
+
+  if (els.starchartNightwaveClose) {
+    els.starchartNightwaveClose.addEventListener('click', function() {
+      closeStarchartNightwavePanel(true);
+    });
+  }
+
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape' && isStarchartNightwaveOpen()) {
+      closeStarchartNightwavePanel(true);
+    }
+  });
+
   // Override category nav clicks to ensure we return to checklist
   $$('.nav-item[data-category]').forEach(function(btn) {
     btn.addEventListener('click', function() {
@@ -7468,6 +11642,7 @@
   initAppVersion();
   initAlwaysOnTopSetting();
   initAutoUpdateSetting();
+  initProfileFetchSetting();
   initSidebarToggle();
   initRemovedProfileStorageMigration();
   loadItems();

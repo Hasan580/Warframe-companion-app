@@ -1,33 +1,37 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Warframe Companion App</title>
   <link rel="stylesheet" href="styles.css">
-  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap"
+    rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
 </head>
+
 <body>
 
   <!-- Custom Titlebar -->
   <div class="titlebar" id="titlebar">
     <div class="titlebar-drag">
       <div class="titlebar-logo">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="#E4A83C">
-          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
         </svg>
         <span>WARFRAME COMPANION</span>
       </div>
     </div>
     <div class="titlebar-controls">
-      <button class="titlebar-btn" id="btn-minimize" title="Minimize">
+      <button class="titlebar-btn" id="btn-minimize" type="button" title="Minimize">
         <span class="material-icons-round">remove</span>
       </button>
-      <button class="titlebar-btn" id="btn-maximize" title="Maximize">
+      <button class="titlebar-btn" id="btn-maximize" type="button" title="Maximize">
         <span class="material-icons-round">crop_square</span>
       </button>
-      <button class="titlebar-btn titlebar-btn-close" id="btn-close" title="Close">
+      <button class="titlebar-btn titlebar-btn-close" id="btn-close" type="button" title="Close">
         <span class="material-icons-round">close</span>
       </button>
     </div>
@@ -42,8 +46,8 @@
         <div class="mastery-badge" id="mastery-badge">
           <div class="mastery-ring">
             <svg viewBox="0 0 100 100">
-              <circle class="ring-bg" cx="50" cy="50" r="42"/>
-              <circle class="ring-progress" id="ring-progress" cx="50" cy="50" r="42"/>
+              <circle class="ring-bg" cx="50" cy="50" r="42" />
+              <circle class="ring-progress" id="ring-progress" cx="50" cy="50" r="42" />
             </svg>
             <span class="mastery-number" id="mastery-rank-display">0</span>
           </div>
@@ -55,7 +59,7 @@
       </div>
 
       <nav class="sidebar-nav">
-        <div class="nav-section-label">CATEGORIES</div>
+        <div class="nav-section-label">EQUIPMENT</div>
         <button class="nav-item active" data-category="all" id="nav-all">
           <span class="material-icons-round">apps</span>
           <span class="nav-text">All Items</span>
@@ -63,7 +67,7 @@
         </button>
         <button class="nav-item" data-category="Warframes" id="nav-warframes">
           <span class="material-icons-round">person</span>
-          <span class="nav-text">Warframes</span>
+          <span class="nav-text">Warframe</span>
           <span class="nav-count" id="count-warframes">0</span>
         </button>
         <button class="nav-item" data-category="Primary" id="nav-primary">
@@ -81,10 +85,10 @@
           <span class="nav-text">Melee</span>
           <span class="nav-count" id="count-melee">0</span>
         </button>
-        <button class="nav-item" data-category="Amps" id="nav-amps">
-          <span class="material-icons-round">flash_on</span>
-          <span class="nav-text">Amps</span>
-          <span class="nav-count" id="count-amps">0</span>
+        <button class="nav-item" data-category="Robotic" id="nav-robotic">
+          <span class="material-icons-round">smart_toy</span>
+          <span class="nav-text">Robotic</span>
+          <span class="nav-count" id="count-robotic">0</span>
         </button>
         <button class="nav-item" data-category="Companions" id="nav-companions">
           <span class="material-icons-round">pets</span>
@@ -96,11 +100,23 @@
           <span class="nav-text">Vehicles</span>
           <span class="nav-count" id="count-vehicles">0</span>
         </button>
-        <button class="nav-item" data-category="Sentinels" id="nav-sentinels">
-          <span class="material-icons-round">smart_toy</span>
-          <span class="nav-text">Sentinels</span>
-          <span class="nav-count" id="count-sentinels">0</span>
+        <button class="nav-item" data-category="Archgun" id="nav-archgun">
+          <span class="material-icons-round">rocket_launch</span>
+          <span class="nav-text">Archgun</span>
+          <span class="nav-count" id="count-archgun">0</span>
         </button>
+        <button class="nav-item" data-category="Archmelee" id="nav-archmelee">
+          <span class="material-icons-round">hardware</span>
+          <span class="nav-text">Archmelee</span>
+          <span class="nav-count" id="count-archmelee">0</span>
+        </button>
+        <button class="nav-item" data-category="Amps" id="nav-amps">
+          <span class="material-icons-round">flash_on</span>
+          <span class="nav-text">Amps</span>
+          <span class="nav-count" id="count-amps">0</span>
+        </button>
+
+        <div class="nav-section-label" style="margin-top: 16px;">REFERENCE</div>
         <button class="nav-item" data-category="Mods" id="nav-mods">
           <span class="material-icons-round">auto_awesome</span>
           <span class="nav-text">Mods</span>
@@ -132,6 +148,10 @@
           <span class="material-icons-round">schedule</span>
           <span class="nav-text">Worldstate</span>
         </button>
+        <button class="nav-item" id="nav-starchart" data-panel="starchart">
+          <span class="material-icons-round">public</span>
+          <span class="nav-text">Solar System</span>
+        </button>
 
         <div class="nav-section-label" style="margin-top: 16px;">TOOLS</div>
         <button class="nav-item nav-tool" id="btn-trade-mode" aria-pressed="false">
@@ -142,15 +162,21 @@
           <span class="material-icons-round">calculate</span>
           <span class="nav-text">MR Calculator</span>
         </button>
+        <button class="nav-item nav-tool" id="btn-cephalon-simaris" type="button">
+          <span class="material-icons-round">psychology</span>
+          <span class="nav-text">Cephalon Simaris</span>
+        </button>
         <button class="nav-item nav-tool" id="btn-reset">
           <span class="material-icons-round">restart_alt</span>
           <span class="nav-text">Reset All</span>
         </button>
-        <button class="nav-item nav-tool nav-update-item" id="btn-main-menu-update" type="button" title="Use this button to check for or download new versions.">
+        <button class="nav-item nav-tool nav-update-item" id="btn-main-menu-update" type="button"
+          title="Use this button to check for or download new versions.">
           <span class="material-icons-round" id="main-menu-update-icon">system_update_alt</span>
           <span class="nav-meta">
             <span class="nav-text" id="main-menu-update-text">Check for Updates</span>
-            <span class="nav-subtext" id="main-menu-update-details">Use this button to check for or download new versions.</span>
+            <span class="nav-subtext" id="main-menu-update-details">Use this button to check for or download new
+              versions.</span>
           </span>
         </button>
       </nav>
@@ -171,7 +197,8 @@
       </div>
     </aside>
 
-    <button class="sidebar-toggle-btn" id="btn-sidebar-toggle" type="button" aria-label="Hide left panel" title="Hide left panel" aria-pressed="false">
+    <button class="sidebar-toggle-btn" id="btn-sidebar-toggle" type="button" aria-label="Hide left panel"
+      title="Hide left panel" aria-pressed="false">
       <span class="material-icons-round" id="sidebar-toggle-icon">chevron_left</span>
     </button>
 
@@ -187,6 +214,11 @@
           </button>
         </div>
         <div class="topbar-actions">
+          <div class="profile-sync-pill is-offline" id="profile-sync-pill" title="Warframe profile sync status">
+            <span class="profile-sync-dot" aria-hidden="true"></span>
+            <span class="material-icons-round">person_search</span>
+            <span id="profile-sync-text">profile offline</span>
+          </div>
           <div class="update-status-pill is-checking" id="update-status-pill" title="Checking for updates...">
             <span class="material-icons-round">update</span>
             <span id="update-status-text">checking...</span>
@@ -222,6 +254,7 @@
           </button>
         </div>
       </div>
+      <input type="file" id="scan-items-input" accept="image/*" multiple class="hidden">
 
       <!-- Items Grid -->
       <div class="items-grid" id="items-grid">
@@ -251,7 +284,8 @@
       <div class="content-topbar">
         <div class="search-container">
           <span class="material-icons-round search-icon">search</span>
-          <input type="text" class="search-input" id="market-search-input" placeholder="Search market items..." autocomplete="off">
+          <input type="text" class="search-input" id="market-search-input" placeholder="Search market items..."
+            autocomplete="off">
           <button class="search-clear hidden" id="market-search-clear">
             <span class="material-icons-round">close</span>
           </button>
@@ -260,23 +294,39 @@
 
       <!-- Market Categories -->
       <div class="market-categories">
-        <button class="market-cat-btn active" data-market-cat="all">All <span class="market-cat-count">0</span></button>
-        <button class="market-cat-btn" data-market-cat="prime_sets">Prime Sets <span class="market-cat-count">0</span></button>
-        <button class="market-cat-btn" data-market-cat="prime_parts">Prime Parts <span class="market-cat-count">0</span></button>
-        <button class="market-cat-btn" data-market-cat="mods">Mods <span class="market-cat-count">0</span></button>
-        <button class="market-cat-btn" data-market-cat="arcanes">Arcanes <span class="market-cat-count">0</span></button>
-        <button class="market-cat-btn" data-market-cat="weapons">Weapons <span class="market-cat-count">0</span></button>
-        <button class="market-cat-btn" data-market-cat="resources">Resources <span class="market-cat-count">0</span></button>
-        <button class="market-cat-btn" data-market-cat="misc">Misc <span class="market-cat-count">0</span></button>
+        <div class="market-categories-list" id="market-categories-list">
+          <button class="market-cat-btn active" data-market-cat="all">All <span
+              class="market-cat-count">0</span></button>
+          <button class="market-cat-btn" data-market-cat="prime_sets">Prime Sets <span
+              class="market-cat-count">0</span></button>
+          <button class="market-cat-btn" data-market-cat="prime_parts">Prime Parts <span
+              class="market-cat-count">0</span></button>
+          <button class="market-cat-btn" data-market-cat="mods">Mods <span class="market-cat-count">0</span></button>
+          <button class="market-cat-btn" data-market-cat="arcanes">Arcanes <span
+              class="market-cat-count">0</span></button>
+          <button class="market-cat-btn" data-market-cat="weapons">Weapons <span
+              class="market-cat-count">0</span></button>
+          <button class="market-cat-btn" data-market-cat="resources">Resources <span
+              class="market-cat-count">0</span></button>
+          <button class="market-cat-btn" data-market-cat="misc">Misc <span class="market-cat-count">0</span></button>
+        </div>
+        <div class="market-mode-actions">
+          <button class="market-mode-btn" id="market-contracts-btn" type="button">
+            <span class="material-icons-round">gavel</span>
+            <span id="market-contracts-btn-label">Contracts</span>
+          </button>
+        </div>
       </div>
 
       <!-- Market Header -->
       <div class="category-header">
         <div class="category-header-left">
-          <h1 class="category-title">Warframe Market</h1>
+          <h1 class="category-title" id="market-panel-title">Warframe Market</h1>
           <span class="category-count" id="market-item-count">0 items</span>
         </div>
       </div>
+
+      <div class="contracts-view hidden" id="contracts-view"></div>
 
       <!-- Market Grid -->
       <div class="market-grid" id="market-grid">
@@ -297,7 +347,8 @@
       <div class="content-topbar trade-analytics-topbar">
         <div class="trade-analytics-title-wrap">
           <h1 class="category-title">Trading Analytics</h1>
-          <span class="category-count" id="trade-analytics-count-text">Public warframe.market spread, price, and volume scanner</span>
+          <span class="category-count" id="trade-analytics-count-text">Public warframe.market spread, price, and volume
+            scanner</span>
         </div>
         <div class="topbar-actions">
           <button class="btn btn-secondary" id="btn-trade-analytics-refresh" type="button">
@@ -311,7 +362,8 @@
         <div class="trade-analytics-search-row">
           <div class="search-container trade-analytics-search-container">
             <span class="material-icons-round search-icon">search</span>
-            <input type="text" class="search-input" id="trade-analytics-search-input" placeholder="Search an item for analytics..." autocomplete="off">
+            <input type="text" class="search-input" id="trade-analytics-search-input"
+              placeholder="Search an item for analytics..." autocomplete="off">
             <button class="search-clear hidden" id="trade-analytics-search-clear" type="button">
               <span class="material-icons-round">close</span>
             </button>
@@ -322,7 +374,8 @@
           <section class="trade-analytics-card trade-analytics-results-card">
             <div class="trade-analytics-card-head">
               <h3 class="trade-analytics-card-title">Watchlist</h3>
-              <span class="trade-analytics-card-sub" id="trade-analytics-search-summary">Quick picks from active public trading items.</span>
+              <span class="trade-analytics-card-sub" id="trade-analytics-search-summary">Quick picks from active public
+                trading items.</span>
             </div>
             <div class="trade-analytics-results" id="trade-analytics-search-results">
               <div class="trade-analytics-empty-message">Loading market watchlist...</div>
@@ -337,8 +390,10 @@
             <div class="trade-analytics-overview hidden" id="trade-analytics-overview">
               <div class="trade-analytics-selected">
                 <div class="trade-analytics-selected-media">
-                  <img id="trade-analytics-selected-img" src="" alt="Selected market item" class="trade-analytics-selected-img hidden">
-                  <span class="material-icons-round trade-analytics-selected-placeholder" id="trade-analytics-selected-placeholder">query_stats</span>
+                  <img id="trade-analytics-selected-img" src="" alt="Selected market item"
+                    class="trade-analytics-selected-img hidden">
+                  <span class="material-icons-round trade-analytics-selected-placeholder"
+                    id="trade-analytics-selected-placeholder">query_stats</span>
                 </div>
 
                 <div class="trade-analytics-selected-copy">
@@ -350,7 +405,8 @@
                   </div>
                 </div>
 
-                <button class="btn btn-secondary trade-analytics-open-btn" id="btn-trade-analytics-open-orders" type="button">
+                <button class="btn btn-secondary trade-analytics-open-btn" id="btn-trade-analytics-open-orders"
+                  type="button">
                   <span class="material-icons-round">open_in_new</span>
                   Open Orders
                 </button>
@@ -469,7 +525,8 @@
         </div>
         <div class="search-container relics-search-container">
           <span class="material-icons-round search-icon">search</span>
-          <input type="text" class="search-input" id="relic-search-input" placeholder="Search relics, Warframes, weapons, or prime parts..." autocomplete="off">
+          <input type="text" class="search-input" id="relic-search-input"
+            placeholder="Search relics, Warframes, weapons, or prime parts..." autocomplete="off">
           <button class="search-clear hidden" id="relic-search-clear" type="button" aria-label="Clear relic search">
             <span class="material-icons-round">close</span>
           </button>
@@ -494,11 +551,13 @@
       <div class="content-topbar arcanes-topbar">
         <div class="prime-topbar-title-wrap">
           <h1 class="category-title">Arcane Codex</h1>
-          <span class="category-count" id="arcanes-count-text">Search every arcane, rank effect, slot type, and rarity.</span>
+          <span class="category-count" id="arcanes-count-text">Search every arcane, rank effect, slot type, and
+            rarity.</span>
         </div>
         <div class="search-container arcanes-search-container">
           <span class="material-icons-round search-icon">search</span>
-          <input type="text" class="search-input" id="arcane-search-input" placeholder="Search arcanes, slot types, rarities, or effect text..." autocomplete="off">
+          <input type="text" class="search-input" id="arcane-search-input"
+            placeholder="Search arcanes, slot types, rarities, or effect text..." autocomplete="off">
           <button class="search-clear hidden" id="arcane-search-clear" type="button" aria-label="Clear arcane search">
             <span class="material-icons-round">close</span>
           </button>
@@ -535,12 +594,18 @@
 
       <div class="cycles-content" id="cycles-content">
         <div class="cycles-nav" id="cycles-nav" role="tablist" aria-label="Worldstate Views">
-          <button class="cycles-nav-btn active" data-cycle-tab="overview" role="tab" aria-selected="true">Overview</button>
-          <button class="cycles-nav-btn" data-cycle-tab="cetus" role="tab" aria-selected="false">Cetus Day/Night</button>
-          <button class="cycles-nav-btn" data-cycle-tab="fortuna" role="tab" aria-selected="false">Fortuna Warm/Cold</button>
-          <button class="cycles-nav-btn" data-cycle-tab="deimos" role="tab" aria-selected="false">Deimos Fass/Vome</button>
-          <button class="cycles-nav-btn" data-cycle-tab="duviri-normal" role="tab" aria-selected="false">Duviri Normal</button>
-          <button class="cycles-nav-btn" data-cycle-tab="duviri-steel" role="tab" aria-selected="false">Duviri Steel Path</button>
+          <button class="cycles-nav-btn active" data-cycle-tab="overview" role="tab"
+            aria-selected="true">Overview</button>
+          <button class="cycles-nav-btn" data-cycle-tab="cetus" role="tab" aria-selected="false">Cetus
+            Day/Night</button>
+          <button class="cycles-nav-btn" data-cycle-tab="fortuna" role="tab" aria-selected="false">Fortuna
+            Warm/Cold</button>
+          <button class="cycles-nav-btn" data-cycle-tab="deimos" role="tab" aria-selected="false">Deimos
+            Fass/Vome</button>
+          <button class="cycles-nav-btn" data-cycle-tab="duviri-normal" role="tab" aria-selected="false">Duviri
+            Normal</button>
+          <button class="cycles-nav-btn" data-cycle-tab="duviri-steel" role="tab" aria-selected="false">Duviri Steel
+            Path</button>
         </div>
 
         <section class="cycle-view" data-cycle-view="overview">
@@ -684,6 +749,95 @@
       </div>
     </div>
 
+    <!-- Solar System Star Chart Panel (hidden by default) -->
+    <div class="starchart-panel hidden is-under-construction" id="starchart-panel">
+      <canvas id="starchart-stars" class="starchart-stars-canvas"></canvas>
+      <div class="starchart-hud-top">
+        <span class="starchart-hud-title">STAR CHART</span>
+        <div class="starchart-hud-sep"></div>
+        <span class="starchart-hud-info" id="starchart-hud-info">SELECT DESTINATION</span>
+      </div>
+      <div class="starchart-chart-wrap" id="starchart-chart-wrap"></div>
+      <div class="starchart-side-panel" id="starchart-side-panel">
+        <div class="starchart-panel-header">
+          <div class="starchart-panel-planet-icon" id="starchart-panel-icon"></div>
+          <div class="starchart-panel-planet-name" id="starchart-panel-name">EARTH</div>
+          <div class="starchart-panel-planet-type" id="starchart-panel-type">GRINEER TERRITORY</div>
+          <div class="starchart-panel-faction" id="starchart-panel-faction"></div>
+          <button class="starchart-close-btn" id="starchart-close-btn">&times;</button>
+        </div>
+        <div class="starchart-panel-body" id="starchart-panel-body"></div>
+      </div>
+      <button class="starchart-nightwave-banner" id="starchart-nightwave-banner" type="button"
+        aria-controls="starchart-nightwave-panel" aria-expanded="false">
+        <div class="starchart-nw-dot"></div>
+        <div>
+          <div class="starchart-nw-text starchart-nw-label" id="starchart-nightwave-banner-label">NIGHTWAVE</div>
+          <div class="starchart-nw-text starchart-nw-sub" id="starchart-nightwave-banner-sub">NORA'S MIX: TIME TEMPESTS
+          </div>
+        </div>
+      </button>
+      <section class="starchart-nightwave-panel hidden" id="starchart-nightwave-panel"
+        aria-labelledby="starchart-nightwave-title" aria-hidden="true">
+        <div class="starchart-nightwave-panel-head">
+          <div>
+            <div class="starchart-nightwave-kicker">Nightwave Broadcast</div>
+            <h2 class="starchart-nightwave-title" id="starchart-nightwave-title">Nora's Mix</h2>
+            <p class="starchart-nightwave-subtitle" id="starchart-nightwave-subtitle">Current acts and reward track.
+            </p>
+          </div>
+          <button class="starchart-nightwave-close" id="starchart-nightwave-close" type="button"
+            aria-label="Close Nightwave panel">&times;</button>
+        </div>
+        <div class="starchart-nightwave-stats">
+          <article class="starchart-nightwave-stat">
+            <div class="starchart-nightwave-stat-label">Active Acts</div>
+            <div class="starchart-nightwave-stat-value" id="starchart-nightwave-acts-count">--</div>
+          </article>
+          <article class="starchart-nightwave-stat">
+            <div class="starchart-nightwave-stat-label">Daily Reset</div>
+            <div class="starchart-nightwave-stat-value" id="starchart-nightwave-daily-reset">--</div>
+          </article>
+          <article class="starchart-nightwave-stat">
+            <div class="starchart-nightwave-stat-label">Weekly Reset</div>
+            <div class="starchart-nightwave-stat-value" id="starchart-nightwave-weekly-reset">--</div>
+          </article>
+          <article class="starchart-nightwave-stat">
+            <div class="starchart-nightwave-stat-label">Season Ends</div>
+            <div class="starchart-nightwave-stat-value" id="starchart-nightwave-season-end">--</div>
+          </article>
+        </div>
+        <div class="starchart-nightwave-columns">
+          <section class="starchart-nightwave-section">
+            <div class="starchart-nightwave-section-head">
+              <h3 class="starchart-nightwave-section-title">Rewards</h3>
+              <span class="starchart-nightwave-section-sub">Current season track</span>
+            </div>
+            <div class="starchart-nightwave-rewards" id="starchart-nightwave-rewards">
+              <div class="starchart-nightwave-empty">Loading current reward track...</div>
+            </div>
+          </section>
+          <section class="starchart-nightwave-section">
+            <div class="starchart-nightwave-section-head">
+              <h3 class="starchart-nightwave-section-title">Challenges</h3>
+              <span class="starchart-nightwave-section-sub">Daily, weekly, and elite acts</span>
+            </div>
+            <div class="starchart-nightwave-acts" id="starchart-nightwave-acts">
+              <div class="starchart-nightwave-empty">Loading current Nightwave acts...</div>
+            </div>
+          </section>
+        </div>
+      </section>
+      <div class="starchart-construction-overlay" role="status" aria-live="polite">
+        <div class="starchart-construction-card">
+          <span class="material-icons-round">construction</span>
+          <div class="starchart-construction-kicker">Cephalon Reconstruction</div>
+          <div class="starchart-construction-title">Solar System In Progress</div>
+          <p>The Star Chart is being rebuilt to match the full in-game map cleanly.</p>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Page -->
     <div class="settings-page hidden" id="settings-page">
       <div class="content-topbar settings-topbar">
@@ -711,11 +865,34 @@
           </label>
         </div>
 
+        <div class="settings-card profile-fetch-card">
+          <h2 class="settings-card-title">Profile Sync</h2>
+          <div class="settings-action-row profile-fetch-row">
+            <div>
+              <div class="settings-toggle-title">Automatic Profile Sync</div>
+              <div class="settings-toggle-subtitle">
+                The app watches for Warframe, reads your local EE.log account id, then imports item levels and account mastery XP automatically.
+              </div>
+            </div>
+          </div>
+          <div class="profile-fetch-status" id="profile-fetch-status" data-state="idle">
+            <span class="material-icons-round profile-fetch-status-icon" id="profile-fetch-status-icon">info</span>
+            <div>
+              <div class="profile-fetch-status-title" id="profile-fetch-status-title">Ready when you are</div>
+              <div class="profile-fetch-status-copy" id="profile-fetch-status-copy">
+                Start Warframe first for the cleanest sync. If the data looks stale, enter and leave a Relay or Dojo so the game refreshes your profile cache.
+              </div>
+              <div class="profile-fetch-status-meta" id="profile-fetch-status-meta"></div>
+            </div>
+          </div>
+        </div>
+
         <div class="settings-card">
           <div class="settings-theme-header">
             <div>
               <h2 class="settings-card-title">Appearance</h2>
-              <div class="settings-toggle-subtitle">Choose a theme for the app interface. Your selection is saved on this device.</div>
+              <div class="settings-toggle-subtitle">Choose a theme for the app interface. Your selection is saved on
+                this device.</div>
             </div>
             <div class="settings-theme-current" id="settings-theme-current">Origin</div>
           </div>
@@ -730,6 +907,19 @@
               <span class="settings-theme-copy">
                 <span class="settings-theme-name">Origin</span>
                 <span class="settings-theme-description">Classic amber and blue.</span>
+              </span>
+              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
+            </button>
+
+            <button class="settings-theme-option" type="button" data-theme="warframe" aria-pressed="false">
+              <span class="settings-theme-preview settings-theme-preview-warframe" aria-hidden="true">
+                <span class="settings-theme-preview-sidebar"></span>
+                <span class="settings-theme-preview-surface"></span>
+                <span class="settings-theme-preview-accent"></span>
+              </span>
+              <span class="settings-theme-copy">
+                <span class="settings-theme-name">Warframe</span>
+                <span class="settings-theme-description">Icon teal with bright white highlights.</span>
               </span>
               <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
             </button>
@@ -791,7 +981,8 @@
           <div class="settings-update-row">
             <div>
               <div class="settings-toggle-title">Manual Update</div>
-              <div class="settings-toggle-subtitle" id="settings-update-details">Use the Updates button in the left menu to check for or download new versions.</div>
+              <div class="settings-toggle-subtitle" id="settings-update-details">Use the Updates button in the left menu
+                to check for or download new versions.</div>
             </div>
           </div>
         </div>
@@ -887,10 +1078,14 @@
       </div>
       <div class="modal-body item-info-body">
         <div class="item-info-tabs" role="tablist" aria-label="Item Info Sections">
-          <button class="item-info-tab active" id="item-info-tab-info" data-tab="info" role="tab" aria-selected="true">Info</button>
-          <button class="item-info-tab" id="item-info-tab-mission" data-tab="mission" role="tab" aria-selected="false">Mission &amp; Drops</button>
-          <button class="item-info-tab" id="item-info-tab-resources" data-tab="resources" role="tab" aria-selected="false">Resources</button>
-          <button class="item-info-tab" id="item-info-tab-wiki" data-tab="wiki" role="tab" aria-selected="false">Wiki</button>
+          <button class="item-info-tab active" id="item-info-tab-info" data-tab="info" role="tab"
+            aria-selected="true">Info</button>
+          <button class="item-info-tab" id="item-info-tab-mission" data-tab="mission" role="tab"
+            aria-selected="false">Mission &amp; Drops</button>
+          <button class="item-info-tab" id="item-info-tab-resources" data-tab="resources" role="tab"
+            aria-selected="false">Resources</button>
+          <button class="item-info-tab" id="item-info-tab-wiki" data-tab="wiki" role="tab"
+            aria-selected="false">Wiki</button>
         </div>
 
         <div class="item-info-pane" id="item-info-pane-info">
@@ -925,6 +1120,139 @@
     </div>
   </div>
 
+  <!-- Cephalon Simaris Modal -->
+  <div class="modal-overlay hidden" id="simaris-modal">
+    <div class="modal simaris-modal">
+      <div class="modal-header">
+        <div class="simaris-title-wrap">
+          <div class="simaris-kicker">Cephalon Query Console</div>
+          <h2 class="modal-title">Cephalon Simaris</h2>
+        </div>
+        <button class="modal-close" id="simaris-modal-close" type="button" aria-label="Close Cephalon Simaris">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body simaris-modal-body">
+        <form class="simaris-search" id="simaris-search-form">
+          <label class="simaris-label" for="simaris-query-input">Ask for an item, Warframe, weapon, mod, or resource</label>
+          <div class="simaris-input-row">
+            <span class="material-icons-round">travel_explore</span>
+            <input id="simaris-query-input" class="simaris-input" type="text" placeholder="Example: Acceltra Prime" autocomplete="off">
+            <button class="btn btn-primary simaris-search-btn" id="simaris-search-btn" type="submit">Fetch</button>
+          </div>
+        </form>
+        <div class="simaris-status" id="simaris-status" data-state="idle">
+          <span class="material-icons-round" id="simaris-status-icon">psychology</span>
+          <span id="simaris-status-text">Ask Simaris for a specific item to fetch fresh wiki information.</span>
+        </div>
+        <div class="simaris-result hidden" id="simaris-result">
+          <div class="simaris-result-head">
+            <img id="simaris-result-img" class="simaris-result-img hidden" src="" alt="">
+            <div>
+              <h3 id="simaris-result-title">Item</h3>
+              <a id="simaris-result-link" href="#" class="simaris-result-link">Open full wiki page</a>
+            </div>
+          </div>
+          <div class="simaris-result-content" id="simaris-result-content"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Screenshot Scan Modal -->
+  <div class="modal-overlay hidden" id="scan-modal">
+    <div class="modal scan-modal">
+      <div class="modal-header">
+        <div class="scan-modal-header-copy">
+          <h2 class="modal-title">Scan Item Screenshots</h2>
+          <div class="scan-modal-subtitle">
+            Drag and drop one or more screenshots, or browse for images, and the app will batch scan every readable item
+            name it can recognize.
+          </div>
+        </div>
+        <button class="modal-close" id="scan-modal-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body scan-modal-body">
+        <div class="scan-dropzone" id="scan-dropzone" tabindex="0" role="button"
+          aria-label="Drag and drop screenshots here or choose images">
+          <div class="scan-dropzone-icon">
+            <span class="material-icons-round">upload_file</span>
+          </div>
+          <div class="scan-dropzone-copy">
+            <div class="scan-dropzone-title">Drag and drop screenshots here</div>
+            <div class="scan-dropzone-subtitle">You can drop a single image or a whole batch to scan your inventory
+              checklist in one run.</div>
+          </div>
+          <div class="scan-dropzone-actions">
+            <button class="btn btn-secondary scan-dropzone-btn" id="scan-modal-browse" type="button">Choose
+              Images</button>
+            <div class="scan-dropzone-meta" id="scan-dropzone-meta">Supports PNG, JPG, WEBP, GIF, BMP, and TIFF
+              screenshots.</div>
+          </div>
+        </div>
+
+        <div class="scan-preview-shell hidden" id="scan-preview-shell">
+          <img id="scan-preview-img" src="" alt="Screenshot preview" class="scan-preview-img">
+        </div>
+
+        <div class="scan-status-card" id="scan-status-card">
+          <div class="scan-status-head">
+            <span class="material-icons-round scan-status-icon" id="scan-status-icon">image_search</span>
+            <div class="scan-status-text">
+              <div class="scan-status-title" id="scan-status-title">Choose a screenshot to begin.</div>
+              <div class="scan-status-copy" id="scan-status-copy">Best results come from screenshots where the item
+                names are large and clear.</div>
+            </div>
+          </div>
+          <div class="scan-progress-track">
+            <div class="scan-progress-fill" id="scan-progress-fill"></div>
+          </div>
+          <div class="scan-progress-text" id="scan-progress-text">Idle</div>
+        </div>
+
+        <div class="scan-results hidden" id="scan-results">
+          <div class="scan-summary-grid">
+            <div class="scan-summary-card">
+              <div class="scan-summary-label">Matched</div>
+              <div class="scan-summary-value" id="scan-matched-count">0</div>
+            </div>
+            <div class="scan-summary-card">
+              <div class="scan-summary-label">Newly Checked</div>
+              <div class="scan-summary-value" id="scan-new-count">0</div>
+            </div>
+            <div class="scan-summary-card">
+              <div class="scan-summary-label">Already Checked</div>
+              <div class="scan-summary-value" id="scan-already-count">0</div>
+            </div>
+            <div class="scan-summary-card">
+              <div class="scan-summary-label">Needs Review</div>
+              <div class="scan-summary-value" id="scan-possible-count">0</div>
+            </div>
+          </div>
+
+          <div class="scan-results-section">
+            <div class="scan-results-title">Matched Items</div>
+            <div class="scan-chip-list" id="scan-matched-list"></div>
+          </div>
+
+          <div class="scan-results-section hidden" id="scan-possible-section">
+            <div class="scan-results-title">Possible Matches</div>
+            <div class="scan-possible-list" id="scan-possible-list"></div>
+          </div>
+
+          <div class="scan-results-note" id="scan-results-note"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="scan-modal-pick-another" type="button">Choose More Images</button>
+          <button class="btn" id="scan-modal-done" type="button">Done</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MR Calculator Modal -->
   <div class="modal-overlay hidden" id="calculator-modal">
     <div class="modal">
@@ -948,15 +1276,18 @@
             <div class="calc-extra-card">
               <label class="calc-label" for="calc-normal-star-chart-xp">Normal Star Chart XP</label>
               <div class="calc-extra-input-row">
-                <input type="number" class="calc-input calc-input-compact" id="calc-normal-star-chart-xp" min="0" max="27519" step="1" value="0">
-                <button class="btn btn-secondary calc-mini-btn" id="calc-normal-star-chart-max" type="button">Max</button>
+                <input type="number" class="calc-input calc-input-compact" id="calc-normal-star-chart-xp" min="0"
+                  max="27519" step="1" value="0">
+                <button class="btn btn-secondary calc-mini-btn" id="calc-normal-star-chart-max"
+                  type="button">Max</button>
               </div>
               <div class="calc-extra-note">Nodes + Junctions | Max 27,519 XP</div>
             </div>
             <div class="calc-extra-card">
               <label class="calc-label" for="calc-steel-path-xp">Steel Path XP</label>
               <div class="calc-extra-input-row">
-                <input type="number" class="calc-input calc-input-compact" id="calc-steel-path-xp" min="0" max="27519" step="1" value="0">
+                <input type="number" class="calc-input calc-input-compact" id="calc-steel-path-xp" min="0" max="27519"
+                  step="1" value="0">
                 <button class="btn btn-secondary calc-mini-btn" id="calc-steel-path-max" type="button">Max</button>
               </div>
               <div class="calc-extra-note">Steel Path nodes + Junctions | Max 27,519 XP</div>
@@ -964,7 +1295,8 @@
             <div class="calc-extra-card">
               <label class="calc-label" for="calc-railjack-ranks">Railjack Intrinsic Ranks</label>
               <div class="calc-extra-input-row">
-                <input type="number" class="calc-input calc-input-compact" id="calc-railjack-ranks" min="0" max="50" step="1" value="0">
+                <input type="number" class="calc-input calc-input-compact" id="calc-railjack-ranks" min="0" max="50"
+                  step="1" value="0">
                 <div class="calc-inline-value" id="calc-railjack-xp">0 XP</div>
               </div>
               <div class="calc-extra-note">1,500 XP per rank | 5 trees x 10 ranks | Max 75,000 XP</div>
@@ -972,7 +1304,8 @@
             <div class="calc-extra-card">
               <label class="calc-label" for="calc-duviri-ranks">Duviri Intrinsic Ranks</label>
               <div class="calc-extra-input-row">
-                <input type="number" class="calc-input calc-input-compact" id="calc-duviri-ranks" min="0" max="40" step="1" value="0">
+                <input type="number" class="calc-input calc-input-compact" id="calc-duviri-ranks" min="0" max="40"
+                  step="1" value="0">
                 <div class="calc-inline-value" id="calc-duviri-xp">0 XP</div>
               </div>
               <div class="calc-extra-note">1,500 XP per rank | 4 trees x 10 ranks | Max 60,000 XP</div>
@@ -981,7 +1314,8 @@
         </div>
         <div class="calc-target">
           <label class="calc-label" for="target-rank">Target Mastery Rank</label>
-          <input type="number" class="calc-input" id="target-rank" min="0" value="10" placeholder="Enter target MR / Legendary rank (31 = L1)">
+          <input type="number" class="calc-input" id="target-rank" min="0" value="10"
+            placeholder="Enter target MR / Legendary rank (31 = L1)">
         </div>
         <div class="calc-result">
           <div class="calc-result-row">
@@ -1034,7 +1368,7 @@
       <div class="modal-body">
         <p class="reset-warning">
           <span class="material-icons-round">warning</span>
-          This will uncheck all mastered items. This action cannot be undone.
+          This will reset all item levels, mastered checks, and owned mod checks. This action cannot be undone.
         </p>
         <div class="modal-actions">
           <button class="btn btn-secondary" id="reset-cancel">Cancel</button>
@@ -1044,7 +1378,9 @@
     </div>
   </div>
 
+  <script src="starchart.js"></script>
   <script src="market.js"></script>
   <script src="renderer.js"></script>
 </body>
+
 </html>
