@@ -153,6 +153,12 @@
           <span class="nav-text">Solar System</span>
         </button>
 
+        <div class="nav-section-label" style="margin-top: 16px;">RECRUITING</div>
+        <button class="nav-item" id="nav-squad-finder" data-panel="squad-finder">
+          <span class="material-icons-round">groups</span>
+          <span class="nav-text">Looking for Player</span>
+        </button>
+
         <div class="nav-section-label" style="margin-top: 16px;">TOOLS</div>
         <button class="nav-item nav-tool" id="btn-trade-mode" aria-pressed="false">
           <span class="material-icons-round">picture_in_picture_alt</span>
@@ -749,6 +755,141 @@
       </div>
     </div>
 
+    <!-- Squad Finder Panel (hidden by default) -->
+    <div class="squad-finder-panel hidden" id="squad-finder-panel">
+      <div class="content-topbar squad-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Looking For Player</h1>
+          <span class="category-count" id="squad-count-text">Local recruiting board</span>
+        </div>
+        <div class="topbar-actions">
+          <div class="squad-server-pill is-checking" id="squad-server-pill" title="Squad server connection">
+            <span class="squad-server-dot"></span>
+            <span class="material-icons-round">cloud_sync</span>
+            <span id="squad-server-text">Checking server</span>
+          </div>
+          <button class="btn btn-secondary" id="btn-squad-refresh" type="button">
+            <span class="material-icons-round">refresh</span>
+            Refresh
+          </button>
+          <button class="btn btn-primary" id="btn-squad-create-toggle" type="button">
+            <span class="material-icons-round">group_add</span>
+            Create Squad
+          </button>
+        </div>
+      </div>
+
+      <div class="squad-create-shell hidden" id="squad-create-shell" role="dialog" aria-modal="true" aria-labelledby="squad-create-title">
+        <form class="squad-create-form" id="squad-create-form" autocomplete="off">
+          <div class="squad-create-head">
+            <div>
+              <h2 id="squad-create-title">Create Squad</h2>
+              <span id="squad-create-status">Ready to recruit</span>
+            </div>
+            <button class="squad-icon-btn" id="btn-squad-form-close" type="button" aria-label="Close create squad">
+              <span class="material-icons-round">close</span>
+            </button>
+          </div>
+
+          <div class="squad-form-grid">
+            <label class="squad-field">
+              <span>Warframe IGN</span>
+              <input type="text" id="squad-ign-input" maxlength="32" placeholder="Your in-game name">
+            </label>
+
+            <label class="squad-field">
+              <span>Your MR</span>
+              <input type="number" id="squad-mr-input" min="0" max="40" step="1" placeholder="0">
+            </label>
+
+            <label class="squad-field">
+              <span>Required MR</span>
+              <input type="number" id="squad-required-mr-input" min="0" max="40" step="1" placeholder="0">
+            </label>
+
+            <label class="squad-field squad-field-wide">
+              <span>Mission</span>
+              <input type="text" id="squad-mission-input" list="squad-mission-options" maxlength="80"
+                placeholder="Search Hydron, Steel Circuit, Eidolon Hunt...">
+              <datalist id="squad-mission-options"></datalist>
+              <div class="squad-mission-slider" id="squad-mission-slider" aria-label="Suggested missions"></div>
+            </label>
+
+            <label class="squad-field squad-field-wide">
+              <span>Want To Farm</span>
+              <input type="text" id="squad-farm-target-input" list="squad-farm-target-options" maxlength="80"
+                placeholder="Choose a mod, weapon, frame, arcane, relic, or item...">
+              <datalist id="squad-farm-target-options"></datalist>
+            </label>
+
+            <div class="squad-field squad-field-wide">
+              <span>Mission Type</span>
+              <div class="squad-mode-toggle" role="radiogroup" aria-label="Mission type">
+                <label>
+                  <input type="radio" name="squad-mission-mode" value="normal" checked>
+                  <span>Normal</span>
+                </label>
+                <label>
+                  <input type="radio" name="squad-mission-mode" value="steel">
+                  <span>Steel Path</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="squad-field squad-field-wide">
+              <span>Requirements</span>
+              <div class="squad-requirement-row">
+                <input type="text" id="squad-requirement-input" list="squad-item-options"
+                  placeholder="Warframe, weapon, or mod...">
+                <datalist id="squad-item-options"></datalist>
+                <button class="btn btn-secondary" id="btn-squad-add-requirement" type="button">
+                  <span class="material-icons-round">add</span>
+                  Add
+                </button>
+              </div>
+              <div class="squad-requirement-draft" id="squad-requirement-draft"></div>
+            </div>
+
+            <label class="squad-field squad-field-wide">
+              <span>Note</span>
+              <textarea id="squad-note-input" rows="3" maxlength="180" placeholder="Optional plan, rotation, role, or relic note"></textarea>
+            </label>
+          </div>
+
+          <div class="squad-form-actions">
+            <button class="btn btn-secondary" id="btn-squad-clear-form" type="button">
+              <span class="material-icons-round">mop</span>
+              Clear
+            </button>
+            <button class="btn btn-primary" id="btn-squad-save" type="submit">
+              <span class="material-icons-round">campaign</span>
+              Post Squad
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div class="squad-finder-content" id="squad-finder-content">
+        <section class="squad-board-controls">
+          <div class="search-container squad-search-container">
+            <span class="material-icons-round search-icon">search</span>
+            <input type="text" class="search-input" id="squad-search-input"
+              placeholder="Search recruiter, mission, or requirement..." autocomplete="off">
+            <button class="search-clear hidden" id="squad-search-clear" type="button" aria-label="Clear squad search">
+              <span class="material-icons-round">close</span>
+            </button>
+          </div>
+          <div class="squad-filter-group" role="tablist" aria-label="Squad mission filter">
+            <button class="squad-filter-btn active" data-squad-filter="all" type="button">All</button>
+            <button class="squad-filter-btn" data-squad-filter="normal" type="button">Normal</button>
+            <button class="squad-filter-btn" data-squad-filter="steel" type="button">Steel Path</button>
+          </div>
+        </section>
+
+        <section class="squad-board-grid" id="squad-board-grid"></section>
+      </div>
+    </div>
+
     <!-- Solar System Star Chart Panel (hidden by default) -->
     <div class="starchart-panel hidden is-under-construction" id="starchart-panel">
       <canvas id="starchart-stars" class="starchart-stars-canvas"></canvas>
@@ -983,6 +1124,15 @@
               <div class="settings-toggle-title">Manual Update</div>
               <div class="settings-toggle-subtitle" id="settings-update-details">Use the Updates button in the left menu
                 to check for or download new versions.</div>
+            </div>
+            <div class="settings-update-actions">
+              <button class="btn btn-secondary" id="btn-settings-check-update" type="button">
+                <span class="material-icons-round">sync</span>
+                Check Update
+              </button>
+              <button class="btn btn-primary hidden" id="btn-download-update" type="button">
+                Download Update
+              </button>
             </div>
           </div>
         </div>

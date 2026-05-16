@@ -57,7 +57,61 @@
   const VALLIS_CYCLE_API = 'https://api.warframestat.us/pc/vallisCycle/';
   const CAMBION_CYCLE_API = 'https://api.warframestat.us/pc/cambionCycle/';
   const DUVIRI_CYCLE_API = 'https://api.warframestat.us/pc/duviriCycle/';
+  const SQUAD_API_BASE_URL = 'https://hassanfiras.me/api';
   const BUILDS_STORAGE_KEY = 'warframe_item_builds_v1';
+  const SQUAD_BOARD_STORAGE_KEY = 'warframe_squad_board_v1';
+  const SQUAD_OWNER_TOKENS_STORAGE_KEY = 'warframe_squad_owner_tokens_v1';
+  const SQUAD_POST_LOG_STORAGE_KEY = 'warframe_squad_post_log_v1';
+  const SQUAD_BOARD_MAX_POSTS = 40;
+  const SQUAD_SERVER_POLL_MS = 30000;
+  const SQUAD_POST_COOLDOWN_MS = 60000;
+  const SQUAD_ALLOWED_REQUIREMENT_CATEGORIES = new Set(['Warframes', 'Primary', 'Secondary', 'Melee', 'Mods']);
+  const SQUAD_REQUIREMENT_PART_PATTERN = /\b(blueprint|chassis|neuroptics|systems|barrel|receiver|stock|string|grip|blade|handle|hilt|guard|gauntlet|boot|link|pouch|chain|head|carapace|cerebrum|subcortex|wings|harness|fuselage|engines|avionics|band)\b/i;
+  const SQUAD_MISSION_OPTIONS = Object.freeze([
+    'Hydron (Sedna)',
+    'Helene (Saturn)',
+    'Elite Sanctuary Onslaught',
+    'Sanctuary Onslaught',
+    'Steel Circuit',
+    'Duviri Circuit',
+    'Archon Hunt',
+    'Sortie',
+    'Arbitration',
+    'Netracell',
+    'Deep Archimedea',
+    'Eidolon Hunt',
+    'Profit-Taker',
+    'Exploiter Orb',
+    'Void Fissure',
+    'Relic Radshare',
+    'Kuva Survival',
+    'Mot (Void)',
+    'Apollo (Lua)',
+    'Tyana Pass (Mars)',
+    'Hepit (Void)',
+    'Ukko (Void)',
+    'Steel Path Incursions',
+    'Defense',
+    'Survival',
+    'Disruption',
+    'Interception',
+    'Spy',
+    'Capture',
+    'Exterminate',
+    'Rescue',
+    'Assassination',
+    'Mobile Defense',
+    'Alchemy',
+    'Void Cascade',
+    'Void Flood',
+    'Void Armageddon',
+    'Mirror Defense',
+    'Conjunction Survival',
+    'Sanctum Anatomica',
+    'Open World Bounties',
+    'The Index',
+    'Railjack'
+  ]);
   const NEWS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
   const PRIME_RESURGENCE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
   const RELIC_LOOKUP_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
@@ -249,6 +303,15 @@
   let selectedBuildSlotIndex = 0;
   let currentBuildFamily = 'recommended';
   let buildModSearchQuery = '';
+  let squadPosts = [];
+  let squadOwnerTokens = Object.create(null);
+  let squadPostLog = Object.create(null);
+  let squadRequirementDraft = [];
+  let squadSearchQuery = '';
+  let squadFilterMode = 'all';
+  let squadServerOnline = false;
+  let squadServerCheckTimer = null;
+  let squadServerBusy = false;
   let currentCycleTab = 'overview';
   let cycleSnapshot = null;
   let cycleCountdownTimer = null;
@@ -439,7 +502,35 @@
     starchartNightwaveSeasonEnd: $('#starchart-nightwave-season-end'),
     starchartNightwaveRewards: $('#starchart-nightwave-rewards'),
     starchartNightwaveActs: $('#starchart-nightwave-acts'),
+    squadFinderPanel: $('#squad-finder-panel'),
+    squadCountText: $('#squad-count-text'),
+    squadServerPill: $('#squad-server-pill'),
+    squadServerText: $('#squad-server-text'),
+    squadRefreshBtn: $('#btn-squad-refresh'),
+    squadCreateToggle: $('#btn-squad-create-toggle'),
+    squadCreateShell: $('#squad-create-shell'),
+    squadCreateForm: $('#squad-create-form'),
+    squadFormClose: $('#btn-squad-form-close'),
+    squadCreateStatus: $('#squad-create-status'),
+    squadIgnInput: $('#squad-ign-input'),
+    squadMrInput: $('#squad-mr-input'),
+    squadRequiredMrInput: $('#squad-required-mr-input'),
+    squadMissionInput: $('#squad-mission-input'),
+    squadMissionOptions: $('#squad-mission-options'),
+    squadMissionSlider: $('#squad-mission-slider'),
+    squadFarmTargetInput: $('#squad-farm-target-input'),
+    squadFarmTargetOptions: $('#squad-farm-target-options'),
+    squadRequirementInput: $('#squad-requirement-input'),
+    squadItemOptions: $('#squad-item-options'),
+    squadAddRequirement: $('#btn-squad-add-requirement'),
+    squadRequirementDraft: $('#squad-requirement-draft'),
+    squadNoteInput: $('#squad-note-input'),
+    squadClearForm: $('#btn-squad-clear-form'),
+    squadSearchInput: $('#squad-search-input'),
+    squadSearchClear: $('#squad-search-clear'),
+    squadBoardGrid: $('#squad-board-grid'),
     updateDownloadBtn: $('#btn-download-update'),
+    settingsCheckUpdateBtn: $('#btn-settings-check-update'),
     settingsUpdateDetails: $('#settings-update-details'),
     settingsAppVersion: $('#settings-app-version'),
     itemInfoModal: $('#item-info-modal'),
@@ -2388,6 +2479,943 @@
       return !!ok;
     } catch (e2) {
       return false;
+    }
+  }
+
+  function createSquadId() {
+    return 'squad-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+
+  function normalizeSquadMissionMode(value) {
+    return String(value || '').toLowerCase() === 'steel' ? 'steel' : 'normal';
+  }
+
+  function getSquadModeLabel(value) {
+    return normalizeSquadMissionMode(value) === 'steel' ? 'Steel Path' : 'Normal';
+  }
+
+  function isSquadRequirementPartLike(item, fallbackName) {
+    var category = cleanDisplayText(item && item.category ? item.category : '');
+    if (category === 'Mods') return false;
+    var name = cleanDisplayText((item && item.name) || fallbackName || '');
+    var type = cleanDisplayText(item && item.type ? item.type : '');
+    var productCategory = cleanDisplayText(item && item.productCategory ? item.productCategory : '');
+    return SQUAD_REQUIREMENT_PART_PATTERN.test([name, type, productCategory].join(' '));
+  }
+
+  function isSquadRequirementAllowed(item, source) {
+    var category = cleanDisplayText((item && item.category) || (source && source.category) || '');
+    if (!SQUAD_ALLOWED_REQUIREMENT_CATEGORIES.has(category)) return false;
+    if (category === 'Mods') return true;
+    if (item && item.masterable !== true) return false;
+    return !isSquadRequirementPartLike(item, source && source.name);
+  }
+
+  function sanitizeSquadFarmTarget(raw) {
+    var source = typeof raw === 'string' ? { name: raw } : (raw || {});
+    var item = null;
+    if (source.uniqueName) item = findChecklistItemByUniqueName(source.uniqueName);
+    if (!item && source.name) item = findItemByLooseName(source.name);
+    var name = item ? item.name : cleanDisplayText(source.name || '').slice(0, 80);
+    if (!name) return null;
+
+    return {
+      uniqueName: item ? item.uniqueName : String(source.uniqueName || ''),
+      name: name,
+      category: item ? item.category : cleanDisplayText(source.category || ''),
+      imageName: item ? item.imageName : String(source.imageName || ''),
+      wikiaThumbnail: item ? item.wikiaThumbnail : String(source.wikiaThumbnail || '')
+    };
+  }
+
+  function sanitizeSquadRequirement(raw) {
+    var source = raw || {};
+    var item = null;
+    if (source.uniqueName) item = findChecklistItemByUniqueName(source.uniqueName);
+    if (!item && source.name) item = findItemByLooseName(source.name);
+    var name = item ? item.name : cleanDisplayText(source.name || '');
+    if (!name) return null;
+    if (!isSquadRequirementAllowed(item, source)) return null;
+
+    return {
+      uniqueName: item ? item.uniqueName : String(source.uniqueName || ''),
+      name: name,
+      category: item ? item.category : cleanDisplayText(source.category || ''),
+      imageName: item ? item.imageName : String(source.imageName || ''),
+      wikiaThumbnail: item ? item.wikiaThumbnail : String(source.wikiaThumbnail || '')
+    };
+  }
+
+  function sanitizeSquadPost(raw) {
+    var source = raw || {};
+    var requirements = Array.isArray(source.requirements)
+      ? source.requirements.map(sanitizeSquadRequirement).filter(Boolean)
+      : [];
+
+    return {
+      id: String(source.id || createSquadId()),
+      ign: cleanDisplayText(source.ign || '').slice(0, 32),
+      masteryRank: clampWholeNumber(source.masteryRank, 0, 40),
+      requiredMasteryRank: clampWholeNumber(source.requiredMasteryRank, 0, 40),
+      mission: cleanDisplayText(source.mission || '').slice(0, 80),
+      missionMode: normalizeSquadMissionMode(source.missionMode),
+      farmTarget: sanitizeSquadFarmTarget(source.farmTarget || source.targetItem || source.target || ''),
+      requirements: requirements.slice(0, 8),
+      note: cleanDisplayText(source.note || '').slice(0, 180),
+      createdAt: Number(source.createdAt || Date.now()),
+      expiresAt: Number(source.expiresAt || 0),
+      ownerToken: cleanDisplayText(source.ownerToken || squadOwnerTokens[String(source.id || '')] || '').slice(0, 96),
+      serverSynced: source.serverSynced === true
+    };
+  }
+
+  function loadSquadPosts() {
+    try {
+      var raw = localStorage.getItem(SQUAD_BOARD_STORAGE_KEY);
+      var parsed = raw ? JSON.parse(raw) : [];
+      squadPosts = Array.isArray(parsed)
+        ? parsed.map(sanitizeSquadPost).filter(function(post) { return !!post.ign && !!post.mission; }).slice(0, SQUAD_BOARD_MAX_POSTS)
+        : [];
+    } catch (e) {
+      squadPosts = [];
+    }
+  }
+
+  function loadSquadOwnerTokens() {
+    squadOwnerTokens = Object.create(null);
+    try {
+      var raw = localStorage.getItem(SQUAD_OWNER_TOKENS_STORAGE_KEY);
+      var parsed = raw ? JSON.parse(raw) : {};
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      Object.keys(parsed).forEach(function(id) {
+        var token = cleanDisplayText(parsed[id] || '').slice(0, 96);
+        if (id && token) squadOwnerTokens[id] = token;
+      });
+    } catch (e) {
+      squadOwnerTokens = Object.create(null);
+    }
+  }
+
+  function getSquadIgnKey(ign) {
+    return toLookupKey(ign || '');
+  }
+
+  function loadSquadPostLog() {
+    squadPostLog = Object.create(null);
+    try {
+      var raw = localStorage.getItem(SQUAD_POST_LOG_STORAGE_KEY);
+      var parsed = raw ? JSON.parse(raw) : {};
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+      Object.keys(parsed).forEach(function(key) {
+        var value = Number(parsed[key] || 0);
+        if (key && Number.isFinite(value) && value > 0) squadPostLog[key] = value;
+      });
+    } catch (e) {
+      squadPostLog = Object.create(null);
+    }
+  }
+
+  function saveSquadPostLog() {
+    try {
+      localStorage.setItem(SQUAD_POST_LOG_STORAGE_KEY, JSON.stringify(squadPostLog));
+    } catch (e) { /* ignore */ }
+  }
+
+  function rememberSquadPostTime(ign, createdAt) {
+    var key = getSquadIgnKey(ign);
+    if (!key) return;
+    squadPostLog[key] = Number(createdAt || Date.now());
+    saveSquadPostLog();
+  }
+
+  function getSquadCooldownMs(ign) {
+    var key = getSquadIgnKey(ign);
+    var lastPostAt = key ? Number(squadPostLog[key] || 0) : 0;
+    if (!lastPostAt) return 0;
+    return Math.max(0, SQUAD_POST_COOLDOWN_MS - (Date.now() - lastPostAt));
+  }
+
+  function findActiveSquadPostByIgn(ign) {
+    var key = getSquadIgnKey(ign);
+    var now = Date.now();
+    if (!key) return null;
+    return squadPosts.find(function(post) {
+      return getSquadIgnKey(post && post.ign) === key && (!post.expiresAt || post.expiresAt > now);
+    }) || null;
+  }
+
+  function saveSquadOwnerTokens() {
+    try {
+      localStorage.setItem(SQUAD_OWNER_TOKENS_STORAGE_KEY, JSON.stringify(squadOwnerTokens));
+    } catch (e) { /* ignore */ }
+  }
+
+  function saveSquadPosts() {
+    try {
+      localStorage.setItem(SQUAD_BOARD_STORAGE_KEY, JSON.stringify(squadPosts.slice(0, SQUAD_BOARD_MAX_POSTS)));
+    } catch (e) { /* ignore */ }
+  }
+
+  function squadApiUrl(path) {
+    var suffix = String(path || '');
+    return SQUAD_API_BASE_URL.replace(/\/+$/, '') + '/' + suffix.replace(/^\/+/, '');
+  }
+
+  function setSquadServerState(state, text) {
+    var nextState = state || 'offline';
+    squadServerOnline = nextState === 'online';
+
+    if (els.squadServerPill) {
+      els.squadServerPill.classList.remove('is-online', 'is-offline', 'is-checking');
+      els.squadServerPill.classList.add('is-' + nextState);
+      els.squadServerPill.setAttribute('title', text || (squadServerOnline ? 'Squad server online' : 'Squad server offline'));
+    }
+    if (els.squadServerText) {
+      els.squadServerText.textContent = text || (squadServerOnline ? 'Server online' : 'Server offline');
+    }
+  }
+
+  async function fetchSquadJson(path, options) {
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timeout = controller ? window.setTimeout(function() { controller.abort(); }, 9000) : null;
+    var response;
+    try {
+      response = await fetch(squadApiUrl(path), Object.assign({
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        signal: controller ? controller.signal : undefined
+      }, options || {}));
+    } finally {
+      if (timeout) window.clearTimeout(timeout);
+    }
+
+    var payload = null;
+    try {
+      payload = await response.json();
+    } catch (e) {
+      payload = null;
+    }
+
+    if (!response.ok || !payload || payload.ok === false) {
+      var message = payload && payload.error ? payload.error : ('HTTP ' + response.status);
+      var error = new Error(message);
+      error.status = response.status;
+      if (payload && typeof payload.retryAfterMs === 'number') error.retryAfterMs = payload.retryAfterMs;
+      throw error;
+    }
+
+    return payload;
+  }
+
+  async function checkSquadServer() {
+    try {
+      await fetchSquadJson('/health');
+      setSquadServerState('online', 'Server online');
+      return true;
+    } catch (err) {
+      setSquadServerState('offline', 'Server offline');
+      return false;
+    }
+  }
+
+  async function refreshSquadPostsFromServer(showChecking) {
+    if (squadServerBusy) return false;
+    squadServerBusy = true;
+    if (showChecking) setSquadServerState('checking', 'Checking server');
+
+    try {
+      var payload = await fetchSquadJson('/squads');
+      var remotePosts = Array.isArray(payload.squads) ? payload.squads : [];
+      squadPosts = remotePosts.map(sanitizeSquadPost).slice(0, SQUAD_BOARD_MAX_POSTS);
+      saveSquadPosts();
+      setSquadServerState('online', 'Server online');
+      renderSquadBoard();
+      return true;
+    } catch (err) {
+      setSquadServerState('offline', 'Server offline');
+      renderSquadBoard();
+      return false;
+    } finally {
+      squadServerBusy = false;
+    }
+  }
+
+  async function postSquadToServer(post) {
+    var payload = await fetchSquadJson('/squads', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(post)
+    });
+
+    var remotePost = sanitizeSquadPost(payload.squad || {});
+    if (!remotePost.id) throw new Error('Server did not return a squad id.');
+    remotePost.ownerToken = cleanDisplayText((payload.squad && payload.squad.ownerToken) || '').slice(0, 96);
+    remotePost.serverSynced = true;
+    if (remotePost.ownerToken) {
+      squadOwnerTokens[remotePost.id] = remotePost.ownerToken;
+      saveSquadOwnerTokens();
+    }
+    return remotePost;
+  }
+
+  async function deleteSquadFromServer(post) {
+    if (!post || !post.id || !post.ownerToken || !post.serverSynced) return true;
+    var payload = await fetchSquadJson('/squads/' + encodeURIComponent(post.id), {
+      method: 'DELETE',
+      headers: {
+        'Accept': 'application/json',
+        'X-Squad-Owner-Token': post.ownerToken
+      }
+    });
+    return payload.deleted === true || payload.ok === true;
+  }
+
+  function startSquadServerPolling() {
+    refreshSquadPostsFromServer(true);
+    if (squadServerCheckTimer) window.clearInterval(squadServerCheckTimer);
+    squadServerCheckTimer = window.setInterval(function() {
+      refreshSquadPostsFromServer(false);
+    }, SQUAD_SERVER_POLL_MS);
+  }
+
+  function getCurrentMasteryRankValue() {
+    var itemXP = 0;
+    for (var i = 0; i < allItems.length; i++) {
+      if (!isMasteryRelevantItem(allItems[i])) continue;
+      itemXP += getTrackedItemXp(allItems[i]);
+    }
+    return getMRFromXP(itemXP + getMasteryExtrasBreakdown().totalBonusXp);
+  }
+
+  function hasTrackedSquadItem(item) {
+    if (!item || !item.uniqueName) return false;
+    if (item.category === 'Mods') return masteredSet.has(item.uniqueName);
+    return masteredSet.has(item.uniqueName) || getStoredItemRank(item) > 0 || isItemFullyRanked(item);
+  }
+
+  function resolveSquadRequirement(requirement) {
+    if (!requirement) return null;
+    return (requirement.uniqueName ? findChecklistItemByUniqueName(requirement.uniqueName) : null) ||
+      findItemByLooseName(requirement.name);
+  }
+
+  function isOwnSquadPost(post) {
+    return !!(post && (post.ownerToken || !post.serverSynced || (post.id && squadOwnerTokens[post.id])));
+  }
+
+  function analyzeSquadPost(post, currentMasteryRank) {
+    var requirements = Array.isArray(post && post.requirements) ? post.requirements : [];
+    var rows = [];
+    var met = [];
+    var missing = [];
+    var userMr = typeof currentMasteryRank === 'number' ? currentMasteryRank : getCurrentMasteryRankValue();
+    var requiredMr = clampWholeNumber(post && post.requiredMasteryRank, 0, 40);
+    var meetsMasteryRank = userMr >= requiredMr;
+
+    for (var i = 0; i < requirements.length; i++) {
+      var req = sanitizeSquadRequirement(requirements[i]);
+      if (!req) continue;
+      var item = resolveSquadRequirement(req);
+      var hasItem = hasTrackedSquadItem(item);
+      var row = {
+        requirement: req,
+        item: item,
+        met: hasItem
+      };
+      rows.push(row);
+      if (hasItem) met.push(row);
+      else missing.push(row);
+    }
+
+    var canJoin = meetsMasteryRank && (rows.length === 0 || missing.length === 0);
+    var canWhisper = meetsMasteryRank && (rows.length === 0 || met.length > 0);
+
+    return {
+      requirements: rows,
+      met: met,
+      missing: missing,
+      requiredMasteryRank: requiredMr,
+      meetsMasteryRank: meetsMasteryRank,
+      canJoin: canJoin,
+      canWhisper: canWhisper,
+      matchState: !meetsMasteryRank ? 'rank' : (canJoin ? 'ready' : (canWhisper ? 'partial' : 'missing'))
+    };
+  }
+
+  function formatSquadAge(createdAt) {
+    var ts = Number(createdAt || 0);
+    if (!ts) return 'Just now';
+    var diff = Math.max(0, Date.now() - ts);
+    var minutes = Math.floor(diff / 60000);
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return minutes + 'm ago';
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + 'h ago';
+    return Math.floor(hours / 24) + 'd ago';
+  }
+
+  function setSquadCreateStatus(text, state) {
+    if (!els.squadCreateStatus) return;
+    els.squadCreateStatus.textContent = text || 'Ready to recruit';
+    els.squadCreateStatus.setAttribute('data-state', state || 'idle');
+  }
+
+  function syncSquadMissionOptions() {
+    if (!els.squadMissionOptions) return;
+    els.squadMissionOptions.innerHTML = '';
+    var fragment = document.createDocumentFragment();
+    for (var i = 0; i < SQUAD_MISSION_OPTIONS.length; i++) {
+      var option = document.createElement('option');
+      option.value = SQUAD_MISSION_OPTIONS[i];
+      fragment.appendChild(option);
+    }
+    els.squadMissionOptions.appendChild(fragment);
+  }
+
+  function syncSquadFarmTargetOptions() {
+    if (!els.squadFarmTargetOptions) return;
+    els.squadFarmTargetOptions.innerHTML = '';
+    var fragment = document.createDocumentFragment();
+    var seen = Object.create(null);
+
+    for (var i = 0; i < allItems.length; i++) {
+      var item = allItems[i] || {};
+      var name = cleanDisplayText(item.name || '');
+      if (!name || seen[toLookupKey(name)]) continue;
+      seen[toLookupKey(name)] = true;
+
+      var option = document.createElement('option');
+      option.value = name;
+      fragment.appendChild(option);
+    }
+
+    els.squadFarmTargetOptions.appendChild(fragment);
+  }
+
+  function getSuggestedSquadMissions(query) {
+    var key = toLookupKey(query || '');
+    if (!key) return SQUAD_MISSION_OPTIONS.slice(0, 12);
+
+    var starts = [];
+    var contains = [];
+    for (var i = 0; i < SQUAD_MISSION_OPTIONS.length; i++) {
+      var mission = SQUAD_MISSION_OPTIONS[i];
+      var missionKey = toLookupKey(mission);
+      if (missionKey.indexOf(key) === 0) starts.push(mission);
+      else if (missionKey.indexOf(key) !== -1) contains.push(mission);
+    }
+    return starts.concat(contains).slice(0, 12);
+  }
+
+  function renderSquadMissionSlider() {
+    if (!els.squadMissionSlider) return;
+    els.squadMissionSlider.innerHTML = '';
+    var missions = getSuggestedSquadMissions(els.squadMissionInput ? els.squadMissionInput.value : '');
+    if (!missions.length) {
+      var empty = document.createElement('span');
+      empty.className = 'squad-mission-empty';
+      empty.textContent = 'No suggested missions found';
+      els.squadMissionSlider.appendChild(empty);
+      return;
+    }
+
+    var fragment = document.createDocumentFragment();
+    for (var i = 0; i < missions.length; i++) {
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'squad-mission-chip';
+      chip.setAttribute('data-squad-mission', missions[i]);
+      chip.textContent = missions[i];
+      fragment.appendChild(chip);
+    }
+    els.squadMissionSlider.appendChild(fragment);
+  }
+
+  function syncSquadRequirementOptions() {
+    if (!els.squadItemOptions) return;
+    els.squadItemOptions.innerHTML = '';
+    var fragment = document.createDocumentFragment();
+    var seen = Object.create(null);
+
+    for (var i = 0; i < allItems.length; i++) {
+      var item = allItems[i] || {};
+      if (!isSquadRequirementAllowed(item, item)) continue;
+      var name = cleanDisplayText(item.name || '');
+      if (!name || seen[toLookupKey(name)]) continue;
+      seen[toLookupKey(name)] = true;
+
+      var option = document.createElement('option');
+      option.value = name;
+      fragment.appendChild(option);
+    }
+
+    els.squadItemOptions.appendChild(fragment);
+  }
+
+  function renderSquadRequirementDraft() {
+    if (!els.squadRequirementDraft) return;
+    els.squadRequirementDraft.innerHTML = '';
+
+    if (!squadRequirementDraft.length) {
+      var empty = document.createElement('div');
+      empty.className = 'squad-draft-empty';
+      empty.textContent = 'No item requirements added';
+      els.squadRequirementDraft.appendChild(empty);
+      return;
+    }
+
+    for (var i = 0; i < squadRequirementDraft.length; i++) {
+      var req = squadRequirementDraft[i];
+      var chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'squad-draft-chip';
+      chip.setAttribute('data-remove-draft-req', req.uniqueName || req.name);
+
+      var label = document.createElement('span');
+      label.textContent = req.name;
+      chip.appendChild(label);
+
+      var icon = document.createElement('span');
+      icon.className = 'material-icons-round';
+      icon.textContent = 'close';
+      chip.appendChild(icon);
+
+      els.squadRequirementDraft.appendChild(chip);
+    }
+  }
+
+  function addSquadRequirementFromInput() {
+    if (!els.squadRequirementInput) return false;
+    var rawValue = String(els.squadRequirementInput.value || '').trim();
+    if (!rawValue) return false;
+
+    var item = findItemByLooseName(rawValue);
+    if (!item) {
+      setSquadCreateStatus('Requirement not found in the item tracker', 'error');
+      return false;
+    }
+    if (!isSquadRequirementAllowed(item, item)) {
+      setSquadCreateStatus('Choose a full Warframe, weapon, or mod instead of a part', 'error');
+      return false;
+    }
+
+    var exists = squadRequirementDraft.some(function(req) {
+      return req.uniqueName === item.uniqueName;
+    });
+    if (exists) {
+      setSquadCreateStatus(item.name + ' is already required', 'warning');
+      els.squadRequirementInput.value = '';
+      return true;
+    }
+
+    squadRequirementDraft.push(sanitizeSquadRequirement(item));
+    els.squadRequirementInput.value = '';
+    setSquadCreateStatus('Requirement added: ' + item.name, 'success');
+    renderSquadRequirementDraft();
+    return true;
+  }
+
+  function removeSquadRequirementFromDraft(key) {
+    var lookup = String(key || '');
+    squadRequirementDraft = squadRequirementDraft.filter(function(req) {
+      return req.uniqueName !== lookup && req.name !== lookup;
+    });
+    renderSquadRequirementDraft();
+  }
+
+  function getSelectedSquadMissionMode() {
+    var selected = document.querySelector('input[name="squad-mission-mode"]:checked');
+    return normalizeSquadMissionMode(selected ? selected.value : 'normal');
+  }
+
+  function resetSquadForm() {
+    if (els.squadCreateForm) els.squadCreateForm.reset();
+    if (els.squadMrInput) els.squadMrInput.value = String(getCurrentMasteryRankValue());
+    if (els.squadRequiredMrInput) els.squadRequiredMrInput.value = '0';
+    squadRequirementDraft = [];
+    renderSquadRequirementDraft();
+    renderSquadMissionSlider();
+    setSquadCreateStatus('Ready to recruit', 'idle');
+  }
+
+  function toggleSquadCreateShell(forceOpen) {
+    if (!els.squadCreateShell) return;
+    var shouldOpen = typeof forceOpen === 'boolean'
+      ? forceOpen
+      : els.squadCreateShell.classList.contains('hidden');
+    els.squadCreateShell.classList.toggle('hidden', !shouldOpen);
+    if (shouldOpen) {
+      if (els.squadMrInput && !String(els.squadMrInput.value || '').trim()) {
+        els.squadMrInput.value = String(getCurrentMasteryRankValue());
+      }
+      if (els.squadRequiredMrInput && !String(els.squadRequiredMrInput.value || '').trim()) {
+        els.squadRequiredMrInput.value = '0';
+      }
+      renderSquadRequirementDraft();
+      renderSquadMissionSlider();
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          if (els.squadIgnInput) els.squadIgnInput.focus();
+        });
+      }
+    }
+  }
+
+  async function createSquadPostFromForm(event) {
+    if (event) event.preventDefault();
+    if (!els.squadCreateForm) return;
+
+    var pendingRequirement = els.squadRequirementInput ? String(els.squadRequirementInput.value || '').trim() : '';
+    if (pendingRequirement && !addSquadRequirementFromInput()) {
+      return;
+    }
+
+    var post = sanitizeSquadPost({
+      ign: els.squadIgnInput ? els.squadIgnInput.value : '',
+      masteryRank: els.squadMrInput ? els.squadMrInput.value : 0,
+      requiredMasteryRank: els.squadRequiredMrInput ? els.squadRequiredMrInput.value : 0,
+      mission: els.squadMissionInput ? els.squadMissionInput.value : '',
+      missionMode: getSelectedSquadMissionMode(),
+      farmTarget: els.squadFarmTargetInput ? els.squadFarmTargetInput.value : '',
+      requirements: squadRequirementDraft,
+      note: els.squadNoteInput ? els.squadNoteInput.value : '',
+      createdAt: Date.now()
+    });
+
+    if (!post.ign) {
+      setSquadCreateStatus('Warframe IGN is required', 'error');
+      if (els.squadIgnInput) els.squadIgnInput.focus();
+      return;
+    }
+    if (!post.mission) {
+      setSquadCreateStatus('Mission is required', 'error');
+      if (els.squadMissionInput) els.squadMissionInput.focus();
+      return;
+    }
+    if (findActiveSquadPostByIgn(post.ign)) {
+      setSquadCreateStatus('You already have one active squad post. Delete it before posting another.', 'warning');
+      return;
+    }
+    var cooldownMs = getSquadCooldownMs(post.ign);
+    if (cooldownMs > 0) {
+      setSquadCreateStatus('Please wait ' + Math.ceil(cooldownMs / 1000) + 's before posting again.', 'warning');
+      return;
+    }
+
+    setSquadCreateStatus('Posting to server...', 'idle');
+    if (els.squadCreateForm) els.squadCreateForm.classList.add('is-posting');
+
+    try {
+      var remotePost = await postSquadToServer(post);
+      squadPosts = [remotePost].concat(squadPosts.filter(function(item) { return item.id !== remotePost.id; })).slice(0, SQUAD_BOARD_MAX_POSTS);
+      saveSquadPosts();
+      setSquadServerState('online', 'Server online');
+      renderSquadBoard();
+      rememberSquadPostTime(remotePost.ign, remotePost.createdAt);
+      resetSquadForm();
+      toggleSquadCreateShell(false);
+    } catch (err) {
+      if (err && (err.status === 409 || err.status === 429 || err.status === 400)) {
+        setSquadServerState('online', 'Server online');
+        var retryText = err.retryAfterMs
+          ? ' Try again in ' + Math.max(1, Math.ceil(err.retryAfterMs / 1000)) + 's.'
+          : '';
+        setSquadCreateStatus((err.message || 'Could not post squad.') + retryText, err.status === 400 ? 'error' : 'warning');
+        return;
+      }
+      post.serverSynced = false;
+      squadPosts.unshift(post);
+      squadPosts = squadPosts.slice(0, SQUAD_BOARD_MAX_POSTS);
+      saveSquadPosts();
+      setSquadServerState('offline', 'Server offline');
+      renderSquadBoard();
+      rememberSquadPostTime(post.ign, post.createdAt);
+      setSquadCreateStatus('Saved locally because server is offline', 'warning');
+    } finally {
+      if (els.squadCreateForm) els.squadCreateForm.classList.remove('is-posting');
+    }
+  }
+
+  function getSquadSearchText(post) {
+    var requirements = Array.isArray(post.requirements) ? post.requirements.map(function(req) {
+      return req && req.name ? req.name : '';
+    }).join(' ') : '';
+    return normalizeSearchText([
+      post.ign,
+      post.mission,
+      getSquadModeLabel(post.missionMode),
+      post.farmTarget && post.farmTarget.name,
+      post.requiredMasteryRank ? ('MR ' + post.requiredMasteryRank) : '',
+      requirements,
+      post.note
+    ].join(' '));
+  }
+
+  function getFilteredSquadPosts() {
+    var query = normalizeSearchText(squadSearchQuery);
+    var currentMr = getCurrentMasteryRankValue();
+    return squadPosts.filter(function(post) {
+      if (!isOwnSquadPost(post)) {
+        var analysis = analyzeSquadPost(post, currentMr);
+        if (!analysis.meetsMasteryRank) return false;
+        if (analysis.requirements.length && !analysis.canWhisper) return false;
+      }
+      if (squadFilterMode !== 'all' && normalizeSquadMissionMode(post.missionMode) !== squadFilterMode) return false;
+      if (query && getSquadSearchText(post).indexOf(query) === -1) return false;
+      return true;
+    });
+  }
+
+  function buildSquadWhisper(post, analysis) {
+    var mission = cleanDisplayText(post.mission || 'your mission');
+    var mode = getSquadModeLabel(post.missionMode);
+    var farmTarget = post.farmTarget && post.farmTarget.name ? cleanDisplayText(post.farmTarget.name) : '';
+    var ownedRequirements = (analysis && Array.isArray(analysis.met) ? analysis.met : [])
+      .map(function(row) { return row.requirement && row.requirement.name ? row.requirement.name : ''; })
+      .filter(Boolean);
+    var requirementText = ownedRequirements.length
+      ? ' I have ' + ownedRequirements.join(', ') + '.'
+      : ' I meet the requirements.';
+    var farmText = farmTarget ? ' to farm ' + farmTarget : '';
+    return '/w ' + post.ign + ' Hi ' + post.ign + ', I want to join ' + mission + ' (' + mode + ')' + farmText + '.' + requirementText;
+  }
+
+  async function copySquadWhisper(postId) {
+    var post = squadPosts.find(function(item) { return item.id === postId; });
+    if (!post) return;
+
+    var analysis = analyzeSquadPost(post);
+    if (!analysis.canWhisper) return;
+
+    var message = buildSquadWhisper(post, analysis);
+    var ok = await copyTextToClipboard(message);
+    if (els.squadCountText) {
+      els.squadCountText.textContent = ok ? ('Whisper copied for ' + post.ign) : 'Clipboard copy failed';
+    }
+  }
+
+  function renderSquadRequirementChip(row) {
+    var req = row.requirement || {};
+    var item = row.item || resolveSquadRequirement(req);
+    var chip = document.createElement('span');
+    chip.className = 'squad-req-chip ' + (row.met ? 'met' : 'missing');
+    chip.title = row.met ? 'Tracked as owned or mastered' : 'Missing in your tracked account';
+
+    var imageSources = item ? getItemImageSources(item) : { primary: '', fallback: '' };
+    if (imageSources.primary) {
+      var img = document.createElement('img');
+      img.alt = req.name || 'Requirement';
+      img.loading = 'lazy';
+      bindImageFallback(img, imageSources, function() {
+        img.remove();
+      });
+      chip.appendChild(img);
+    }
+
+    var icon = document.createElement('span');
+    icon.className = 'material-icons-round';
+    icon.textContent = row.met ? 'check_circle' : 'lock';
+    chip.appendChild(icon);
+
+    var label = document.createElement('span');
+    label.textContent = req.name || 'Requirement';
+    chip.appendChild(label);
+
+    return chip;
+  }
+
+  function renderSquadCard(post) {
+    var analysis = analyzeSquadPost(post);
+    var card = document.createElement('article');
+    card.className = 'squad-card is-' + analysis.matchState;
+
+    var head = document.createElement('div');
+    head.className = 'squad-card-head';
+
+    var identity = document.createElement('div');
+    identity.className = 'squad-card-identity';
+    var avatar = document.createElement('div');
+    avatar.className = 'squad-card-avatar';
+    avatar.textContent = String(post.ign || '?').charAt(0).toUpperCase();
+    identity.appendChild(avatar);
+
+    var titleWrap = document.createElement('div');
+    var name = document.createElement('h2');
+    name.className = 'squad-card-name';
+    name.textContent = post.ign;
+    var meta = document.createElement('div');
+    meta.className = 'squad-card-meta';
+    meta.textContent = 'MR ' + post.masteryRank + ' - ' + formatSquadAge(post.createdAt);
+    titleWrap.appendChild(name);
+    titleWrap.appendChild(meta);
+    identity.appendChild(titleWrap);
+    head.appendChild(identity);
+
+    var status = document.createElement('span');
+    status.className = 'squad-status-pill ' + analysis.matchState;
+    status.textContent = analysis.matchState === 'ready'
+      ? 'Ready'
+      : (analysis.matchState === 'partial'
+        ? 'Partial'
+        : (analysis.matchState === 'rank' ? ('MR ' + analysis.requiredMasteryRank + '+') : ('Missing ' + analysis.missing.length)));
+    head.appendChild(status);
+    card.appendChild(head);
+
+    var mission = document.createElement('div');
+    mission.className = 'squad-mission-line';
+    var mode = document.createElement('span');
+    mode.className = 'squad-mode-chip ' + normalizeSquadMissionMode(post.missionMode);
+    mode.textContent = getSquadModeLabel(post.missionMode);
+    var missionName = document.createElement('strong');
+    missionName.textContent = post.mission;
+    mission.appendChild(mode);
+    mission.appendChild(missionName);
+    card.appendChild(mission);
+
+    if ((post.farmTarget && post.farmTarget.name) || analysis.requiredMasteryRank > 0) {
+      var details = document.createElement('div');
+      details.className = 'squad-detail-line';
+      if (post.farmTarget && post.farmTarget.name) {
+        var target = document.createElement('span');
+        target.className = 'squad-target-chip';
+        target.innerHTML = '<span class="material-icons-round">travel_explore</span>';
+        var targetLabel = document.createElement('span');
+        targetLabel.textContent = 'Farm: ' + post.farmTarget.name;
+        target.appendChild(targetLabel);
+        details.appendChild(target);
+      }
+      if (analysis.requiredMasteryRank > 0) {
+        var rank = document.createElement('span');
+        rank.className = 'squad-mr-chip';
+        rank.textContent = 'Required MR ' + analysis.requiredMasteryRank;
+        details.appendChild(rank);
+      }
+      card.appendChild(details);
+    }
+
+    if (post.note) {
+      var note = document.createElement('p');
+      note.className = 'squad-note';
+      note.textContent = post.note;
+      card.appendChild(note);
+    }
+
+    var reqWrap = document.createElement('div');
+    reqWrap.className = 'squad-req-list';
+    if (analysis.requirements.length) {
+      for (var i = 0; i < analysis.requirements.length; i++) {
+        reqWrap.appendChild(renderSquadRequirementChip(analysis.requirements[i]));
+      }
+    } else {
+      var noReq = document.createElement('span');
+      noReq.className = 'squad-no-req';
+      noReq.textContent = 'Open requirements';
+      reqWrap.appendChild(noReq);
+    }
+    card.appendChild(reqWrap);
+
+    var footer = document.createElement('div');
+    footer.className = 'squad-card-footer';
+    var readiness = document.createElement('div');
+    readiness.className = 'squad-readiness';
+    readiness.textContent = analysis.requirements.length
+      ? (analysis.met.length + '/' + analysis.requirements.length + ' matched')
+      : 'Anyone can join';
+    footer.appendChild(readiness);
+
+    var actions = document.createElement('div');
+    actions.className = 'squad-card-actions';
+    var joinBtn = document.createElement('button');
+    joinBtn.className = 'btn ' + (analysis.canWhisper ? 'btn-primary' : 'btn-secondary');
+    joinBtn.type = 'button';
+    joinBtn.disabled = !analysis.canWhisper;
+    joinBtn.setAttribute('data-squad-join', post.id);
+    joinBtn.innerHTML = '<span class="material-icons-round">' + (analysis.canWhisper ? 'content_copy' : 'block') + '</span>' +
+      (analysis.canWhisper ? 'Copy Whisper' : (analysis.meetsMasteryRank ? 'Need Requirement' : 'Need MR ' + analysis.requiredMasteryRank));
+    actions.appendChild(joinBtn);
+
+    if (post.ownerToken || !post.serverSynced) {
+      var deleteBtn = document.createElement('button');
+      deleteBtn.className = 'squad-icon-btn squad-delete-btn';
+      deleteBtn.type = 'button';
+      deleteBtn.setAttribute('data-squad-delete', post.id);
+      deleteBtn.setAttribute('aria-label', 'Delete squad post');
+      deleteBtn.innerHTML = '<span class="material-icons-round">delete</span>';
+      actions.appendChild(deleteBtn);
+    }
+
+    footer.appendChild(actions);
+    card.appendChild(footer);
+    return card;
+  }
+
+  function updateSquadFilterButtons() {
+    document.querySelectorAll('.squad-filter-btn[data-squad-filter]').forEach(function(btn) {
+      var active = btn.getAttribute('data-squad-filter') === squadFilterMode;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+  }
+
+  function renderSquadBoard() {
+    if (!els.squadBoardGrid) return;
+    updateSquadFilterButtons();
+
+    var posts = getFilteredSquadPosts();
+    if (els.squadCountText) {
+      var total = squadPosts.length;
+      var sourceLabel = squadServerOnline ? 'server board' : 'cached board';
+      els.squadCountText.textContent = posts.length + ' visible - ' + total + ' posted - ' + sourceLabel;
+    }
+    if (els.squadSearchClear) {
+      els.squadSearchClear.classList.toggle('hidden', !squadSearchQuery);
+    }
+
+    els.squadBoardGrid.innerHTML = '';
+    if (!posts.length) {
+      var empty = document.createElement('div');
+      empty.className = 'squad-empty-state';
+      var icon = document.createElement('span');
+      icon.className = 'material-icons-round';
+      icon.textContent = 'groups';
+      var title = document.createElement('strong');
+      title.textContent = squadPosts.length ? 'No squads match this view' : 'No squads posted yet';
+      var sub = document.createElement('span');
+      sub.textContent = squadPosts.length ? 'Try another mission filter or search.' : 'Create a squad to start recruiting.';
+      empty.appendChild(icon);
+      empty.appendChild(title);
+      empty.appendChild(sub);
+      els.squadBoardGrid.appendChild(empty);
+      return;
+    }
+
+    var fragment = document.createDocumentFragment();
+    for (var i = 0; i < posts.length; i++) {
+      fragment.appendChild(renderSquadCard(posts[i]));
+    }
+    els.squadBoardGrid.appendChild(fragment);
+  }
+
+  async function deleteSquadPost(postId) {
+    var post = squadPosts.find(function(item) { return item.id === postId; });
+    if (!post) return;
+
+    try {
+      await deleteSquadFromServer(post);
+      if (post.id && squadOwnerTokens[post.id]) {
+        delete squadOwnerTokens[post.id];
+        saveSquadOwnerTokens();
+      }
+      squadPosts = squadPosts.filter(function(item) { return item.id !== postId; });
+      saveSquadPosts();
+      renderSquadBoard();
+    } catch (err) {
+      if (els.squadCountText) {
+        els.squadCountText.textContent = 'Could not delete squad from server';
+      }
     }
   }
 
@@ -7867,6 +8895,9 @@
     applyFilters();
     updateStats();
     renderStarchartNightwavePanel();
+    syncSquadRequirementOptions();
+    syncSquadFarmTargetOptions();
+    renderSquadBoard();
   }
 
   async function refreshItemsInBackground(force) {
@@ -8394,6 +9425,9 @@
     applyFilters();
     updateStats();
     renderStarchartNightwavePanel();
+    syncSquadRequirementOptions();
+    syncSquadFarmTargetOptions();
+    renderSquadBoard();
     initItemsAutoRefresh();
     initProfileAutoSync();
   }
@@ -9187,6 +10221,9 @@
     els.progressPercent.textContent = overallPercent.toFixed(1) + '% Complete';
 
     updateCalculator();
+    if (els.squadFinderPanel && !els.squadFinderPanel.classList.contains('hidden')) {
+      renderSquadBoard();
+    }
   }
 
   async function openExternalUrl(url) {
@@ -11023,6 +12060,12 @@
     });
   }
 
+  if (els.settingsCheckUpdateBtn) {
+    els.settingsCheckUpdateBtn.addEventListener('click', function() {
+      checkForUpdates();
+    });
+  }
+
   if (els.newsBtn) {
     els.newsBtn.addEventListener('click', function() {
       openNewsModal();
@@ -11154,8 +12197,11 @@
       var marketPanel = $('#market-panel');
       var relicsPanel = $('#relics-panel');
       var arcanesPanel = $('#arcanes-panel');
+      var squadPanel = $('#squad-finder-panel');
       if (marketPanel && !marketPanel.classList.contains('hidden')) {
         $('#market-search-input').focus();
+      } else if (squadPanel && !squadPanel.classList.contains('hidden') && els.squadSearchInput) {
+        els.squadSearchInput.focus();
       } else if (arcanesPanel && !arcanesPanel.classList.contains('hidden') && els.arcaneSearchInput) {
         els.arcaneSearchInput.focus();
       } else if (relicsPanel && !relicsPanel.classList.contains('hidden') && els.relicSearchInput) {
@@ -11170,6 +12216,7 @@
       closeNewsModal();
       closeItemInfoModal();
       closeScanModal(false);
+      toggleSquadCreateShell(false);
     }
   });
 
@@ -11233,6 +12280,7 @@
       arcanes: $('#arcanes-panel'),
       cycles: $('#cycles-panel'),
       starchart: $('#starchart-panel'),
+      squad: $('#squad-finder-panel'),
       settings: $('#settings-page')
     };
   }
@@ -11240,6 +12288,7 @@
   function getCurrentPanelName() {
     var refs = getPanelRefs();
     if (refs.settings && !refs.settings.classList.contains('hidden')) return 'settings';
+    if (refs.squad && !refs.squad.classList.contains('hidden')) return 'squad';
     if (refs.starchart && !refs.starchart.classList.contains('hidden')) return 'starchart';
     if (refs.cycles && !refs.cycles.classList.contains('hidden')) return 'cycles';
     if (refs.arcanes && !refs.arcanes.classList.contains('hidden')) return 'arcanes';
@@ -11259,6 +12308,7 @@
     var arcanesPanel = refs.arcanes;
     var cyclesPanel = refs.cycles;
     var starchartPanel = refs.starchart;
+    var squadPanel = refs.squad;
     var settingsPage = refs.settings;
 
     var navMarket = $('#nav-market');
@@ -11268,6 +12318,10 @@
     var navArcanes = $('#nav-arcanes');
     var navCycles = $('#nav-cycles');
     var navStarchart = $('#nav-starchart');
+    var navSquad = $('#nav-squad-finder');
+
+    if (squadPanel) squadPanel.classList.add('hidden');
+    if (navSquad) navSquad.classList.remove('active');
 
     // Stop starchart animation when leaving that panel
     if (panel !== 'starchart' && window.warframeStarchart) {
@@ -11440,6 +12494,31 @@
         }, 50);
       }
       renderStarchartNightwavePanel({ loading: !cycleSnapshot || !cycleSnapshot.worldstate });
+    } else if (panel === 'squad') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
+      if (squadPanel) squadPanel.classList.remove('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
+      if (navSquad) navSquad.classList.add('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      syncSquadRequirementOptions();
+      syncSquadFarmTargetOptions();
+      renderSquadBoard();
     } else if (panel === 'settings') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
@@ -11581,6 +12660,13 @@
     });
   }
 
+  var navSquadFinder = $('#nav-squad-finder');
+  if (navSquadFinder) {
+    navSquadFinder.addEventListener('click', function() {
+      showPanel('squad', true);
+    });
+  }
+
   document.querySelectorAll('.cycles-nav-btn[data-cycle-tab]').forEach(function(btn) {
     btn.addEventListener('click', function() {
       setActiveCycleTab(btn.getAttribute('data-cycle-tab'));
@@ -11623,9 +12709,119 @@
     });
   }
 
+  if (els.squadCreateToggle) {
+    els.squadCreateToggle.addEventListener('click', function() {
+      toggleSquadCreateShell();
+    });
+  }
+
+  if (els.squadRefreshBtn) {
+    els.squadRefreshBtn.addEventListener('click', function() {
+      refreshSquadPostsFromServer(true);
+    });
+  }
+
+  if (els.squadFormClose) {
+    els.squadFormClose.addEventListener('click', function() {
+      toggleSquadCreateShell(false);
+    });
+  }
+
+  if (els.squadCreateShell) {
+    els.squadCreateShell.addEventListener('click', function(event) {
+      if (event.target === els.squadCreateShell) {
+        toggleSquadCreateShell(false);
+      }
+    });
+  }
+
+  if (els.squadCreateForm) {
+    els.squadCreateForm.addEventListener('submit', createSquadPostFromForm);
+  }
+
+  if (els.squadMissionInput) {
+    els.squadMissionInput.addEventListener('input', renderSquadMissionSlider);
+  }
+
+  if (els.squadMissionSlider) {
+    els.squadMissionSlider.addEventListener('click', function(event) {
+      var target = event.target && event.target.closest ? event.target.closest('[data-squad-mission]') : null;
+      if (!target) return;
+      if (els.squadMissionInput) {
+        els.squadMissionInput.value = target.getAttribute('data-squad-mission') || '';
+        els.squadMissionInput.focus();
+      }
+      renderSquadMissionSlider();
+    });
+  }
+
+  if (els.squadAddRequirement) {
+    els.squadAddRequirement.addEventListener('click', addSquadRequirementFromInput);
+  }
+
+  if (els.squadRequirementInput) {
+    els.squadRequirementInput.addEventListener('keydown', function(event) {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      addSquadRequirementFromInput();
+    });
+  }
+
+  if (els.squadRequirementDraft) {
+    els.squadRequirementDraft.addEventListener('click', function(event) {
+      var target = event.target && event.target.closest ? event.target.closest('[data-remove-draft-req]') : null;
+      if (!target) return;
+      removeSquadRequirementFromDraft(target.getAttribute('data-remove-draft-req'));
+    });
+  }
+
+  if (els.squadClearForm) {
+    els.squadClearForm.addEventListener('click', resetSquadForm);
+  }
+
+  if (els.squadSearchInput) {
+    els.squadSearchInput.addEventListener('input', function() {
+      squadSearchQuery = els.squadSearchInput.value || '';
+      renderSquadBoard();
+    });
+  }
+
+  if (els.squadSearchClear) {
+    els.squadSearchClear.addEventListener('click', function() {
+      squadSearchQuery = '';
+      if (els.squadSearchInput) els.squadSearchInput.value = '';
+      renderSquadBoard();
+      if (els.squadSearchInput) els.squadSearchInput.focus();
+    });
+  }
+
+  document.querySelectorAll('.squad-filter-btn[data-squad-filter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      squadFilterMode = btn.getAttribute('data-squad-filter') || 'all';
+      renderSquadBoard();
+    });
+  });
+
+  if (els.squadBoardGrid) {
+    els.squadBoardGrid.addEventListener('click', function(event) {
+      var joinTarget = event.target && event.target.closest ? event.target.closest('[data-squad-join]') : null;
+      if (joinTarget) {
+        copySquadWhisper(joinTarget.getAttribute('data-squad-join'));
+        return;
+      }
+
+      var deleteTarget = event.target && event.target.closest ? event.target.closest('[data-squad-delete]') : null;
+      if (deleteTarget) {
+        deleteSquadPost(deleteTarget.getAttribute('data-squad-delete'));
+      }
+    });
+  }
+
   document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape' && isStarchartNightwaveOpen()) {
       closeStarchartNightwavePanel(true);
+    } else if (event.key === 'Escape' && els.squadCreateShell && !els.squadCreateShell.classList.contains('hidden')) {
+      toggleSquadCreateShell(false);
     }
   });
 
@@ -11645,6 +12841,15 @@
   initProfileFetchSetting();
   initSidebarToggle();
   initRemovedProfileStorageMigration();
+  loadSquadOwnerTokens();
+  loadSquadPostLog();
+  loadSquadPosts();
+  syncSquadMissionOptions();
+  syncSquadFarmTargetOptions();
+  renderSquadMissionSlider();
+  renderSquadRequirementDraft();
+  renderSquadBoard();
+  startSquadServerPolling();
   loadItems();
 
 })();
