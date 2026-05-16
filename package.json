@@ -12,7 +12,7 @@
     "package": "electron-builder --win --dir"
   },
   "author": "Hassan",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "commonjs",
   "devDependencies": {
     "electron": "^41.0.3",

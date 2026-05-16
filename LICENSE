@@ -1,4 +1,4 @@
-MIT License
+MIT-Style License With Repository Attribution
 
 Copyright (c) 2026 Hassan F.
 
@@ -9,8 +9,19 @@ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. The above copyright notice, this permission notice, and this repository
+   attribution requirement shall be included in all copies or substantial
+   portions of the Software.
+
+2. Any public use, redistribution, published derivative work, fork, or
+   application that includes a substantial portion of this Software must give
+   visible attribution to the original repository:
+
+   Warframe Companion App
+   https://github.com/Hasan580/Warframe-companion-app
+
+   The attribution may appear in documentation, a README, credits, an about
+   screen, release notes, or another reasonably visible place.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
