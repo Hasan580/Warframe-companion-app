@@ -152,6 +152,10 @@
           <span class="material-icons-round">public</span>
           <span class="nav-text">Solar System</span>
         </button>
+        <button class="nav-item" id="nav-compare" data-panel="compare">
+          <span class="material-icons-round">compare_arrows</span>
+          <span class="nav-text">Compare Frames</span>
+        </button>
 
         <div class="nav-section-label" style="margin-top: 16px;">RECRUITING</div>
         <button class="nav-item" id="nav-squad-finder" data-panel="squad-finder">
@@ -167,10 +171,6 @@
         <button class="nav-item nav-tool" id="btn-calculator">
           <span class="material-icons-round">calculate</span>
           <span class="nav-text">MR Calculator</span>
-        </button>
-        <button class="nav-item nav-tool" id="btn-cephalon-simaris" type="button">
-          <span class="material-icons-round">psychology</span>
-          <span class="nav-text">Cephalon Simaris</span>
         </button>
         <button class="nav-item nav-tool" id="btn-reset">
           <span class="material-icons-round">restart_alt</span>
@@ -353,8 +353,8 @@
       <div class="content-topbar trade-analytics-topbar">
         <div class="trade-analytics-title-wrap">
           <h1 class="category-title">Trading Analytics</h1>
-          <span class="category-count" id="trade-analytics-count-text">Public warframe.market spread, price, and volume
-            scanner</span>
+          <span class="category-count" id="trade-analytics-count-text">Public warframe.market timing, spread, price, and
+            volume scanner</span>
         </div>
         <div class="topbar-actions">
           <button class="btn btn-secondary" id="btn-trade-analytics-refresh" type="button">
@@ -418,6 +418,7 @@
                 </button>
               </div>
 
+              <div class="trade-analytics-insight-grid" id="trade-analytics-insights"></div>
               <div class="trade-analytics-stat-grid" id="trade-analytics-stat-grid"></div>
             </div>
           </section>
@@ -979,6 +980,143 @@
       </div>
     </div>
 
+    <!-- Frame Comparison Panel (hidden by default) -->
+    <div class="compare-panel hidden" id="compare-panel">
+      <div class="content-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Frame Comparison</h1>
+          <span class="category-count" id="compare-subtitle">Compare any two Warframes side by side</span>
+        </div>
+      </div>
+
+      <div class="compare-content" id="compare-content">
+        <!-- Selection Area -->
+        <div class="compare-selection-area">
+          <div class="compare-select-box" id="compare-select-left">
+            <label class="compare-select-label">First Warframe</label>
+            <div class="compare-search-wrap">
+              <span class="material-icons-round search-icon">search</span>
+              <input type="text" class="search-input compare-search-input" id="compare-search-left" placeholder="Search warframe..." autocomplete="off">
+              <button class="compare-clear-btn hidden" id="compare-clear-left" type="button" aria-label="Clear">
+                <span class="material-icons-round">close</span>
+              </button>
+            </div>
+            <div class="compare-dropdown hidden" id="compare-dropdown-left"></div>
+          </div>
+          <div class="compare-vs-divider">
+            <div class="compare-vs-badge compare-vs-badge-small">
+              <span class="compare-vs-text">VS</span>
+            </div>
+          </div>
+          <div class="compare-select-box" id="compare-select-right">
+            <label class="compare-select-label">Second Warframe</label>
+            <div class="compare-search-wrap">
+              <span class="material-icons-round search-icon">search</span>
+              <input type="text" class="search-input compare-search-input" id="compare-search-right" placeholder="Search warframe..." autocomplete="off">
+              <button class="compare-clear-btn hidden" id="compare-clear-right" type="button" aria-label="Clear">
+                <span class="material-icons-round">close</span>
+              </button>
+            </div>
+            <div class="compare-dropdown hidden" id="compare-dropdown-right"></div>
+          </div>
+        </div>
+
+        <!-- Comparison Result -->
+        <div class="compare-result hidden" id="compare-result">
+          <div class="compare-frames-header">
+            <div class="compare-frame-card compare-frame-left">
+              <div class="compare-frame-img-wrap">
+                <img class="compare-frame-img" id="compare-img-left" src="" alt="">
+                <div class="compare-frame-img-glow"></div>
+              </div>
+              <h2 class="compare-frame-name" id="compare-name-left"></h2>
+              <span class="compare-frame-description" id="compare-desc-left"></span>
+            </div>
+            <div class="compare-vs-center">
+              <div class="compare-vs-badge compare-vs-badge-large">
+                <span class="compare-vs-text">VS</span>
+              </div>
+            </div>
+            <div class="compare-frame-card compare-frame-right">
+              <div class="compare-frame-img-wrap">
+                <img class="compare-frame-img" id="compare-img-right" src="" alt="">
+                <div class="compare-frame-img-glow"></div>
+              </div>
+              <h2 class="compare-frame-name" id="compare-name-right"></h2>
+              <span class="compare-frame-description" id="compare-desc-right"></span>
+            </div>
+          </div>
+
+          <!-- Stats Comparison -->
+          <div class="compare-section">
+            <h3 class="compare-section-title">
+              <span class="material-icons-round">analytics</span>
+              Base Stats
+            </h3>
+            <div class="compare-stats-grid" id="compare-stats-grid"></div>
+          </div>
+
+          <!-- Passive Comparison -->
+          <div class="compare-section">
+            <h3 class="compare-section-title">
+              <span class="material-icons-round">auto_fix_high</span>
+              Passive Ability
+            </h3>
+            <div class="compare-passive-row" id="compare-passive-row">
+              <div class="compare-passive-card" id="compare-passive-left"></div>
+              <div class="compare-passive-card" id="compare-passive-right"></div>
+            </div>
+          </div>
+
+          <!-- Abilities Comparison -->
+          <div class="compare-section">
+            <h3 class="compare-section-title">
+              <span class="material-icons-round">flash_on</span>
+              Abilities
+            </h3>
+            <div class="compare-abilities-grid" id="compare-abilities-grid"></div>
+          </div>
+
+          <!-- Polarities & Aura -->
+          <div class="compare-section">
+            <h3 class="compare-section-title">
+              <span class="material-icons-round">tune</span>
+              Polarities &amp; Aura
+            </h3>
+            <div class="compare-polarities-row" id="compare-polarities-row"></div>
+          </div>
+
+          <!-- Farming Difficulty -->
+          <div class="compare-section">
+            <h3 class="compare-section-title">
+              <span class="material-icons-round">terrain</span>
+              How to Farm
+            </h3>
+            <div class="compare-farming-row" id="compare-farming-row"></div>
+          </div>
+
+          <!-- Build & Cost -->
+          <div class="compare-section">
+            <h3 class="compare-section-title">
+              <span class="material-icons-round">construction</span>
+              Build &amp; Cost
+            </h3>
+            <div class="compare-build-row" id="compare-build-row"></div>
+          </div>
+        </div>
+
+        <!-- Top 10 Most Used Frames -->
+        <div class="compare-section compare-top10-section">
+          <h3 class="compare-section-title">
+            <span class="material-icons-round">trending_up</span>
+            Top 10 Most Popular Warframes
+          </h3>
+          <p class="compare-top10-sub">Based on community tier lists and meta usage. Click a frame to add it to comparison.</p>
+          <div class="compare-top10-grid" id="compare-top10-grid"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Page -->
     <div class="settings-page hidden" id="settings-page">
       <div class="content-topbar settings-topbar">
@@ -1266,45 +1404,6 @@
           </div>
         </div>
 
-      </div>
-    </div>
-  </div>
-
-  <!-- Cephalon Simaris Modal -->
-  <div class="modal-overlay hidden" id="simaris-modal">
-    <div class="modal simaris-modal">
-      <div class="modal-header">
-        <div class="simaris-title-wrap">
-          <div class="simaris-kicker">Cephalon Query Console</div>
-          <h2 class="modal-title">Cephalon Simaris</h2>
-        </div>
-        <button class="modal-close" id="simaris-modal-close" type="button" aria-label="Close Cephalon Simaris">
-          <span class="material-icons-round">close</span>
-        </button>
-      </div>
-      <div class="modal-body simaris-modal-body">
-        <form class="simaris-search" id="simaris-search-form">
-          <label class="simaris-label" for="simaris-query-input">Ask for an item, Warframe, weapon, mod, or resource</label>
-          <div class="simaris-input-row">
-            <span class="material-icons-round">travel_explore</span>
-            <input id="simaris-query-input" class="simaris-input" type="text" placeholder="Example: Acceltra Prime" autocomplete="off">
-            <button class="btn btn-primary simaris-search-btn" id="simaris-search-btn" type="submit">Fetch</button>
-          </div>
-        </form>
-        <div class="simaris-status" id="simaris-status" data-state="idle">
-          <span class="material-icons-round" id="simaris-status-icon">psychology</span>
-          <span id="simaris-status-text">Ask Simaris for a specific item to fetch fresh wiki information.</span>
-        </div>
-        <div class="simaris-result hidden" id="simaris-result">
-          <div class="simaris-result-head">
-            <img id="simaris-result-img" class="simaris-result-img hidden" src="" alt="">
-            <div>
-              <h3 id="simaris-result-title">Item</h3>
-              <a id="simaris-result-link" href="#" class="simaris-result-link">Open full wiki page</a>
-            </div>
-          </div>
-          <div class="simaris-result-content" id="simaris-result-content"></div>
-        </div>
       </div>
     </div>
   </div>

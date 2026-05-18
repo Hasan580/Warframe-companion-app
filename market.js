@@ -350,6 +350,201 @@
     });
   }
 
+  function clampNumber(value, min, max) {
+    var num = Number(value);
+    if (!isFinite(num)) num = 0;
+    return Math.max(min, Math.min(max, num));
+  }
+
+  function formatPercentValue(value) {
+    var num = Number(value);
+    if (!isFinite(num)) return '--';
+    var prefix = num > 0 ? '+' : '';
+    return prefix + num.toFixed(Math.abs(num) >= 10 ? 0 : 1) + '%';
+  }
+
+  function getEntryPrice(entry) {
+    if (!entry) return null;
+    var keys = ['wa_price', 'avg_price', 'closed_price', 'median'];
+    for (var i = 0; i < keys.length; i++) {
+      var value = Number(entry[keys[i]]);
+      if (isFinite(value) && value > 0) return value;
+    }
+    return null;
+  }
+
+  function getPriceDeltaPercent(current, baseline) {
+    if (current == null || baseline == null) return null;
+    var now = Number(current);
+    var base = Number(baseline);
+    if (!isFinite(now) || !isFinite(base) || base <= 0) return null;
+    return ((now - base) / base) * 100;
+  }
+
+  function getWeekdayLabel(index) {
+    return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][index] || 'Unknown';
+  }
+
+  function getHourWindowLabel(index) {
+    var hour = Number(index);
+    if (!isFinite(hour) || hour < 0) return 'Unknown hour';
+    var start = String(hour).padStart(2, '0') + ':00';
+    var endHour = (hour + 1) % 24;
+    var end = String(endHour).padStart(2, '0') + ':00';
+    return start + '-' + end;
+  }
+
+  function buildPriceBuckets(entries, options) {
+    var config = options || {};
+    var orderType = config.orderType || '';
+    var mode = config.mode || 'weekday';
+    var buckets = Object.create(null);
+
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (!entry) continue;
+      if (orderType && entry.order_type !== orderType) continue;
+      var price = getEntryPrice(entry);
+      if (!isFinite(price) || price <= 0) continue;
+      var date = new Date(entry.datetime);
+      if (isNaN(date.getTime())) continue;
+
+      var key = mode === 'hour' ? date.getHours() : date.getDay();
+      if (!buckets[key]) {
+        buckets[key] = { key: key, totalPrice: 0, totalWeight: 0, volume: 0, count: 0 };
+      }
+      var volume = Number(entry.volume);
+      var weight = isFinite(volume) && volume > 0 ? volume : 1;
+      buckets[key].totalPrice += price * weight;
+      buckets[key].totalWeight += weight;
+      buckets[key].volume += weight;
+      buckets[key].count++;
+    }
+
+    return Object.keys(buckets).map(function(key) {
+      var bucket = buckets[key];
+      return {
+        key: Number(bucket.key),
+        average: bucket.totalWeight > 0 ? bucket.totalPrice / bucket.totalWeight : null,
+        volume: bucket.volume,
+        count: bucket.count
+      };
+    }).filter(function(bucket) {
+      return isFinite(bucket.average) && bucket.count > 0;
+    });
+  }
+
+  function pickPriceBucket(entries, options) {
+    var buckets = buildPriceBuckets(entries, options);
+    if (!buckets.length) return null;
+    var prefer = options && options.prefer === 'high' ? 'high' : 'low';
+    buckets.sort(function(a, b) {
+      if (prefer === 'high') return b.average - a.average;
+      return a.average - b.average;
+    });
+    return buckets[0] || null;
+  }
+
+  function formatBucketLabel(bucket, mode) {
+    if (!bucket) return 'Not enough data';
+    return mode === 'hour' ? getHourWindowLabel(bucket.key) : getWeekdayLabel(bucket.key);
+  }
+
+  function countOrdersNearPrice(orders, orderType, price, tolerance) {
+    var base = Number(price);
+    if (!Array.isArray(orders) || !isFinite(base) || base <= 0) {
+      return { count: 0, quantity: 0 };
+    }
+
+    var count = 0;
+    var quantity = 0;
+    for (var i = 0; i < orders.length; i++) {
+      var order = orders[i];
+      if (!order || order.visible === false || order.order_type !== orderType) continue;
+      var platinum = Number(order.platinum);
+      if (!isFinite(platinum) || platinum <= 0) continue;
+      var inRange = orderType === 'sell'
+        ? platinum <= base * (1 + tolerance)
+        : platinum >= base * (1 - tolerance);
+      if (!inRange) continue;
+      count++;
+      var orderQty = Number(order.quantity);
+      quantity += isFinite(orderQty) && orderQty > 0 ? orderQty : 1;
+    }
+
+    return { count: count, quantity: quantity };
+  }
+
+  function getLiquidityProfile(model) {
+    var orders = model.visibleSellOrders.length + model.visibleBuyOrders.length;
+    var volume7 = Number(model.volume7 || 0);
+    if (volume7 >= 60 || orders >= 45) {
+      return { label: 'High liquidity', risk: 'Low risk', detail: 'Plenty of recent volume and live orders, so price checks are more reliable.' };
+    }
+    if (volume7 >= 18 || orders >= 16) {
+      return { label: 'Medium liquidity', risk: 'Medium risk', detail: 'Usable market depth, but check current orders before committing.' };
+    }
+    return { label: 'Thin market', risk: 'High risk', detail: 'Few trades or live orders. Prices can jump quickly and stale listings matter more.' };
+  }
+
+  function getSignalLabel(score, good, neutral, weak) {
+    if (score >= 70) return good;
+    if (score >= 45) return neutral;
+    return weak;
+  }
+
+  function buildTimingInsights(model) {
+    var currentSell = model.bestSell ? Number(model.bestSell.platinum) : null;
+    var currentBuy = model.bestBuy ? Number(model.bestBuy.platinum) : null;
+    var discountVs30 = getPriceDeltaPercent(currentSell, model.avg30);
+    var buyOrderVs30 = getPriceDeltaPercent(currentBuy, model.avg30);
+    var trendPercent = getPriceDeltaPercent(model.avg7, model.avg30);
+    var spreadPercent = model.bestSell && model.bestBuy
+      ? getPriceDeltaPercent(model.bestSell.platinum, model.bestBuy.platinum)
+      : null;
+
+    var buyScore = 50;
+    if (discountVs30 !== null) buyScore += -discountVs30 * 2.2;
+    if (trendPercent !== null) buyScore += -trendPercent * 0.9;
+    if (spreadPercent !== null && spreadPercent > 35) buyScore -= 8;
+    if (model.visibleSellOrders.length < 4) buyScore -= 10;
+    if (model.volume7 >= 25) buyScore += 6;
+    buyScore = clampNumber(buyScore, 0, 100);
+
+    var sellScore = 50;
+    if (buyOrderVs30 !== null) sellScore += buyOrderVs30 * 2.2;
+    if (trendPercent !== null) sellScore += trendPercent * 0.9;
+    if (model.visibleBuyOrders.length < 4) sellScore -= 10;
+    if (model.volume7 >= 25) sellScore += 6;
+    sellScore = clampNumber(sellScore, 0, 100);
+
+    var bestBuyDay = pickPriceBucket(model.closedHistory, { mode: 'weekday', prefer: 'low' });
+    var bestSellDay = pickPriceBucket(model.closedHistory, { mode: 'weekday', prefer: 'high' });
+    var bestBuyHour = pickPriceBucket(model.liveHistory, { mode: 'hour', orderType: 'sell', prefer: 'low' });
+    var bestSellHour = pickPriceBucket(model.liveHistory, { mode: 'hour', orderType: 'buy', prefer: 'high' });
+    var sellWall = countOrdersNearPrice(model.visibleSellOrders, 'sell', currentSell, 0.05);
+    var buyWall = countOrdersNearPrice(model.visibleBuyOrders, 'buy', currentBuy, 0.05);
+    var liquidity = getLiquidityProfile(model);
+
+    return {
+      buyScore: buyScore,
+      sellScore: sellScore,
+      buyLabel: getSignalLabel(buyScore, 'Buy the dip', 'Watch for entry', 'Wait for cheaper'),
+      sellLabel: getSignalLabel(sellScore, 'Sell into strength', 'List patiently', 'Hold or undercut'),
+      discountVs30: discountVs30,
+      buyOrderVs30: buyOrderVs30,
+      trendPercent: trendPercent,
+      spreadPercent: spreadPercent,
+      bestBuyDay: bestBuyDay,
+      bestSellDay: bestSellDay,
+      bestBuyHour: bestBuyHour,
+      bestSellHour: bestSellHour,
+      sellWall: sellWall,
+      buyWall: buyWall,
+      liquidity: liquidity
+    };
+  }
+
   function getAnalyticsQuickPickItems() {
     var picks = [];
     var seen = Object.create(null);
@@ -1757,8 +1952,10 @@
       return order && order.visible !== false && order.order_type === 'buy';
     });
 
-    return {
+    var model = {
       item: item,
+      closedHistory: closedHistory,
+      liveHistory: liveHistory,
       latestClosed: latestClosed,
       latestLiveSell: latestLiveSell,
       latestLiveBuy: latestLiveBuy,
@@ -1774,6 +1971,8 @@
       visibleSellOrders: visibleSellOrders,
       visibleBuyOrders: visibleBuyOrders
     };
+    model.insights = buildTimingInsights(model);
+    return model;
   }
 
   function renderTradeAnalyticsSearchResults() {
@@ -1857,6 +2056,96 @@
     }
   }
 
+  function createInsightCard(config) {
+    var card = document.createElement('div');
+    card.className = 'trade-analytics-insight-card' + (config.kind ? ' ' + config.kind : '');
+
+    var kicker = document.createElement('div');
+    kicker.className = 'trade-analytics-insight-kicker';
+    kicker.textContent = config.kicker || '';
+    card.appendChild(kicker);
+
+    var title = document.createElement('div');
+    title.className = 'trade-analytics-insight-title';
+    title.textContent = config.title || '--';
+    card.appendChild(title);
+
+    var body = document.createElement('div');
+    body.className = 'trade-analytics-insight-body';
+    body.textContent = config.body || '';
+    card.appendChild(body);
+
+    if (Array.isArray(config.tags) && config.tags.length) {
+      var tagWrap = document.createElement('div');
+      tagWrap.className = 'trade-analytics-insight-tags';
+      for (var i = 0; i < config.tags.length; i++) {
+        var tag = document.createElement('span');
+        tag.className = 'trade-analytics-insight-tag';
+        tag.textContent = config.tags[i];
+        tagWrap.appendChild(tag);
+      }
+      card.appendChild(tagWrap);
+    }
+
+    return card;
+  }
+
+  function renderTradeAnalyticsInsights(model, container) {
+    if (!container) return;
+    container.textContent = '';
+
+    if (!model || !model.insights) {
+      container.appendChild(createInsightCard({
+        kicker: 'Market Timing',
+        title: 'Waiting for data',
+        body: 'Choose an item to load buy timing, sell timing, liquidity, and order-wall signals.'
+      }));
+      return;
+    }
+
+    var insights = model.insights;
+    var buyDay = formatBucketLabel(insights.bestBuyDay, 'weekday');
+    var sellDay = formatBucketLabel(insights.bestSellDay, 'weekday');
+    var buyHour = formatBucketLabel(insights.bestBuyHour, 'hour');
+    var sellHour = formatBucketLabel(insights.bestSellHour, 'hour');
+    var currentSellText = formatPlatValue(model.bestSell && model.bestSell.platinum);
+    var currentBuyText = formatPlatValue(model.bestBuy && model.bestBuy.platinum);
+    var trendText = insights.trendPercent !== null ? formatPercentValue(insights.trendPercent) : '--';
+    var discountText = insights.discountVs30 !== null ? formatPercentValue(insights.discountVs30) : '--';
+    var spreadText = insights.spreadPercent !== null ? formatPercentValue(insights.spreadPercent) : '--';
+
+    container.appendChild(createInsightCard({
+      kind: 'is-buy',
+      kicker: 'Best Time To Buy',
+      title: insights.buyLabel,
+      body: 'Observed cheaper day: ' + buyDay + '. Best 48h sell window: ' + buyHour + '. Current lowest sell is ' + currentSellText + ' and sits ' + discountText + ' versus the 30D average.',
+      tags: ['Buy ' + Math.round(insights.buyScore) + '/100', 'Trend ' + trendText]
+    }));
+
+    container.appendChild(createInsightCard({
+      kind: 'is-sell',
+      kicker: 'Best Time To Sell',
+      title: insights.sellLabel,
+      body: 'Observed stronger day: ' + sellDay + '. Best 48h buy window: ' + sellHour + '. Current highest buy is ' + currentBuyText + '; list higher when buy score is weak but sell score is strong.',
+      tags: ['Sell ' + Math.round(insights.sellScore) + '/100', 'Spread ' + spreadText]
+    }));
+
+    container.appendChild(createInsightCard({
+      kind: insights.liquidity.risk === 'High risk' ? 'is-risk' : '',
+      kicker: 'Liquidity & Risk',
+      title: insights.liquidity.label,
+      body: insights.liquidity.detail + ' 7D volume is ' + formatMetricNumber(model.volume7) + ' with ' + formatMetricNumber(model.visibleSellOrders.length + model.visibleBuyOrders.length) + ' visible orders.',
+      tags: [insights.liquidity.risk, '30D volume ' + formatMetricNumber(model.volume30)]
+    }));
+
+    container.appendChild(createInsightCard({
+      kicker: 'Order Walls',
+      title: insights.sellWall.count + ' sellers / ' + insights.buyWall.count + ' buyers',
+      body: insights.sellWall.quantity + ' sell quantity sits within 5% of the cheapest sell. ' + insights.buyWall.quantity + ' buy quantity sits within 5% of the best buy. Big walls usually slow price movement.',
+      tags: ['Sell wall ' + insights.sellWall.quantity, 'Buy wall ' + insights.buyWall.quantity]
+    }));
+  }
+
   function renderTradeAnalyticsOverview(model) {
     var emptyState = $('#trade-analytics-empty-state');
     var overview = $('#trade-analytics-overview');
@@ -1865,6 +2154,7 @@
     var nameEl = $('#trade-analytics-selected-name');
     var categoryEl = $('#trade-analytics-selected-category');
     var updatedEl = $('#trade-analytics-selected-updated');
+    var insightGrid = $('#trade-analytics-insights');
     var statGrid = $('#trade-analytics-stat-grid');
 
     if (!model) {
@@ -1903,10 +2193,24 @@
       updatedEl.textContent = formatAnalyticsTimestamp(updatedFrom);
     }
 
+    renderTradeAnalyticsInsights(model, insightGrid);
+
     if (!statGrid) return;
     statGrid.textContent = '';
 
     var statItems = [
+      {
+        label: 'Buy Score',
+        value: model.insights ? Math.round(model.insights.buyScore) + '/100' : '--',
+        detail: model.insights ? model.insights.buyLabel : 'Waiting for live market timing',
+        kind: model.insights && model.insights.buyScore >= 70 ? 'is-positive' : ''
+      },
+      {
+        label: 'Sell Score',
+        value: model.insights ? Math.round(model.insights.sellScore) + '/100' : '--',
+        detail: model.insights ? model.insights.sellLabel : 'Waiting for live market timing',
+        kind: model.insights && model.insights.sellScore >= 70 ? 'is-positive' : ''
+      },
       {
         label: 'Lowest Sell',
         value: formatPlatValue(model.bestSell && model.bestSell.platinum),
@@ -1937,6 +2241,11 @@
         label: '7D Volume',
         value: formatMetricNumber(model.volume7),
         detail: '30D volume ' + formatMetricNumber(model.volume30)
+      },
+      {
+        label: 'Market Risk',
+        value: model.insights ? model.insights.liquidity.risk : '--',
+        detail: model.insights ? model.insights.liquidity.label : 'Waiting for order depth'
       }
     ];
 

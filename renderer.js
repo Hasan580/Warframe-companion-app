@@ -6,7 +6,7 @@
   'use strict';
 
   // ---------- Constants ----------
-  const API_URL = 'https://api.warframestat.us/items';
+  const API_URL = 'https://api.warframestat.us/items/';
   const MARKET_ITEMS_API_URL = 'https://api.warframe.market/v2/items';
   const CDN_URL = 'https://cdn.warframestat.us/img/';
   const MASTERED_STORAGE_KEY = 'warframe_mastered_items';
@@ -34,12 +34,12 @@
   const UPDATE_RELEASE_API = UPDATE_REPO_API + '/releases/latest';
   const UPDATE_TAGS_API = UPDATE_REPO_API + '/tags?per_page=1';
   const UPDATE_PACKAGE_API = UPDATE_REPO_API + '/contents/package.json';
-  const WARFRAME_NEWS_API = 'https://api.warframestat.us/pc/news';
-  const VAULT_TRADER_API = 'https://api.warframestat.us/pc/vaultTrader';
-  const WARFRAMESTAT_PC_API = 'https://api.warframestat.us/pc';
-  const FISSURES_API = 'https://api.warframestat.us/pc/fissures';
-  const ARBITRATION_API = 'https://api.warframestat.us/pc/arbitration';
-  const OFFICIAL_WORLDSTATE_API = 'https://content.warframe.com/dynamic/worldState.php';
+  const WARFRAME_NEWS_API = 'https://api.warframestat.us/pc/news/';
+  const VAULT_TRADER_API = 'https://api.warframestat.us/pc/vaultTrader/';
+  const WARFRAMESTAT_PC_API = 'https://api.warframestat.us/pc/';
+  const FISSURES_API = 'https://api.warframestat.us/pc/fissures/';
+  const ARBITRATION_API = 'https://api.warframestat.us/pc/arbitration/';
+  const OFFICIAL_WORLDSTATE_API = 'https://api.warframe.com/cdn/worldState.php';
   const WIKI_BASE_URL = 'https://wiki.warframe.com';
   const WIKI_API_URLS = Object.freeze([
     'https://wiki.warframe.com/api.php',
@@ -164,6 +164,30 @@
   const FOLLIE_THUMB_IMAGE = 'assets/Follie_Thumb.png';
   const ENKAUS_RIFLE_THUMB_IMAGE = 'enkaus-0ffed0644c.png';
   const MANUAL_CHECKLIST_ITEMS = Object.freeze([
+    {
+      uniqueName: 'manual://amp/operator-generic',
+      name: 'Amp',
+      category: 'Amps',
+      type: 'Amp',
+      masterable: true,
+      tradable: false,
+      imageName: '',
+      description: 'Generic Operator Amp profile entry shown in Warframe Equipment. Added so the Amps category matches the in-game total of 10.',
+      wikiaUrl: 'https://wiki.warframe.com/w/Amp',
+      wikiAvailable: true,
+      drops: [],
+      components: [],
+      buildPrice: 0,
+      bpCost: 0,
+      marketCost: 0,
+      tags: ['amp', 'operator'],
+      productCategory: 'OperatorAmps',
+      isPrime: false,
+      vaulted: false,
+      hasVaultedStatus: false,
+      masteryReq: 0,
+      profileOnly: false
+    },
     {
       uniqueName: 'manual://warframe/follie',
       name: 'Follie',
@@ -3955,9 +3979,15 @@
     }
 
     relicLookupPromise = (async function() {
-      var resp = await fetch(API_URL);
-      if (!resp.ok) throw new Error('Failed to load relic lookup: HTTP ' + resp.status);
-      var data = await resp.json();
+      var data;
+      try {
+        var resp = await fetch(API_URL, { cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        data = await resp.json();
+      } catch (primaryErr) {
+        console.warn('Relic lookup primary failed, using WFCD Relics.json:', primaryErr.message);
+        data = await fetchWfcdSingleFile('Relics.json');
+      }
       var lookup = buildRelicProjectionLookup(data);
       relicProjectionLookup = lookup;
       saveRelicLookupCache(lookup);
@@ -4132,9 +4162,15 @@
     }
 
     relicDirectoryPromise = (async function() {
-      var resp = await fetch(API_URL);
-      if (!resp.ok) throw new Error('Failed to load relic catalog: HTTP ' + resp.status);
-      var data = await resp.json();
+      var data;
+      try {
+        var resp = await fetch(API_URL, { cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        data = await resp.json();
+      } catch (primaryErr) {
+        console.warn('Relic directory primary failed, using WFCD Relics.json:', primaryErr.message);
+        data = await fetchWfcdSingleFile('Relics.json');
+      }
 
       relicProjectionLookup = buildRelicProjectionLookup(data);
       saveRelicLookupCache(relicProjectionLookup);
@@ -4316,9 +4352,15 @@
     }
 
     arcaneDirectoryPromise = (async function() {
-      var resp = await fetch(API_URL);
-      if (!resp.ok) throw new Error('Failed to load arcane codex: HTTP ' + resp.status);
-      var data = await resp.json();
+      var data;
+      try {
+        var resp = await fetch(API_URL, { cache: 'no-store' });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        data = await resp.json();
+      } catch (primaryErr) {
+        console.warn('Arcane directory primary failed, using WFCD Arcanes.json:', primaryErr.message);
+        data = await fetchWfcdSingleFile('Arcanes.json');
+      }
       arcaneDirectory = buildArcaneDirectory(data);
       saveArcaneDirectoryCache(arcaneDirectory);
     })();
@@ -8191,6 +8233,389 @@
     return out;
   }
 
+  // ---------- DE Worldstate Fallback Translator ----------
+  // Translates Digital Extremes' raw worldState.php payload into the same shape
+  // returned by api.warframestat.us/pc, so the rest of the UI can render it.
+
+  var WFCD_WORLDSTATE_DATA_BASE = 'https://raw.githubusercontent.com/WFCD/warframe-worldstate-data/master/data/';
+  var deWorldstateLookups = {
+    solNodes: null,
+    missionTypes: null,
+    fissureModifiers: null,
+    factionsData: null,
+    syndicatesData: null,
+    sortieData: null,
+    languages: null
+  };
+  var deWorldstateLookupsPromise = null;
+
+  async function loadDeWorldstateLookups() {
+    if (deWorldstateLookups.solNodes && deWorldstateLookups.factionsData) {
+      return deWorldstateLookups;
+    }
+    if (deWorldstateLookupsPromise) return deWorldstateLookupsPromise;
+
+    deWorldstateLookupsPromise = (async function() {
+      var files = ['solNodes', 'missionTypes', 'fissureModifiers', 'factionsData', 'syndicatesData', 'sortieData', 'languages'];
+      await Promise.all(files.map(function(name) {
+        return fetch(WFCD_WORLDSTATE_DATA_BASE + name + '.json', { cache: 'force-cache' })
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(data) { deWorldstateLookups[name] = data || {}; })
+          .catch(function() { deWorldstateLookups[name] = {}; });
+      }));
+      return deWorldstateLookups;
+    })();
+    return deWorldstateLookupsPromise;
+  }
+
+  function deDateToIso(dateField) {
+    if (!dateField) return null;
+    if (dateField.$date && dateField.$date.$numberLong) {
+      var ms = parseInt(dateField.$date.$numberLong, 10);
+      if (Number.isFinite(ms) && ms > 0) return new Date(ms).toISOString();
+    }
+    if (typeof dateField === 'string') {
+      var parsed = Date.parse(dateField);
+      if (Number.isFinite(parsed) && parsed > 0) return new Date(parsed).toISOString();
+    }
+    return null;
+  }
+
+  function deLookupNode(nodeKey) {
+    var lookup = deWorldstateLookups.solNodes || {};
+    var entry = lookup[nodeKey];
+    if (!entry) return { node: nodeKey, enemy: '', missionType: '' };
+    return {
+      node: entry.value || nodeKey,
+      enemy: entry.enemy || '',
+      missionType: entry.type || ''
+    };
+  }
+
+  function deLookupMissionType(typeKey) {
+    var lookup = deWorldstateLookups.missionTypes || {};
+    var entry = lookup[typeKey];
+    return entry && entry.value ? entry.value : (typeKey || '').replace(/^MT_/, '').replace(/_/g, ' ');
+  }
+
+  function deLookupFaction(factionKey) {
+    var lookup = deWorldstateLookups.factionsData || {};
+    var entry = lookup[factionKey];
+    return entry && entry.value ? entry.value : (factionKey || '').replace(/^FC_/, '').replace(/_/g, ' ');
+  }
+
+  function deLookupFissureTier(modifier) {
+    var lookup = deWorldstateLookups.fissureModifiers || {};
+    var entry = lookup[modifier];
+    return entry && entry.value ? entry.value : 'Lith';
+  }
+
+  function deLookupFissureTierNum(modifier) {
+    var lookup = deWorldstateLookups.fissureModifiers || {};
+    var entry = lookup[modifier];
+    return entry && entry.num != null ? entry.num : 1;
+  }
+
+  function deLookupSyndicate(tag) {
+    var lookup = deWorldstateLookups.syndicatesData || {};
+    var entry = lookup[tag];
+    return entry && entry.name ? entry.name : tag;
+  }
+
+  function deLookupSortieMod(modKey, type) {
+    var lookup = deWorldstateLookups.sortieData || {};
+    var bucket = type === 'modifier' ? lookup.modifierTypes : (type === 'boss' ? lookup.bosses : null);
+    if (bucket && bucket[modKey]) return bucket[modKey];
+    if (lookup.modifierTypes && lookup.modifierTypes[modKey]) return lookup.modifierTypes[modKey];
+    return modKey;
+  }
+
+  function deLookupLanguage(path) {
+    if (!path) return '';
+    var lookup = deWorldstateLookups.languages || {};
+    var entry = lookup[path];
+    if (entry && entry.value) return entry.value;
+    // Try lowercase fallback
+    var lower = String(path).toLowerCase();
+    for (var key in lookup) {
+      if (key.toLowerCase() === lower) return lookup[key].value || path;
+    }
+    return path;
+  }
+
+  function deLookupItem(path) {
+    if (!path) return '';
+    // Pull a readable name from the last segment of the path
+    var segs = String(path).split('/');
+    var leaf = segs[segs.length - 1] || '';
+    leaf = leaf.replace(/^([A-Z])/, '$1').replace(/([a-z])([A-Z])/g, '$1 $2');
+    leaf = leaf.replace(/Blueprint$/i, 'BP').replace(/Component/i, '').trim();
+    return leaf;
+  }
+
+  function deTranslateFissures(missions) {
+    if (!Array.isArray(missions)) return [];
+    var now = Date.now();
+    return missions.map(function(m) {
+      var nodeInfo = deLookupNode(m.Node);
+      var expiryIso = deDateToIso(m.Expiry);
+      var activationIso = deDateToIso(m.Activation);
+      var expiryMs = expiryIso ? Date.parse(expiryIso) : 0;
+      var tier = deLookupFissureTier(m.Modifier);
+      return {
+        id: (m._id && m._id.$oid) || (m.Node + '-' + (expiryMs || 0)),
+        activation: activationIso,
+        expiry: expiryIso,
+        active: expiryMs > now,
+        startString: '',
+        eta: '',
+        node: nodeInfo.node,
+        nodeKey: m.Node,
+        missionType: deLookupMissionType(m.MissionType),
+        missionKey: m.MissionType,
+        enemy: nodeInfo.enemy,
+        enemyKey: nodeInfo.enemy,
+        tier: tier,
+        tierNum: deLookupFissureTierNum(m.Modifier),
+        expired: expiryMs <= now,
+        isStorm: !!m.ActiveMissionTier && /storm/i.test(m.ActiveMissionTier),
+        isHard: !!m.Hard
+      };
+    });
+  }
+
+  function deTranslateInvasions(invasions) {
+    if (!Array.isArray(invasions)) return [];
+    return invasions.filter(function(inv) {
+      return !inv.Completed;
+    }).map(function(inv) {
+      var nodeInfo = deLookupNode(inv.Node);
+      var goal = parseInt(inv.Goal, 10) || 0;
+      var count = parseInt(inv.Count, 10) || 0;
+      var completion = goal > 0 ? Math.min(100, Math.abs(count / goal * 100)) : 0;
+      return {
+        id: (inv._id && inv._id.$oid) || inv.Node,
+        activation: deDateToIso(inv.Activation),
+        node: nodeInfo.node,
+        nodeKey: inv.Node,
+        desc: deLookupLanguage(inv.LocTag) || 'Invasion',
+        attackingFaction: deLookupFaction(inv.Faction),
+        defendingFaction: deLookupFaction(inv.DefenderFaction),
+        completed: !!inv.Completed,
+        completion: completion,
+        count: count,
+        requiredRuns: 3,
+        attackerReward: { asString: deTranslateInvasionReward(inv.AttackerReward) },
+        defenderReward: { asString: deTranslateInvasionReward(inv.DefenderReward) }
+      };
+    });
+  }
+
+  function deTranslateInvasionReward(reward) {
+    if (!reward) return '';
+    var parts = [];
+    if (Array.isArray(reward.countedItems)) {
+      for (var i = 0; i < reward.countedItems.length; i++) {
+        var ci = reward.countedItems[i];
+        parts.push((ci.ItemCount || 1) + ' ' + deLookupItem(ci.ItemType));
+      }
+    }
+    if (reward.credits && reward.credits > 0) {
+      parts.push((reward.credits).toLocaleString() + ' Credits');
+    }
+    return parts.join(' + ') || '-';
+  }
+
+  function deTranslateSortie(sortie) {
+    if (!sortie) return null;
+    var expiryIso = deDateToIso(sortie.Expiry);
+    var activationIso = deDateToIso(sortie.Activation);
+    var expiryMs = expiryIso ? Date.parse(expiryIso) : 0;
+    var bossName = String(sortie.Boss || '').replace(/^SORTIE_BOSS_/, '').replace(/_/g, ' ');
+    var faction = '';
+    if (/AMBULAS|ALAD|JACKAL|RAPTOR|HYENA/.test(bossName)) faction = 'Corpus';
+    else if (/INFEST|MUTALIST/.test(bossName)) faction = 'Infested';
+    else faction = 'Grineer';
+
+    return {
+      id: (sortie._id && sortie._id.$oid) || ('sortie-' + expiryMs),
+      activation: activationIso,
+      expiry: expiryIso,
+      active: expiryMs > Date.now(),
+      rewardPool: 'Sortie Rewards',
+      variants: (sortie.Variants || []).map(function(v) {
+        var nodeInfo = deLookupNode(v.node);
+        return {
+          missionType: deLookupMissionType(v.missionType),
+          modifier: deLookupSortieMod(v.modifierType, 'modifier'),
+          modifierDescription: '',
+          node: nodeInfo.node,
+          boss: bossName
+        };
+      }),
+      boss: bossName,
+      faction: faction,
+      expired: expiryMs <= Date.now(),
+      eta: ''
+    };
+  }
+
+  function deTranslateArchonHunt(lite) {
+    if (!lite) return null;
+    var expiryIso = deDateToIso(lite.Expiry);
+    var activationIso = deDateToIso(lite.Activation);
+    var expiryMs = expiryIso ? Date.parse(expiryIso) : 0;
+    var bossName = String(lite.Boss || '').replace(/^SORTIE_BOSS_/, '').replace(/_/g, ' ');
+    return {
+      id: (lite._id && lite._id.$oid) || ('archon-' + expiryMs),
+      activation: activationIso,
+      expiry: expiryIso,
+      active: expiryMs > Date.now(),
+      rewardPool: 'Archon Sortie Rewards',
+      missions: (lite.Missions || []).map(function(m) {
+        var nodeInfo = deLookupNode(m.node);
+        return {
+          missionType: deLookupMissionType(m.missionType),
+          node: nodeInfo.node
+        };
+      }),
+      boss: bossName,
+      faction: 'Narmer',
+      expired: expiryMs <= Date.now(),
+      eta: ''
+    };
+  }
+
+  function deTranslateNightwave(season) {
+    if (!season) return null;
+    var expiryIso = deDateToIso(season.Expiry);
+    var activationIso = deDateToIso(season.Activation);
+    var expiryMs = expiryIso ? Date.parse(expiryIso) : 0;
+    var now = Date.now();
+
+    var challenges = (season.ActiveChallenges || []).filter(function(c) {
+      var cExpiry = deDateToIso(c.Expiry);
+      var cExp = cExpiry ? Date.parse(cExpiry) : 0;
+      return cExp > now;
+    }).map(function(c) {
+      var path = String(c.Challenge || '');
+      var leaf = path.split('/').pop() || '';
+      var title = leaf.replace(/^Season(Daily|Weekly|EliteWeekly)/i, '').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
+      return {
+        id: (c._id && c._id.$oid) || path,
+        activation: deDateToIso(c.Activation),
+        expiry: deDateToIso(c.Expiry),
+        active: true,
+        isDaily: !!c.Daily,
+        isElite: /elite/i.test(path),
+        title: title || 'Challenge',
+        desc: '',
+        reps: c.Daily ? 1000 : (/elite/i.test(path) ? 7000 : 4500)
+      };
+    });
+
+    return {
+      id: (season._id && season._id.$oid) || 'nightwave-current',
+      activation: activationIso,
+      expiry: expiryIso,
+      active: expiryMs > now,
+      season: season.Season || 0,
+      tag: season.AffiliationTag || '',
+      phase: season.Phase || 0,
+      params: season.Params || '',
+      possibleChallenges: [],
+      activeChallenges: challenges,
+      rewardTypes: []
+    };
+  }
+
+  function deTranslateVoidTrader(traders) {
+    if (!Array.isArray(traders) || traders.length === 0) return null;
+    // Find the active or next trader for the main hub
+    var trader = traders.find(function(t) { return /Mercury/i.test(t.Node || ''); }) || traders[0];
+    if (!trader) return null;
+    var activationIso = deDateToIso(trader.Activation);
+    var expiryIso = deDateToIso(trader.Expiry);
+    var activationMs = activationIso ? Date.parse(activationIso) : 0;
+    var expiryMs = expiryIso ? Date.parse(expiryIso) : 0;
+    var now = Date.now();
+    var active = activationMs <= now && expiryMs > now;
+
+    return {
+      id: (trader._id && trader._id.$oid) || 'voidTrader',
+      activation: activationIso,
+      expiry: expiryIso,
+      active: active,
+      character: trader.Character || "Baro Ki'Teer",
+      location: deLookupNode(trader.Node).node,
+      inventory: [],
+      psId: '',
+      endString: '',
+      startString: ''
+    };
+  }
+
+  function deTranslateAlerts(alerts) {
+    if (!Array.isArray(alerts)) return [];
+    var now = Date.now();
+    return alerts.map(function(a) {
+      var expiryIso = deDateToIso(a.Expiry);
+      var expiryMs = expiryIso ? Date.parse(expiryIso) : 0;
+      var info = a.MissionInfo || {};
+      var nodeInfo = deLookupNode(info.location);
+      return {
+        id: (a._id && a._id.$oid) || nodeInfo.node,
+        activation: deDateToIso(a.Activation),
+        expiry: expiryIso,
+        active: expiryMs > now,
+        mission: {
+          node: nodeInfo.node,
+          type: deLookupMissionType(info.missionType),
+          faction: deLookupFaction(info.faction),
+          reward: { asString: '' },
+          minEnemyLevel: info.minEnemyLevel || 0,
+          maxEnemyLevel: info.maxEnemyLevel || 0
+        },
+        rewardTypes: [],
+        expired: expiryMs <= now
+      };
+    });
+  }
+
+  function deTranslateWorldstate(de) {
+    if (!de) return {};
+    return {
+      timestamp: new Date().toISOString(),
+      news: [], // News not in DE feed in usable form
+      events: [], // Skip events, complex translation
+      alerts: deTranslateAlerts(de.Alerts),
+      sortie: deTranslateSortie(de.Sorties && de.Sorties[0]),
+      syndicateMissions: [],
+      fissures: deTranslateFissures(de.ActiveMissions),
+      globalUpgrades: [],
+      flashSales: [],
+      invasions: deTranslateInvasions(de.Invasions),
+      voidTrader: deTranslateVoidTrader(de.VoidTraders),
+      vaultTrader: null,
+      dailyDeals: [],
+      simaris: null,
+      conclaveChallenges: [],
+      persistentEnemies: [],
+      earthCycle: null,
+      cetusCycle: null,
+      vallisCycle: null,
+      cambionCycle: null,
+      duviriCycle: null,
+      nightwave: deTranslateNightwave(de.SeasonInfo),
+      arbitration: null,
+      kuva: [],
+      sentientOutposts: null,
+      steelPath: null,
+      archonHunt: deTranslateArchonHunt(de.LiteSorties && de.LiteSorties[0]),
+      __fromOfficialFallback: true
+    };
+  }
+
   async function fetchWorldstateActivityOverrides() {
     var out = {};
     var results = await Promise.allSettled([
@@ -8262,15 +8687,22 @@
       }
     }
 
-    // Official fallback: build a cycle snapshot from DE worldstate when
-    // community routes are unavailable in runtime.
-    if (!json[0] || !json[1] || !json[2] || !json[3]) {
+    // Comprehensive fallback: build the entire worldstate from the official DE feed
+    // when the warframestat API is down. This populates fissures, invasions, sortie,
+    // archon hunt, nightwave, void trader, and alerts in addition to cycles.
+    if (!worldData) {
       try {
+        // Note: DE's CDN rejects requests with ?_ts= cache-buster (returns 409).
+        // We rely on the cache: no-store header instead.
         var officialResp = await fetch(OFFICIAL_WORLDSTATE_API, { cache: 'no-store' });
         if (officialResp.ok) {
           var official = await officialResp.json();
-          var missions = Array.isArray(official && official.SyndicateMissions) ? official.SyndicateMissions : [];
-          var endlessChoices = Array.isArray(official && official.EndlessXpChoices) ? official.EndlessXpChoices : [];
+          await loadDeWorldstateLookups();
+          worldData = deTranslateWorldstate(official);
+
+          // Build cycle data from the same official source
+          var missions = Array.isArray(official.SyndicateMissions) ? official.SyndicateMissions : [];
+          var endlessChoices = Array.isArray(official.EndlessXpChoices) ? official.EndlessXpChoices : [];
 
           function getMissionByTag(tag) {
             for (var i = 0; i < missions.length; i++) {
@@ -8281,10 +8713,7 @@
           }
 
           function getExpiryIsoFromMission(mission) {
-            var ms = mission && mission.Expiry && mission.Expiry.$date && mission.Expiry.$date.$numberLong
-              ? parseInt(mission.Expiry.$date.$numberLong, 10)
-              : 0;
-            return ms > 0 ? new Date(ms).toISOString() : null;
+            return deDateToIso(mission && mission.Expiry);
           }
 
           var cetusMission = getMissionByTag('CetusSyndicate');
@@ -8295,7 +8724,6 @@
             var cetusExpiryIso = getExpiryIsoFromMission(cetusMission);
             var cetusExpiryMs = cetusExpiryIso ? Date.parse(cetusExpiryIso) : 0;
             var cetusRemaining = cetusExpiryMs > 0 ? Math.max(0, cetusExpiryMs - Date.now()) : 0;
-            // Cetus cycle approximation from known day/night cadence.
             var cetusState = cetusRemaining > (50 * 60 * 1000) ? 'day' : 'night';
             json[0] = {
               state: cetusState,
@@ -8345,9 +8773,15 @@
               ]
             };
           }
+
+          // Attach cycle data to the translated worldData so renderers see it
+          worldData.cetusCycle = json[0];
+          worldData.vallisCycle = json[1];
+          worldData.cambionCycle = json[2];
+          worldData.duviriCycle = json[3];
         }
       } catch (_officialErr) {
-        // Ignore and continue with remaining sources/previous snapshot.
+        // Ignore and continue with cached snapshot below.
       }
     }
 
@@ -8841,11 +9275,84 @@
       .filter(Boolean);
   }
 
+  // Fallback raw URLs from wfcd/warframe-items GitHub repo (used when warframestat API is down)
+  const WFCD_RAW_BASE = 'https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/';
+  const WFCD_FALLBACK_FILES = [
+    'Warframes.json',
+    'Primary.json',
+    'Secondary.json',
+    'Melee.json',
+    'Arch-Gun.json',
+    'Arch-Melee.json',
+    'Archwing.json',
+    'Sentinels.json',
+    'SentinelWeapons.json',
+    'Pets.json',
+    'Mods.json',
+    'Arcanes.json',
+    'Relics.json',
+    'Gear.json',
+    'Misc.json',
+    'Skins.json',
+    'Quests.json'
+  ];
+
+  async function fetchItemsFromWfcdFallback() {
+    var aggregated = [];
+    var anySucceeded = false;
+    for (var i = 0; i < WFCD_FALLBACK_FILES.length; i++) {
+      try {
+        var resp = await fetch(WFCD_RAW_BASE + WFCD_FALLBACK_FILES[i]);
+        if (!resp.ok) continue;
+        var part = await resp.json();
+        if (Array.isArray(part)) {
+          aggregated = aggregated.concat(part);
+          anySucceeded = true;
+        }
+      } catch (e) {
+        // skip this file
+      }
+    }
+    if (!anySucceeded) throw new Error('WFCD fallback also failed');
+    return aggregated;
+  }
+
+  // Cached single-file fetchers from WFCD - used by relic/arcane/prime loaders
+  // when the warframestat API is down
+  var wfcdSingleFileCache = Object.create(null);
+  async function fetchWfcdSingleFile(filename) {
+    if (wfcdSingleFileCache[filename]) return wfcdSingleFileCache[filename];
+    var resp = await fetch(WFCD_RAW_BASE + filename, { cache: 'force-cache' });
+    if (!resp.ok) throw new Error('WFCD ' + filename + ' HTTP ' + resp.status);
+    var data = await resp.json();
+    if (!Array.isArray(data)) throw new Error('WFCD ' + filename + ' invalid');
+    wfcdSingleFileCache[filename] = data;
+    return data;
+  }
+
+  // Fetch all items: tries warframestat /items first, falls back to WFCD aggregate
+  async function fetchAllItemsResilient() {
+    try {
+      var resp = await fetch(API_URL, { cache: 'no-store' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return await resp.json();
+    } catch (primaryErr) {
+      console.warn('Primary /items failed, using WFCD fallback:', primaryErr.message);
+      return await fetchItemsFromWfcdFallback();
+    }
+  }
+
   async function fetchLatestItemsFromApi() {
-    const response = await fetch(API_URL);
-    if (!response.ok) throw new Error('HTTP ' + response.status);
-    const data = await response.json();
-    return normalizeApiItems(data);
+    try {
+      const response = await fetch(API_URL);
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const data = await response.json();
+      return normalizeApiItems(data);
+    } catch (primaryErr) {
+      console.warn('Primary API failed, trying WFCD GitHub fallback:', primaryErr.message);
+      const fallbackData = await fetchItemsFromWfcdFallback();
+      return normalizeApiItems(fallbackData);
+    }
   }
 
   function areItemsEquivalent(left, right) {
@@ -12090,36 +12597,6 @@
     els.calculatorModal.classList.remove('hidden');
   });
 
-  if (els.cephalonSimarisBtn) {
-    els.cephalonSimarisBtn.addEventListener('click', function() {
-      openSimarisModal();
-    });
-  }
-
-  if (els.simarisModalClose) {
-    els.simarisModalClose.addEventListener('click', closeSimarisModal);
-  }
-
-  if (els.simarisModal) {
-    els.simarisModal.addEventListener('click', function(e) {
-      if (e.target === els.simarisModal) closeSimarisModal();
-    });
-  }
-
-  if (els.simarisSearchForm) {
-    els.simarisSearchForm.addEventListener('submit', function(e) {
-      e.preventDefault();
-      fetchSimarisQuery(els.simarisQueryInput ? els.simarisQueryInput.value : '');
-    });
-  }
-
-  if (els.simarisResultLink) {
-    els.simarisResultLink.addEventListener('click', function(e) {
-      e.preventDefault();
-      openExternalUrl(els.simarisResultLink.href);
-    });
-  }
-
   $('#modal-close').addEventListener('click', function() {
     els.calculatorModal.classList.add('hidden');
   });
@@ -12281,6 +12758,7 @@
       cycles: $('#cycles-panel'),
       starchart: $('#starchart-panel'),
       squad: $('#squad-finder-panel'),
+      compare: $('#compare-panel'),
       settings: $('#settings-page')
     };
   }
@@ -12288,6 +12766,7 @@
   function getCurrentPanelName() {
     var refs = getPanelRefs();
     if (refs.settings && !refs.settings.classList.contains('hidden')) return 'settings';
+    if (refs.compare && !refs.compare.classList.contains('hidden')) return 'compare';
     if (refs.squad && !refs.squad.classList.contains('hidden')) return 'squad';
     if (refs.starchart && !refs.starchart.classList.contains('hidden')) return 'starchart';
     if (refs.cycles && !refs.cycles.classList.contains('hidden')) return 'cycles';
@@ -12309,6 +12788,7 @@
     var cyclesPanel = refs.cycles;
     var starchartPanel = refs.starchart;
     var squadPanel = refs.squad;
+    var comparePanel = refs.compare;
     var settingsPage = refs.settings;
 
     var navMarket = $('#nav-market');
@@ -12319,9 +12799,12 @@
     var navCycles = $('#nav-cycles');
     var navStarchart = $('#nav-starchart');
     var navSquad = $('#nav-squad-finder');
+    var navCompare = $('#nav-compare');
 
     if (squadPanel) squadPanel.classList.add('hidden');
     if (navSquad) navSquad.classList.remove('active');
+    if (comparePanel) comparePanel.classList.add('hidden');
+    if (navCompare) navCompare.classList.remove('active');
 
     // Stop starchart animation when leaving that panel
     if (panel !== 'starchart' && window.warframeStarchart) {
@@ -12519,6 +13002,31 @@
       syncSquadRequirementOptions();
       syncSquadFarmTargetOptions();
       renderSquadBoard();
+    } else if (panel === 'compare') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
+      if (comparePanel) comparePanel.classList.remove('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
+      if (navCompare) navCompare.classList.add('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      initComparePanel();
+      // Always refresh top 10 in case items loaded since last visit
+      renderCompareTop10();
     } else if (panel === 'settings') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
@@ -12664,6 +13172,13 @@
   if (navSquadFinder) {
     navSquadFinder.addEventListener('click', function() {
       showPanel('squad', true);
+    });
+  }
+
+  var navCompareEl = $('#nav-compare');
+  if (navCompareEl) {
+    navCompareEl.addEventListener('click', function() {
+      showPanel('compare', true);
     });
   }
 
@@ -12850,6 +13365,927 @@
   renderSquadRequirementDraft();
   renderSquadBoard();
   startSquadServerPolling();
+  // ---------- Frame Comparison ----------
+  var compareInitialized = false;
+  var compareLeftFrame = null;
+  var compareRightFrame = null;
+  var compareFrameDetailCache = Object.create(null);
+  var compareFullFrameDataset = null;
+  var compareFullFrameDatasetPromise = null;
+
+  // Curated tier list with farming meta-difficulty notes (real community 2026 data)
+  var COMPARE_TOP10_FRAMES = [
+    { name: 'Saryn',    label: 'S-Tier · AoE Nuker' },
+    { name: 'Revenant', label: 'S-Tier · Immortal' },
+    { name: 'Dante',    label: 'S-Tier · Caster' },
+    { name: 'Wisp',     label: 'S-Tier · Buffer' },
+    { name: 'Mesa',     label: 'S-Tier · Gunslinger' },
+    { name: 'Octavia',  label: 'A-Tier · Endless' },
+    { name: 'Khora',    label: 'A-Tier · Loot Frame' },
+    { name: 'Nekros',   label: 'A-Tier · Looter' },
+    { name: 'Wukong',   label: 'A-Tier · Survivor' },
+    { name: 'Volt',     label: 'A-Tier · Speed' }
+  ];
+
+  // Hand-curated farming hints for the most popular frames - shown alongside drop data
+  var COMPARE_FARM_HINTS = {
+    'saryn': 'Quest reward from "The Glast Gambit" or buy from market. Easy.',
+    'revenant': 'Quest reward from "Mask of the Revenant". Easy.',
+    'dante': 'Drops from Deimos Disruption (Armatus, Rotation C). Medium farm.',
+    'wisp': 'Boss drop from The Ropalolyst (Jupiter). Medium - needs The Sacrifice quest done.',
+    'mesa': 'Boss drop from Mutalist Alad V (Eris). Medium - needs Mutalist Alad V Coordinates.',
+    'octavia': 'Quest reward from "Octavia\'s Anthem". Long quest, multiple parts to farm.',
+    'khora': 'Drops from Sanctuary Onslaught (Rotations A/B/C). Hard - low chance per rotation.',
+    'nekros': 'Boss drop from Lephantis (Deimos). Easy.',
+    'wukong': 'Drops from Tyl Regor on Mars (Yursa). Medium.',
+    'volt': 'Standard reward from Tenno Lab Clan research. Easy if in a clan.',
+    'excalibur': 'Starter frame or boss drop from Lt. Lech Kril (Mars). Easy.',
+    'rhino': 'Boss drop from Jackal (Venus). Easy.',
+    'frost': 'Boss drop from Lt. Lech Kril (Ceres). Easy.',
+    'mag': 'Starter frame or boss drop from Sergeant (Phobos). Easy.',
+    'loki': 'Standard reward from Tenno Lab Clan research. Easy if in a clan.',
+    'nova': 'Boss drop from Raptor (Europa). Medium.',
+    'nyx': 'Boss drop from Phorid (Infested invasions only). Medium - rotation dependent.',
+    'trinity': 'Boss drop from Ambulas (Pluto). Easy.',
+    'valkyr': 'Boss drop from Alad V (Themisto, Jupiter). Easy.',
+    'ash': 'Drops from Grineer Manics in Sortie/Steel Path missions. Hard.',
+    'ember': 'Boss drop from General Sargas Ruk (Saturn). Easy.',
+    'banshee': 'Standard reward from Tenno Lab Clan research. Easy if in a clan.',
+    'oberon': 'Drops from Eximus units in any mission. Easy but RNG-heavy.',
+    'mirage': 'Quest reward from "Hidden Messages". Medium.',
+    'limbo': 'Quest reward from "The Limbo Theorem". Medium.',
+    'mesa prime': 'From Axi/Meso/Neo/Lith relics. Currently vaulted - hard, requires trading.',
+    'volt prime': 'From void relics when active in Prime Resurgence rotation. Medium.',
+    'rhino prime': 'From void relics when active in Prime Resurgence rotation. Medium.'
+  };
+
+  function getWarframeItems() {
+    var fromAll = allItems.filter(function(item) {
+      return item.category === 'Warframes';
+    });
+    if (fromAll.length > 0) return fromAll;
+
+    // Fall back to the cached WFCD dataset if the main item list isn't loaded yet
+    if (compareFullFrameDataset && compareFullFrameDataset.length > 0) {
+      return compareFullFrameDataset.map(function(f) {
+        return {
+          uniqueName: f.uniqueName || '',
+          name: f.name || '',
+          category: 'Warframes',
+          imageName: f.imageName || ''
+        };
+      });
+    }
+    return [];
+  }
+
+  function getFrameImageUrl(item) {
+    if (!item) return '';
+    if (item.imageName && item.imageName.indexOf('assets/') === 0) return item.imageName;
+    // Use the app's standard image URL builder if available
+    if (typeof getItemImageUrl === 'function') {
+      var url = getItemImageUrl(item);
+      if (url) return url;
+    }
+    if (item.imageName) return CDN_URL + item.imageName;
+    return '';
+  }
+
+  // Compute a difficulty rating for farming a frame based on its drop data
+  function computeFarmDifficulty(frame) {
+    if (!frame) return { tier: 'medium', label: 'Unknown', icon: 'help' };
+
+    // Vaulted prime - mostly trading or relic radshares
+    if (frame.vaulted) {
+      return { tier: 'vaulted', label: 'Vaulted - Trade Only', icon: 'lock' };
+    }
+
+    // Get all drop chances for the warframe components
+    var components = Array.isArray(frame.components) ? frame.components : [];
+    var chances = [];
+    for (var i = 0; i < components.length; i++) {
+      var comp = components[i];
+      // Skip "Orokin Cell" or basic crafting resources
+      if (comp.name && /orokin cell|nano spore|salvage|alloy plate|circuits|plastids|cryotic|rubedo|ferrite|polymer/i.test(comp.name)) continue;
+      var drops = Array.isArray(comp.drops) ? comp.drops : [];
+      var bestChance = 0;
+      for (var j = 0; j < drops.length; j++) {
+        var c = parseFloat(drops[j].chance) || 0;
+        if (c > bestChance) bestChance = c;
+      }
+      if (bestChance > 0) chances.push(bestChance);
+    }
+
+    // Quest-only frames typically have empty drops on parts
+    var hasQuestSource = false;
+    for (var k = 0; k < components.length; k++) {
+      var compK = components[k];
+      var dropsK = Array.isArray(compK.drops) ? compK.drops : [];
+      for (var m = 0; m < dropsK.length; m++) {
+        var loc = String(dropsK[m].location || '').toLowerCase();
+        if (loc.indexOf('quest') !== -1 || loc.indexOf('complete ') !== -1 || loc.indexOf('cephalon') !== -1 || loc.indexOf('reward') !== -1) {
+          hasQuestSource = true;
+        }
+      }
+    }
+
+    if (hasQuestSource) {
+      return { tier: 'easy', label: 'Easy · Quest Reward', icon: 'auto_stories' };
+    }
+
+    if (chances.length === 0) {
+      // No drop chances and no quest - probably market-only or special
+      return { tier: 'market', label: 'Market / Special', icon: 'storefront' };
+    }
+
+    var avg = chances.reduce(function(a, b) { return a + b; }, 0) / chances.length;
+    var minChance = Math.min.apply(Math, chances);
+
+    if (frame.isPrime) {
+      // Active prime via relics
+      if (avg >= 25) return { tier: 'easy', label: 'Easy · Common Relics', icon: 'celebration' };
+      if (avg >= 11) return { tier: 'medium', label: 'Medium · Relic Farm', icon: 'auto_awesome_motion' };
+      return { tier: 'hard', label: 'Hard · Rare Relic Drops', icon: 'whatshot' };
+    }
+
+    if (minChance >= 30 || avg >= 50) return { tier: 'easy', label: 'Easy · Boss Drop', icon: 'sentiment_satisfied' };
+    if (minChance >= 15 || avg >= 25) return { tier: 'medium', label: 'Medium · Repeat Boss', icon: 'fitness_center' };
+    return { tier: 'hard', label: 'Hard · Low Drop Rate', icon: 'whatshot' };
+  }
+
+  // Pull a one-line farming hint from curated map or build from drop data
+  function getFarmHint(frame) {
+    if (!frame || !frame.name) return '';
+    var key = frame.name.toLowerCase();
+    if (COMPARE_FARM_HINTS[key]) return COMPARE_FARM_HINTS[key];
+
+    // Build a hint from the first non-resource component's drop location
+    var components = Array.isArray(frame.components) ? frame.components : [];
+    for (var i = 0; i < components.length; i++) {
+      var comp = components[i];
+      if (comp.name && /orokin cell|nano spore|salvage|alloy plate|circuits|plastids|cryotic|rubedo|ferrite|polymer|forma|argon/i.test(comp.name)) continue;
+      var drops = Array.isArray(comp.drops) ? comp.drops : [];
+      if (drops.length > 0 && drops[0].location) {
+        return 'Primary source: ' + drops[0].location;
+      }
+    }
+    return frame.isPrime ? 'Open Prime relics from the void.' : 'Buy from in-game market for platinum or farm via boss missions.';
+  }
+
+  // Format build time (in seconds) to a human-readable string
+  function formatBuildTime(seconds) {
+    if (!seconds || seconds < 1) return '-';
+    var hours = Math.round(seconds / 3600);
+    var days = Math.floor(hours / 24);
+    var remH = hours % 24;
+    if (days > 0 && remH > 0) return days + 'd ' + remH + 'h';
+    if (days > 0) return days + 'd';
+    return hours + 'h';
+  }
+
+  // Fetch the complete Warframes.json from the wfcd GitHub repo (includes abilities, passive, stats).
+  async function fetchFullFrameDataset() {
+    if (compareFullFrameDataset) return compareFullFrameDataset;
+    if (compareFullFrameDatasetPromise) return compareFullFrameDatasetPromise;
+
+    compareFullFrameDatasetPromise = (async function() {
+      var url = 'https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/Warframes.json';
+      try {
+        var resp = await fetch(url);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        var data = await resp.json();
+        if (Array.isArray(data)) {
+          compareFullFrameDataset = data;
+          return data;
+        }
+      } catch (e) {
+        console.warn('Failed to load WFCD Warframes.json:', e.message);
+      }
+      compareFullFrameDataset = [];
+      return [];
+    })();
+    return compareFullFrameDatasetPromise;
+  }
+
+  function initComparePanel() {
+    if (compareInitialized) return;
+    compareInitialized = true;
+
+    // Preload the WFCD warframes dataset so the dropdown and Top 10 work even if
+    // the main warframestat API is down.
+    fetchFullFrameDataset().then(function() {
+      renderCompareTop10();
+    });
+
+    var searchLeft = $('#compare-search-left');
+    var searchRight = $('#compare-search-right');
+    var dropdownLeft = $('#compare-dropdown-left');
+    var dropdownRight = $('#compare-dropdown-right');
+    var clearLeft = $('#compare-clear-left');
+    var clearRight = $('#compare-clear-right');
+
+    function bindSide(input, dropdown, clearBtn, side) {
+      if (!input) return;
+
+      input.addEventListener('input', function() {
+        renderCompareDropdown(input.value, dropdown, side);
+        if (clearBtn) clearBtn.classList.toggle('hidden', !input.value);
+      });
+      input.addEventListener('focus', function() {
+        renderCompareDropdown(input.value, dropdown, side);
+      });
+
+      if (clearBtn) {
+        clearBtn.addEventListener('click', function() {
+          input.value = '';
+          clearBtn.classList.add('hidden');
+          if (side === 'left') compareLeftFrame = null;
+          else compareRightFrame = null;
+          var resultEl = $('#compare-result');
+          if (resultEl) resultEl.classList.add('hidden');
+          input.focus();
+          renderCompareDropdown('', dropdown, side);
+        });
+      }
+    }
+
+    bindSide(searchLeft, dropdownLeft, clearLeft, 'left');
+    bindSide(searchRight, dropdownRight, clearRight, 'right');
+
+    document.addEventListener('click', function(e) {
+      if (dropdownLeft && !dropdownLeft.contains(e.target) && e.target !== searchLeft) {
+        dropdownLeft.classList.add('hidden');
+      }
+      if (dropdownRight && !dropdownRight.contains(e.target) && e.target !== searchRight) {
+        dropdownRight.classList.add('hidden');
+      }
+    });
+
+    renderCompareTop10();
+  }
+
+  function renderCompareDropdown(query, dropdown, side) {
+    if (!dropdown) return;
+    var frames = getWarframeItems();
+    var q = String(query || '').trim().toLowerCase();
+
+    var filtered = frames;
+    if (q) {
+      filtered = frames.filter(function(f) {
+        return f.name.toLowerCase().indexOf(q) !== -1;
+      });
+    }
+
+    // Sort alphabetically and limit
+    filtered = filtered.slice().sort(function(a, b) {
+      return a.name.localeCompare(b.name);
+    }).slice(0, 30);
+
+    dropdown.textContent = '';
+    dropdown.classList.remove('hidden');
+
+    if (filtered.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'compare-dropdown-empty';
+      empty.textContent = 'No matching warframes';
+      dropdown.appendChild(empty);
+      return;
+    }
+
+    for (var i = 0; i < filtered.length; i++) {
+      var frame = filtered[i];
+      var item = document.createElement('div');
+      item.className = 'compare-dropdown-item';
+      item.setAttribute('data-name', frame.name);
+
+      var img = document.createElement('img');
+      img.src = getFrameImageUrl(frame);
+      img.alt = frame.name;
+      img.onerror = function() { this.style.display = 'none'; };
+
+      var name = document.createElement('span');
+      name.textContent = frame.name;
+
+      item.appendChild(img);
+      item.appendChild(name);
+
+      (function(f, s) {
+        item.addEventListener('click', function() {
+          selectCompareFrame(f, s);
+          dropdown.classList.add('hidden');
+        });
+      })(frame, side);
+
+      dropdown.appendChild(item);
+    }
+  }
+
+  function selectCompareFrame(frame, side) {
+    if (side === 'left') {
+      compareLeftFrame = frame;
+      var searchLeft = $('#compare-search-left');
+      var clearLeft = $('#compare-clear-left');
+      if (searchLeft) searchLeft.value = frame.name;
+      if (clearLeft) clearLeft.classList.remove('hidden');
+    } else {
+      compareRightFrame = frame;
+      var searchRight = $('#compare-search-right');
+      var clearRight = $('#compare-clear-right');
+      if (searchRight) searchRight.value = frame.name;
+      if (clearRight) clearRight.classList.remove('hidden');
+    }
+
+    if (compareLeftFrame && compareRightFrame) {
+      loadCompareDetails(compareLeftFrame, compareRightFrame);
+    }
+  }
+
+  async function fetchFrameDetails(frame) {
+    var key = frame.uniqueName || frame.name;
+    if (compareFrameDetailCache[key]) return compareFrameDetailCache[key];
+
+    // Try the wfcd GitHub dataset first (more reliable than the warframestat API)
+    try {
+      var dataset = await fetchFullFrameDataset();
+      if (dataset && dataset.length > 0) {
+        var match = dataset.find(function(f) {
+          return f && (
+            (f.uniqueName && f.uniqueName === frame.uniqueName) ||
+            (f.name && frame.name && f.name.toLowerCase() === frame.name.toLowerCase())
+          );
+        });
+        if (match) {
+          compareFrameDetailCache[key] = match;
+          return match;
+        }
+      }
+    } catch (e) {
+      // dataset fetch failed, try API next
+    }
+
+    // Fall back to the warframestat API
+    try {
+      var searchName = frame.name.toLowerCase().replace(/\s+/g, '-');
+      var resp = await fetch('https://api.warframestat.us/items/' + encodeURIComponent(searchName));
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      var data = await resp.json();
+      compareFrameDetailCache[key] = data;
+      return data;
+    } catch (err) {
+      // Last resort: use the basic item data we already have
+      compareFrameDetailCache[key] = frame;
+      return frame;
+    }
+  }
+
+  async function loadCompareDetails(leftFrame, rightFrame) {
+    var resultEl = $('#compare-result');
+    if (!resultEl) return;
+
+    resultEl.classList.remove('hidden');
+
+    var leftDetail = await fetchFrameDetails(leftFrame);
+    var rightDetail = await fetchFrameDetails(rightFrame);
+
+    renderCompareHeader(leftDetail, rightDetail);
+    renderCompareStats(leftDetail, rightDetail);
+    renderComparePassive(leftDetail, rightDetail);
+    renderCompareAbilities(leftDetail, rightDetail);
+    renderComparePolarities(leftDetail, rightDetail);
+    renderCompareFarming(leftDetail, rightDetail);
+    renderCompareBuild(leftDetail, rightDetail);
+
+    // Scroll to result
+    resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function renderCompareHeader(left, right) {
+    var imgLeft = $('#compare-img-left');
+    var imgRight = $('#compare-img-right');
+    var nameLeft = $('#compare-name-left');
+    var nameRight = $('#compare-name-right');
+    var descLeft = $('#compare-desc-left');
+    var descRight = $('#compare-desc-right');
+
+    if (imgLeft) {
+      imgLeft.src = getFrameImageUrl(left);
+      imgLeft.alt = left.name;
+    }
+    if (imgRight) {
+      imgRight.src = getFrameImageUrl(right);
+      imgRight.alt = right.name;
+    }
+    if (nameLeft) nameLeft.textContent = left.name || '';
+    if (nameRight) nameRight.textContent = right.name || '';
+    if (descLeft) descLeft.textContent = cleanDisplayText(left.description || '');
+    if (descRight) descRight.textContent = cleanDisplayText(right.description || '');
+  }
+
+  function renderCompareStats(left, right) {
+    var grid = $('#compare-stats-grid');
+    if (!grid) return;
+    grid.textContent = '';
+
+    var stats = [
+      { key: 'health', label: 'Health' },
+      { key: 'shield', label: 'Shield' },
+      { key: 'armor', label: 'Armor' },
+      { key: 'power', label: 'Energy', altKey: 'energy' },
+      { key: 'sprint', label: 'Sprint Speed', altKey: 'sprintSpeed' },
+      { key: 'masteryReq', label: 'Mastery Req' }
+    ];
+
+    for (var i = 0; i < stats.length; i++) {
+      var stat = stats[i];
+      var leftVal = left[stat.key] != null ? left[stat.key] : (stat.altKey ? left[stat.altKey] : null);
+      var rightVal = right[stat.key] != null ? right[stat.key] : (stat.altKey ? right[stat.altKey] : null);
+
+      if (leftVal == null && rightVal == null) continue;
+
+      var leftNum = parseFloat(leftVal) || 0;
+      var rightNum = parseFloat(rightVal) || 0;
+
+      var row = document.createElement('div');
+      row.className = 'compare-stat-row';
+
+      var leftSpan = document.createElement('span');
+      leftSpan.className = 'compare-stat-value left';
+      leftSpan.textContent = leftVal != null ? leftVal : '-';
+
+      var labelSpan = document.createElement('span');
+      labelSpan.className = 'compare-stat-label';
+      labelSpan.textContent = stat.label;
+
+      var rightSpan = document.createElement('span');
+      rightSpan.className = 'compare-stat-value right';
+      rightSpan.textContent = rightVal != null ? rightVal : '-';
+
+      // Highlight winner (higher is better for all stats except masteryReq)
+      if (leftNum !== rightNum && stat.key !== 'masteryReq') {
+        if (leftNum > rightNum) {
+          leftSpan.classList.add('winner');
+          rightSpan.classList.add('loser');
+        } else {
+          rightSpan.classList.add('winner');
+          leftSpan.classList.add('loser');
+        }
+      }
+
+      row.appendChild(leftSpan);
+      row.appendChild(labelSpan);
+      row.appendChild(rightSpan);
+      grid.appendChild(row);
+    }
+  }
+
+  function renderComparePassive(left, right) {
+    var passiveLeft = $('#compare-passive-left');
+    var passiveRight = $('#compare-passive-right');
+
+    var leftPassive = left.passiveDescription || left.passive || 'No passive data available';
+    var rightPassive = right.passiveDescription || right.passive || 'No passive data available';
+
+    if (passiveLeft) passiveLeft.textContent = cleanDisplayText(leftPassive);
+    if (passiveRight) passiveRight.textContent = cleanDisplayText(rightPassive);
+  }
+
+  function renderCompareAbilities(left, right) {
+    var grid = $('#compare-abilities-grid');
+    if (!grid) return;
+    grid.textContent = '';
+
+    var leftAbilities = left.abilities || [];
+    var rightAbilities = right.abilities || [];
+    var maxLen = Math.max(leftAbilities.length, rightAbilities.length, 4);
+
+    for (var i = 0; i < maxLen; i++) {
+      var la = leftAbilities[i] || {};
+      var ra = rightAbilities[i] || {};
+
+      var row = document.createElement('div');
+      row.className = 'compare-ability-row';
+
+      // Left ability
+      var leftCard = document.createElement('div');
+      leftCard.className = 'compare-ability-card left';
+
+      var leftName = document.createElement('div');
+      leftName.className = 'compare-ability-name';
+      leftName.textContent = la.name || '-';
+
+      var leftDesc = document.createElement('div');
+      leftDesc.className = 'compare-ability-desc';
+      leftDesc.textContent = cleanDisplayText(la.description || '');
+
+      leftCard.appendChild(leftName);
+      leftCard.appendChild(leftDesc);
+
+      // Number badge
+      var numBadge = document.createElement('div');
+      numBadge.className = 'compare-ability-number';
+      numBadge.textContent = (i + 1);
+
+      // Right ability
+      var rightCard = document.createElement('div');
+      rightCard.className = 'compare-ability-card right';
+
+      var rightName = document.createElement('div');
+      rightName.className = 'compare-ability-name';
+      rightName.textContent = ra.name || '-';
+
+      var rightDesc = document.createElement('div');
+      rightDesc.className = 'compare-ability-desc';
+      rightDesc.textContent = cleanDisplayText(ra.description || '');
+
+      rightCard.appendChild(rightName);
+      rightCard.appendChild(rightDesc);
+
+      row.appendChild(leftCard);
+      row.appendChild(numBadge);
+      row.appendChild(rightCard);
+      grid.appendChild(row);
+    }
+  }
+
+  function renderComparePolarities(left, right) {
+    var container = $('#compare-polarities-row');
+    if (!container) return;
+    container.textContent = '';
+
+    function buildCard(frame) {
+      var card = document.createElement('div');
+      card.className = 'compare-polarity-card';
+
+      var title = document.createElement('div');
+      title.className = 'compare-polarity-title';
+      title.textContent = frame.name || '';
+      card.appendChild(title);
+
+      // Aura row
+      var auraRow = document.createElement('div');
+      auraRow.className = 'compare-polarity-row';
+      var auraLabel = document.createElement('span');
+      auraLabel.className = 'compare-polarity-row-label';
+      auraLabel.textContent = 'Aura';
+      var auraVal = document.createElement('span');
+      auraVal.className = 'compare-polarity-row-value';
+      var auraText = frame.aura || frame.auraPolarity || '';
+      if (auraText) {
+        var auraPill = document.createElement('span');
+        auraPill.className = 'compare-polarity-pill aura';
+        auraPill.textContent = auraText;
+        auraVal.appendChild(auraPill);
+      } else {
+        auraVal.textContent = 'None';
+      }
+      auraRow.appendChild(auraLabel);
+      auraRow.appendChild(auraVal);
+      card.appendChild(auraRow);
+
+      // Polarities row
+      var polRow = document.createElement('div');
+      polRow.className = 'compare-polarity-row';
+      var polLabel = document.createElement('span');
+      polLabel.className = 'compare-polarity-row-label';
+      polLabel.textContent = 'Polarities';
+      var polVal = document.createElement('span');
+      polVal.className = 'compare-polarity-row-value';
+      var polarities = frame.polarities || [];
+      if (polarities.length > 0) {
+        for (var i = 0; i < polarities.length; i++) {
+          var pill = document.createElement('span');
+          pill.className = 'compare-polarity-pill';
+          pill.textContent = polarities[i];
+          polVal.appendChild(pill);
+        }
+      } else {
+        polVal.textContent = 'None';
+      }
+      polRow.appendChild(polLabel);
+      polRow.appendChild(polVal);
+      card.appendChild(polRow);
+
+      // Mastery requirement row
+      if (frame.masteryReq != null) {
+        var mrRow = document.createElement('div');
+        mrRow.className = 'compare-polarity-row';
+        var mrLabel = document.createElement('span');
+        mrLabel.className = 'compare-polarity-row-label';
+        mrLabel.textContent = 'Mastery';
+        var mrVal = document.createElement('span');
+        mrVal.className = 'compare-polarity-row-value';
+        mrVal.textContent = 'MR ' + (frame.masteryReq || 0);
+        mrRow.appendChild(mrLabel);
+        mrRow.appendChild(mrVal);
+        card.appendChild(mrRow);
+      }
+
+      return card;
+    }
+
+    container.appendChild(buildCard(left));
+    container.appendChild(buildCard(right));
+  }
+
+  function renderCompareFarming(left, right) {
+    var container = $('#compare-farming-row');
+    if (!container) return;
+    container.textContent = '';
+
+    function buildFarmCard(frame) {
+      var card = document.createElement('div');
+      card.className = 'compare-farming-card';
+
+      // Frame name
+      var name = document.createElement('div');
+      name.className = 'compare-farming-frame-name';
+      name.textContent = frame.name || '';
+      card.appendChild(name);
+
+      // Difficulty badge
+      var diff = computeFarmDifficulty(frame);
+      var badge = document.createElement('div');
+      badge.className = 'compare-difficulty-badge ' + diff.tier;
+      var icon = document.createElement('span');
+      icon.className = 'material-icons-round';
+      icon.textContent = diff.icon;
+      badge.appendChild(icon);
+      var lbl = document.createElement('span');
+      lbl.textContent = diff.label;
+      badge.appendChild(lbl);
+      card.appendChild(badge);
+
+      // Source / hint paragraph
+      var source = document.createElement('div');
+      source.className = 'compare-farming-source';
+      var srcLabel = document.createElement('span');
+      srcLabel.className = 'compare-farming-source-label';
+      srcLabel.textContent = 'Where to Farm';
+      source.appendChild(srcLabel);
+      var srcText = document.createElement('div');
+      srcText.textContent = getFarmHint(frame);
+      source.appendChild(srcText);
+      card.appendChild(source);
+
+      // Component drop list (top 4 by chance)
+      var components = Array.isArray(frame.components) ? frame.components : [];
+      var partRows = [];
+      for (var i = 0; i < components.length; i++) {
+        var comp = components[i];
+        if (!comp || !comp.name) continue;
+        // Skip basic resources
+        if (/orokin cell|nano spore|salvage|alloy plate|circuits|plastids|cryotic|rubedo|ferrite|polymer|forma blueprint|argon|control module|gallium|morphics|neurodes|neural sensors/i.test(comp.name)) continue;
+
+        var drops = Array.isArray(comp.drops) ? comp.drops : [];
+        if (drops.length === 0) continue;
+
+        // Pick the highest-chance drop
+        var best = drops[0];
+        for (var d = 1; d < drops.length; d++) {
+          if (parseFloat(drops[d].chance) > parseFloat(best.chance)) best = drops[d];
+        }
+
+        partRows.push({
+          name: comp.name,
+          location: best.location || '-',
+          chance: best.chance != null ? best.chance + '%' : '-'
+        });
+      }
+
+      if (partRows.length > 0) {
+        var listLabel = document.createElement('span');
+        listLabel.className = 'compare-farming-source-label';
+        listLabel.style.marginTop = '6px';
+        listLabel.textContent = 'Best Drop Per Component';
+        card.appendChild(listLabel);
+
+        for (var p = 0; p < Math.min(partRows.length, 5); p++) {
+          var row = document.createElement('div');
+          row.className = 'compare-farming-component';
+
+          var nameSpan = document.createElement('span');
+          nameSpan.className = 'compare-farming-component-name';
+          nameSpan.textContent = partRows[p].name;
+
+          var locSpan = document.createElement('span');
+          locSpan.className = 'compare-farming-component-loc';
+          locSpan.textContent = partRows[p].location;
+
+          var chanceSpan = document.createElement('span');
+          chanceSpan.className = 'compare-farming-component-chance';
+          chanceSpan.textContent = partRows[p].chance;
+
+          row.appendChild(nameSpan);
+          row.appendChild(locSpan);
+          row.appendChild(chanceSpan);
+          card.appendChild(row);
+        }
+      }
+
+      return card;
+    }
+
+    container.appendChild(buildFarmCard(left));
+    container.appendChild(buildFarmCard(right));
+  }
+
+  function renderCompareBuild(left, right) {
+    var container = $('#compare-build-row');
+    if (!container) return;
+    container.textContent = '';
+
+    function buildBuildCard(frame) {
+      var card = document.createElement('div');
+      card.className = 'compare-build-card';
+
+      var name = document.createElement('div');
+      name.className = 'compare-build-frame-name';
+      name.textContent = frame.name || '';
+      card.appendChild(name);
+
+      var stats = [
+        {
+          label: 'Build Cost',
+          value: frame.buildPrice ? frame.buildPrice.toLocaleString() : '-',
+          icon: 'savings',
+          unit: ' Credits'
+        },
+        {
+          label: 'Build Time',
+          value: formatBuildTime(frame.buildTime),
+          icon: 'schedule'
+        },
+        {
+          label: 'Rush Cost',
+          value: frame.skipBuildTimePrice ? frame.skipBuildTimePrice : '-',
+          icon: 'bolt',
+          unit: ' Plat'
+        },
+        {
+          label: 'Market Cost',
+          value: frame.marketCost ? frame.marketCost : (frame.isPrime ? 'Prime · Trade Only' : '-'),
+          icon: 'storefront',
+          unit: frame.marketCost ? ' Plat' : ''
+        },
+        {
+          label: 'Blueprint Cost',
+          value: frame.bpCost ? frame.bpCost.toLocaleString() : (frame.isPrime ? 'Relic Drop' : '-'),
+          icon: 'description',
+          unit: frame.bpCost ? ' Credits' : ''
+        },
+        {
+          label: 'Released',
+          value: frame.releaseDate || (frame.introduced && frame.introduced.date) || '-',
+          icon: 'event'
+        }
+      ];
+
+      for (var i = 0; i < stats.length; i++) {
+        var stat = stats[i];
+        var row = document.createElement('div');
+        row.className = 'compare-build-stat';
+
+        var labelEl = document.createElement('span');
+        labelEl.className = 'compare-build-stat-label';
+        labelEl.textContent = stat.label;
+
+        var valueEl = document.createElement('span');
+        valueEl.className = 'compare-build-stat-value';
+        var iconEl = document.createElement('span');
+        iconEl.className = 'material-icons-round';
+        iconEl.textContent = stat.icon;
+        valueEl.appendChild(iconEl);
+        var textNode = document.createTextNode(stat.value + (stat.unit || ''));
+        valueEl.appendChild(textNode);
+
+        row.appendChild(labelEl);
+        row.appendChild(valueEl);
+        card.appendChild(row);
+      }
+
+      return card;
+    }
+
+    container.appendChild(buildBuildCard(left));
+    container.appendChild(buildBuildCard(right));
+  }
+
+  function renderCompareTop10() {
+    var grid = $('#compare-top10-grid');
+    if (!grid) return;
+    grid.textContent = '';
+
+    var frames = getWarframeItems();
+
+    for (var i = 0; i < COMPARE_TOP10_FRAMES.length; i++) {
+      var entry = COMPARE_TOP10_FRAMES[i];
+      var frameName = entry.name;
+      var frameLabel = entry.label;
+      var frame = null;
+      // Try direct match first, then case-insensitive
+      for (var fi = 0; fi < frames.length; fi++) {
+        if (frames[fi].name && frames[fi].name.toLowerCase() === frameName.toLowerCase()) {
+          frame = frames[fi];
+          break;
+        }
+      }
+
+      var card = document.createElement('div');
+      card.className = 'compare-top10-card';
+      card.setAttribute('data-frame', frameName);
+
+      var rank = document.createElement('span');
+      rank.className = 'compare-top10-rank';
+      rank.textContent = '#' + (i + 1);
+
+      var imgWrap = document.createElement('div');
+      imgWrap.className = 'compare-top10-img-wrap';
+
+      var img = document.createElement('img');
+      img.className = 'compare-top10-img';
+      // Build the CDN URL for the warframe image
+      var cdnImageUrl = '';
+      if (frame && frame.imageName) {
+        cdnImageUrl = getFrameImageUrl(frame);
+      } else if (compareFullFrameDataset) {
+        // Try to find this frame in the WFCD dataset to grab its imageName
+        var wfcdMatch = null;
+        for (var di = 0; di < compareFullFrameDataset.length; di++) {
+          if (compareFullFrameDataset[di].name && compareFullFrameDataset[di].name.toLowerCase() === frameName.toLowerCase()) {
+            wfcdMatch = compareFullFrameDataset[di];
+            break;
+          }
+        }
+        if (wfcdMatch && wfcdMatch.imageName) {
+          cdnImageUrl = CDN_URL + wfcdMatch.imageName;
+        } else {
+          cdnImageUrl = CDN_URL + frameName.replace(/\s+/g, '_') + '.png';
+        }
+      } else {
+        cdnImageUrl = CDN_URL + frameName.replace(/\s+/g, '_') + '.png';
+      }
+      img.src = cdnImageUrl;
+      img.alt = frameName;
+      // Show a fallback icon if the image fails
+      img.onerror = function() {
+        this.style.display = 'none';
+        var parentWrap = this.parentNode;
+        if (parentWrap && !parentWrap.querySelector('.compare-top10-fallback')) {
+          var fallback = document.createElement('span');
+          fallback.className = 'material-icons-round compare-top10-fallback';
+          fallback.style.fontSize = '48px';
+          fallback.style.color = 'var(--gold)';
+          fallback.style.opacity = '0.6';
+          fallback.textContent = 'person';
+          parentWrap.appendChild(fallback);
+        }
+      };
+
+      imgWrap.appendChild(img);
+
+      var name = document.createElement('span');
+      name.className = 'compare-top10-name';
+      name.textContent = frameName;
+
+      var usage = document.createElement('span');
+      usage.className = 'compare-top10-usage';
+      usage.textContent = frameLabel;
+
+      card.appendChild(rank);
+      card.appendChild(imgWrap);
+      card.appendChild(name);
+      card.appendChild(usage);
+
+      (function(f, fn) {
+        card.addEventListener('click', function() {
+          var targetFrame = f || { name: fn, category: 'Warframes', imageName: '' };
+          if (!compareLeftFrame) {
+            selectCompareFrame(targetFrame, 'left');
+          } else if (!compareRightFrame) {
+            selectCompareFrame(targetFrame, 'right');
+            // Scroll to the result after both are selected
+            setTimeout(function() {
+              var resultEl = $('#compare-result');
+              if (resultEl && !resultEl.classList.contains('hidden')) {
+                resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }
+            }, 200);
+          } else {
+            // Replace left and shift
+            compareLeftFrame = compareRightFrame;
+            var searchLeft = $('#compare-search-left');
+            var clearLeft = $('#compare-clear-left');
+            if (searchLeft) searchLeft.value = compareLeftFrame.name;
+            if (clearLeft) clearLeft.classList.remove('hidden');
+            selectCompareFrame(targetFrame, 'right');
+          }
+        });
+      })(frame, frameName);
+
+      grid.appendChild(card);
+    }
+  }
+
   loadItems();
 
 })();
