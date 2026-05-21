@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="wfui">
 
 <head>
   <meta charset="UTF-8">
@@ -7,7 +7,7 @@
   <title>Warframe Companion App</title>
   <link rel="stylesheet" href="styles.css">
   <link
-    href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap"
+    href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Roboto:wght@400;500;700;900&display=swap"
     rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
 </head>
@@ -155,12 +155,6 @@
         <button class="nav-item" id="nav-compare" data-panel="compare">
           <span class="material-icons-round">compare_arrows</span>
           <span class="nav-text">Compare Frames</span>
-        </button>
-
-        <div class="nav-section-label" style="margin-top: 16px;">RECRUITING</div>
-        <button class="nav-item" id="nav-squad-finder" data-panel="squad-finder">
-          <span class="material-icons-round">groups</span>
-          <span class="nav-text">Looking for Player</span>
         </button>
 
         <div class="nav-section-label" style="margin-top: 16px;">TOOLS</div>
@@ -756,141 +750,6 @@
       </div>
     </div>
 
-    <!-- Squad Finder Panel (hidden by default) -->
-    <div class="squad-finder-panel hidden" id="squad-finder-panel">
-      <div class="content-topbar squad-topbar">
-        <div class="prime-topbar-title-wrap">
-          <h1 class="category-title">Looking For Player</h1>
-          <span class="category-count" id="squad-count-text">Local recruiting board</span>
-        </div>
-        <div class="topbar-actions">
-          <div class="squad-server-pill is-checking" id="squad-server-pill" title="Squad server connection">
-            <span class="squad-server-dot"></span>
-            <span class="material-icons-round">cloud_sync</span>
-            <span id="squad-server-text">Checking server</span>
-          </div>
-          <button class="btn btn-secondary" id="btn-squad-refresh" type="button">
-            <span class="material-icons-round">refresh</span>
-            Refresh
-          </button>
-          <button class="btn btn-primary" id="btn-squad-create-toggle" type="button">
-            <span class="material-icons-round">group_add</span>
-            Create Squad
-          </button>
-        </div>
-      </div>
-
-      <div class="squad-create-shell hidden" id="squad-create-shell" role="dialog" aria-modal="true" aria-labelledby="squad-create-title">
-        <form class="squad-create-form" id="squad-create-form" autocomplete="off">
-          <div class="squad-create-head">
-            <div>
-              <h2 id="squad-create-title">Create Squad</h2>
-              <span id="squad-create-status">Ready to recruit</span>
-            </div>
-            <button class="squad-icon-btn" id="btn-squad-form-close" type="button" aria-label="Close create squad">
-              <span class="material-icons-round">close</span>
-            </button>
-          </div>
-
-          <div class="squad-form-grid">
-            <label class="squad-field">
-              <span>Warframe IGN</span>
-              <input type="text" id="squad-ign-input" maxlength="32" placeholder="Your in-game name">
-            </label>
-
-            <label class="squad-field">
-              <span>Your MR</span>
-              <input type="number" id="squad-mr-input" min="0" max="40" step="1" placeholder="0">
-            </label>
-
-            <label class="squad-field">
-              <span>Required MR</span>
-              <input type="number" id="squad-required-mr-input" min="0" max="40" step="1" placeholder="0">
-            </label>
-
-            <label class="squad-field squad-field-wide">
-              <span>Mission</span>
-              <input type="text" id="squad-mission-input" list="squad-mission-options" maxlength="80"
-                placeholder="Search Hydron, Steel Circuit, Eidolon Hunt...">
-              <datalist id="squad-mission-options"></datalist>
-              <div class="squad-mission-slider" id="squad-mission-slider" aria-label="Suggested missions"></div>
-            </label>
-
-            <label class="squad-field squad-field-wide">
-              <span>Want To Farm</span>
-              <input type="text" id="squad-farm-target-input" list="squad-farm-target-options" maxlength="80"
-                placeholder="Choose a mod, weapon, frame, arcane, relic, or item...">
-              <datalist id="squad-farm-target-options"></datalist>
-            </label>
-
-            <div class="squad-field squad-field-wide">
-              <span>Mission Type</span>
-              <div class="squad-mode-toggle" role="radiogroup" aria-label="Mission type">
-                <label>
-                  <input type="radio" name="squad-mission-mode" value="normal" checked>
-                  <span>Normal</span>
-                </label>
-                <label>
-                  <input type="radio" name="squad-mission-mode" value="steel">
-                  <span>Steel Path</span>
-                </label>
-              </div>
-            </div>
-
-            <div class="squad-field squad-field-wide">
-              <span>Requirements</span>
-              <div class="squad-requirement-row">
-                <input type="text" id="squad-requirement-input" list="squad-item-options"
-                  placeholder="Warframe, weapon, or mod...">
-                <datalist id="squad-item-options"></datalist>
-                <button class="btn btn-secondary" id="btn-squad-add-requirement" type="button">
-                  <span class="material-icons-round">add</span>
-                  Add
-                </button>
-              </div>
-              <div class="squad-requirement-draft" id="squad-requirement-draft"></div>
-            </div>
-
-            <label class="squad-field squad-field-wide">
-              <span>Note</span>
-              <textarea id="squad-note-input" rows="3" maxlength="180" placeholder="Optional plan, rotation, role, or relic note"></textarea>
-            </label>
-          </div>
-
-          <div class="squad-form-actions">
-            <button class="btn btn-secondary" id="btn-squad-clear-form" type="button">
-              <span class="material-icons-round">mop</span>
-              Clear
-            </button>
-            <button class="btn btn-primary" id="btn-squad-save" type="submit">
-              <span class="material-icons-round">campaign</span>
-              Post Squad
-            </button>
-          </div>
-        </form>
-      </div>
-
-      <div class="squad-finder-content" id="squad-finder-content">
-        <section class="squad-board-controls">
-          <div class="search-container squad-search-container">
-            <span class="material-icons-round search-icon">search</span>
-            <input type="text" class="search-input" id="squad-search-input"
-              placeholder="Search recruiter, mission, or requirement..." autocomplete="off">
-            <button class="search-clear hidden" id="squad-search-clear" type="button" aria-label="Clear squad search">
-              <span class="material-icons-round">close</span>
-            </button>
-          </div>
-          <div class="squad-filter-group" role="tablist" aria-label="Squad mission filter">
-            <button class="squad-filter-btn active" data-squad-filter="all" type="button">All</button>
-            <button class="squad-filter-btn" data-squad-filter="normal" type="button">Normal</button>
-            <button class="squad-filter-btn" data-squad-filter="steel" type="button">Steel Path</button>
-          </div>
-        </section>
-
-        <section class="squad-board-grid" id="squad-board-grid"></section>
-      </div>
-    </div>
-
     <!-- Solar System Star Chart Panel (hidden by default) -->
     <div class="starchart-panel hidden is-under-construction" id="starchart-panel">
       <canvas id="starchart-stars" class="starchart-stars-canvas"></canvas>
@@ -1144,16 +1003,21 @@
           </label>
         </div>
 
-        <div class="settings-card profile-fetch-card">
+        <div class="settings-card profile-sync-settings-card">
           <h2 class="settings-card-title">Profile Sync</h2>
-          <div class="settings-action-row profile-fetch-row">
+          <div class="profile-sync-action-row">
             <div>
-              <div class="settings-toggle-title">Automatic Profile Sync</div>
+              <div class="settings-toggle-title">Manual Profile Sync</div>
               <div class="settings-toggle-subtitle">
-                The app watches for Warframe, reads your local EE.log account id, then imports item levels and account mastery XP automatically.
+                Press the button when Warframe is open. The app reads your local EE.log, imports item levels, and uses a cooldown cache to avoid repeated profile requests.
               </div>
             </div>
+            <button class="btn btn-primary" id="btn-fetch-profile" type="button">
+              <span class="material-icons-round">sync</span>
+              <span id="profile-fetch-btn-text">Fetch</span>
+            </button>
           </div>
+
           <div class="profile-fetch-status" id="profile-fetch-status" data-state="idle">
             <span class="material-icons-round profile-fetch-status-icon" id="profile-fetch-status-icon">info</span>
             <div>
@@ -1164,83 +1028,28 @@
               <div class="profile-fetch-status-meta" id="profile-fetch-status-meta"></div>
             </div>
           </div>
-        </div>
 
-        <div class="settings-card">
-          <div class="settings-theme-header">
-            <div>
-              <h2 class="settings-card-title">Appearance</h2>
-              <div class="settings-toggle-subtitle">Choose a theme for the app interface. Your selection is saved on
-                this device.</div>
+          <div class="profile-log-section">
+            <h3 class="profile-sync-section-title">EE.log Location</h3>
+            <div class="profile-log-path-box">
+              <div>
+                <div class="settings-toggle-title">Current Log File</div>
+                <div class="settings-toggle-subtitle">
+                  Default: <code id="profile-log-default-path">Detecting...</code>
+                </div>
+              </div>
+              <div class="profile-log-path-current" id="profile-log-active-path">Checking EE.log location...</div>
+              <div class="profile-log-path-actions">
+                <button class="btn btn-secondary" id="btn-select-ee-log" type="button">
+                  <span class="material-icons-round">folder_open</span>
+                  Change EE.log
+                </button>
+                <button class="btn btn-secondary" id="btn-reset-ee-log" type="button">
+                  <span class="material-icons-round">restart_alt</span>
+                  Use Default
+                </button>
+              </div>
             </div>
-            <div class="settings-theme-current" id="settings-theme-current">Origin</div>
-          </div>
-
-          <div class="settings-theme-grid">
-            <button class="settings-theme-option is-active" type="button" data-theme="origin" aria-pressed="true">
-              <span class="settings-theme-preview settings-theme-preview-origin" aria-hidden="true">
-                <span class="settings-theme-preview-sidebar"></span>
-                <span class="settings-theme-preview-surface"></span>
-                <span class="settings-theme-preview-accent"></span>
-              </span>
-              <span class="settings-theme-copy">
-                <span class="settings-theme-name">Origin</span>
-                <span class="settings-theme-description">Classic amber and blue.</span>
-              </span>
-              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
-            </button>
-
-            <button class="settings-theme-option" type="button" data-theme="warframe" aria-pressed="false">
-              <span class="settings-theme-preview settings-theme-preview-warframe" aria-hidden="true">
-                <span class="settings-theme-preview-sidebar"></span>
-                <span class="settings-theme-preview-surface"></span>
-                <span class="settings-theme-preview-accent"></span>
-              </span>
-              <span class="settings-theme-copy">
-                <span class="settings-theme-name">Warframe</span>
-                <span class="settings-theme-description">Icon teal with bright white highlights.</span>
-              </span>
-              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
-            </button>
-
-            <button class="settings-theme-option" type="button" data-theme="lotus" aria-pressed="false">
-              <span class="settings-theme-preview settings-theme-preview-lotus" aria-hidden="true">
-                <span class="settings-theme-preview-sidebar"></span>
-                <span class="settings-theme-preview-surface"></span>
-                <span class="settings-theme-preview-accent"></span>
-              </span>
-              <span class="settings-theme-copy">
-                <span class="settings-theme-name">Lotus</span>
-                <span class="settings-theme-description">Lotus violet with cool cyan light.</span>
-              </span>
-              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
-            </button>
-
-            <button class="settings-theme-option" type="button" data-theme="orokin" aria-pressed="false">
-              <span class="settings-theme-preview settings-theme-preview-orokin" aria-hidden="true">
-                <span class="settings-theme-preview-sidebar"></span>
-                <span class="settings-theme-preview-surface"></span>
-                <span class="settings-theme-preview-accent"></span>
-              </span>
-              <span class="settings-theme-copy">
-                <span class="settings-theme-name">Orokin</span>
-                <span class="settings-theme-description">Ivory halls and rich gold.</span>
-              </span>
-              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
-            </button>
-
-            <button class="settings-theme-option" type="button" data-theme="stalker" aria-pressed="false">
-              <span class="settings-theme-preview settings-theme-preview-stalker" aria-hidden="true">
-                <span class="settings-theme-preview-sidebar"></span>
-                <span class="settings-theme-preview-surface"></span>
-                <span class="settings-theme-preview-accent"></span>
-              </span>
-              <span class="settings-theme-copy">
-                <span class="settings-theme-name">Stalker</span>
-                <span class="settings-theme-description">Blackened steel with blood-red accents.</span>
-              </span>
-              <span class="material-icons-round settings-theme-check" aria-hidden="true">check_circle</span>
-            </button>
           </div>
         </div>
 

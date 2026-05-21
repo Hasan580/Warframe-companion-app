@@ -18,6 +18,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadAppUpdate: () => ipcRenderer.invoke('download-app-update'),
   installDownloadedUpdate: () => ipcRenderer.invoke('install-downloaded-update'),
   detectWarframeProcess: () => ipcRenderer.invoke('detect-warframe-process'),
+  getWarframeLogConfig: () => ipcRenderer.invoke('get-warframe-log-config'),
+  selectWarframeLogFile: () => ipcRenderer.invoke('select-warframe-log-file'),
+  resetWarframeLogPath: () => ipcRenderer.invoke('reset-warframe-log-path'),
   fetchWarframeProfile: () => ipcRenderer.invoke('fetch-warframe-profile'),
   scanImageForItems: (imageDataUrl) => ipcRenderer.invoke('scan-image-for-items', String(imageDataUrl || '')),
   onAppUpdateEvent: (callback) => {

@@ -22,14 +22,12 @@
   const ITEMS_BACKGROUND_REFRESH_MIN_GAP_MS = 5 * 60 * 1000; // 5 minutes
   const PROFILE_PROCESS_WATCH_INTERVAL_MS = 3000;
   const PROFILE_PROCESS_WATCH_TIMEOUT_MS = 90000;
-  const PROFILE_AUTO_SYNC_INTERVAL_MS = 45000;
-  const PROFILE_AUTO_SYNC_MIN_GAP_MS = 4 * 60 * 1000;
   const ALWAYS_ON_TOP_KEY = 'warframe_always_on_top_enabled';
   const AUTO_UPDATE_CHECK_KEY = 'warframe_auto_update_check_enabled';
   const APP_THEME_KEY = 'warframe_app_theme_v1';
   const SIDEBAR_COLLAPSED_KEY = 'warframe_sidebar_collapsed_v1';
   const REPO_URL = 'https://github.com/Hasan580/Warframe-companion-app.git';
-  const TELEGRAM_CONTACT_URL = 'https://t.me/HassanF0';
+  const TELEGRAM_CONTACT_URL = 'https://t.me/Hassan_F8';
   const UPDATE_REPO_API = 'https://api.github.com/repos/Hasan580/Warframe-companion-app';
   const UPDATE_RELEASE_API = UPDATE_REPO_API + '/releases/latest';
   const UPDATE_TAGS_API = UPDATE_REPO_API + '/tags?per_page=1';
@@ -57,7 +55,7 @@
   const VALLIS_CYCLE_API = 'https://api.warframestat.us/pc/vallisCycle/';
   const CAMBION_CYCLE_API = 'https://api.warframestat.us/pc/cambionCycle/';
   const DUVIRI_CYCLE_API = 'https://api.warframestat.us/pc/duviriCycle/';
-  const SQUAD_API_BASE_URL = 'https://hassanfiras.me/api';
+  const SQUAD_API_BASE_URL = '';
   const BUILDS_STORAGE_KEY = 'warframe_item_builds_v1';
   const SQUAD_BOARD_STORAGE_KEY = 'warframe_squad_board_v1';
   const SQUAD_OWNER_TOKENS_STORAGE_KEY = 'warframe_squad_owner_tokens_v1';
@@ -125,22 +123,10 @@
   const WIKI_ERROR_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
   const BUILD_SLOT_COUNT = 8;
   const BUILD_RANK_MAX = 16;
-  const DEFAULT_APP_THEME = 'origin';
+  const DEFAULT_APP_THEME = 'wfui';
   const APP_THEMES = Object.freeze({
-    origin: {
-      label: 'Origin'
-    },
-    warframe: {
-      label: 'Warframe'
-    },
-    lotus: {
-      label: 'Lotus'
-    },
-    orokin: {
-      label: 'Orokin'
-    },
-    stalker: {
-      label: 'Stalker'
+    wfui: {
+      label: 'Warframe UI'
     }
   });
   const OCR_IGNORED_LINE_KEYS = new Set([
@@ -363,7 +349,6 @@
   let profileProcessWatchTimer = null;
   let profileProcessWatchStartedAt = 0;
   let profileAutoSyncTimer = null;
-  let profileLastAutoSyncAt = 0;
   let profileAutoSyncInitialized = false;
   let simarisFetchInProgress = false;
   let scanBatchContext = {
@@ -429,6 +414,10 @@
     profileFetchStatusTitle: $('#profile-fetch-status-title'),
     profileFetchStatusCopy: $('#profile-fetch-status-copy'),
     profileFetchStatusMeta: $('#profile-fetch-status-meta'),
+    profileLogDefaultPath: $('#profile-log-default-path'),
+    profileLogActivePath: $('#profile-log-active-path'),
+    selectEeLogBtn: $('#btn-select-ee-log'),
+    resetEeLogBtn: $('#btn-reset-ee-log'),
     profileSyncPill: $('#profile-sync-pill'),
     profileSyncText: $('#profile-sync-text'),
     alwaysOnTopToggle: $('#setting-always-on-top'),
@@ -2682,6 +2671,7 @@
 
   function squadApiUrl(path) {
     var suffix = String(path || '');
+    if (!SQUAD_API_BASE_URL) return '';
     return SQUAD_API_BASE_URL.replace(/\/+$/, '') + '/' + suffix.replace(/^\/+/, '');
   }
 
@@ -2700,6 +2690,10 @@
   }
 
   async function fetchSquadJson(path, options) {
+    if (!SQUAD_API_BASE_URL) {
+      throw new Error('Squad server is disabled in this build.');
+    }
+
     var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var timeout = controller ? window.setTimeout(function() { controller.abort(); }, 9000) : null;
     var response;
@@ -9402,9 +9396,6 @@
     applyFilters();
     updateStats();
     renderStarchartNightwavePanel();
-    syncSquadRequirementOptions();
-    syncSquadFarmTargetOptions();
-    renderSquadBoard();
   }
 
   async function refreshItemsInBackground(force) {
@@ -9932,11 +9923,7 @@
     applyFilters();
     updateStats();
     renderStarchartNightwavePanel();
-    syncSquadRequirementOptions();
-    syncSquadFarmTargetOptions();
-    renderSquadBoard();
     initItemsAutoRefresh();
-    initProfileAutoSync();
   }
 
   function applyFilters() {
@@ -10464,11 +10451,11 @@
       imageDiv.appendChild(img);
     }
 
+    var tradeBadge = null;
     if (tradeModeEnabled) {
-      var tradeBadge = document.createElement('span');
+      tradeBadge = document.createElement('span');
       tradeBadge.className = 'item-card-trade-badge ' + (item.tradable ? 'tradable' : 'not-tradable');
-      tradeBadge.textContent = item.tradable ? 'Tradable' : 'Not Tradable';
-      imageDiv.appendChild(tradeBadge);
+      tradeBadge.textContent = item.tradable ? 'Tradeable' : 'Not Tradeable';
     }
 
     imageDiv.title = 'Open item details';
@@ -10512,6 +10499,7 @@
     checkDiv.appendChild(checkIcon);
 
     bodyDiv.appendChild(nameDiv);
+    if (tradeBadge) bodyDiv.appendChild(tradeBadge);
     bodyDiv.appendChild(typeDiv);
     if (item.category !== 'Mods') {
       bodyDiv.appendChild(xpDiv);
@@ -10826,7 +10814,76 @@
     }
   }
 
+  function renderProfileLogPathState(config) {
+    var info = config || {};
+    if (els.profileLogDefaultPath) {
+      els.profileLogDefaultPath.textContent = info.defaultPath || 'Default EE.log path unavailable';
+    }
+    if (els.profileLogActivePath) {
+      var activePath = info.activePath || info.configuredPath || info.defaultPath || '';
+      var pathLabel = activePath || 'No EE.log path selected';
+      var modeLabel = info.usingCustomPath ? 'Custom path' : 'Default path';
+      var statusLabel = info.exists ? 'found' : 'not found yet';
+      els.profileLogActivePath.textContent = modeLabel + ' (' + statusLabel + '): ' + pathLabel;
+      els.profileLogActivePath.classList.toggle('is-missing', !info.exists);
+    }
+  }
+
+  async function refreshProfileLogPathUI() {
+    if (!window.electronAPI || !window.electronAPI.getWarframeLogConfig) {
+      renderProfileLogPathState({
+        defaultPath: 'Unavailable in this build',
+        activePath: 'Unavailable in this build',
+        exists: false
+      });
+      return;
+    }
+
+    try {
+      var config = await window.electronAPI.getWarframeLogConfig();
+      renderProfileLogPathState(config || {});
+    } catch (err) {
+      renderProfileLogPathState({
+        defaultPath: 'Could not read EE.log settings',
+        activePath: err && err.message ? err.message : 'Could not read EE.log settings',
+        exists: false
+      });
+    }
+  }
+
+  async function chooseProfileLogPath() {
+    if (!window.electronAPI || !window.electronAPI.selectWarframeLogFile) return;
+    var result = await window.electronAPI.selectWarframeLogFile();
+    if (result && result.ok === false) {
+      setProfileFetchStatus(
+        'error',
+        'Could not change EE.log',
+        result.message || 'The selected EE.log path could not be saved.',
+        ''
+      );
+      return;
+    }
+    renderProfileLogPathState(result || {});
+  }
+
+  async function resetProfileLogPath() {
+    if (!window.electronAPI || !window.electronAPI.resetWarframeLogPath) return;
+    var result = await window.electronAPI.resetWarframeLogPath();
+    if (result && result.ok === false) {
+      setProfileFetchStatus(
+        'error',
+        'Could not reset EE.log',
+        result.message || 'The EE.log path could not be reset.',
+        ''
+      );
+      return;
+    }
+    renderProfileLogPathState(result || {});
+  }
+
   function initProfileFetchSetting() {
+    refreshProfileLogPathUI();
+
     var summary = loadLastProfileFetchSummary();
     if (summary && summary.importedAt) {
       var namePart = summary.displayName ? (summary.displayName + ' - ') : '';
@@ -10836,18 +10893,18 @@
       setProfileFetchStatus(
         'success',
         'Last profile sync loaded',
-        namePart + totalPart + ' item levels. Fetch again after you enter and leave a Relay or Dojo if you want fresh data.',
+        namePart + totalPart + ' item levels. Fetch again manually after you enter and leave a Relay or Dojo if you want fresh data.',
         'Last sync: ' + formatProfileFetchDate(summary.importedAt)
       );
       setProfileSyncIndicator('online', 'profile synced', 'Last sync: ' + formatProfileFetchDate(summary.importedAt));
       return;
     }
 
-    setProfileSyncIndicator('offline', 'profile offline', 'Waiting for Warframe to open and sync.');
+    setProfileSyncIndicator('offline', 'profile offline', 'Manual profile sync is idle.');
     setProfileFetchStatus(
       'idle',
-      'Automatic sync is watching',
-      'Start Warframe first for the cleanest sync. If the data looks stale, enter and leave a Relay or Dojo so the game refreshes your profile cache.',
+      'Manual sync is ready',
+      'Open Warframe, enter and leave a Relay or Dojo, then press Fetch. The app will reuse cached profile data before making another request.',
       ''
     );
   }
@@ -10864,11 +10921,11 @@
     if (!window.electronAPI || !window.electronAPI.detectWarframeProcess) return;
     stopProfileProcessWatch();
     profileProcessWatchStartedAt = Date.now();
-    setProfileFetchButtonState({ disabled: false, text: 'Fetch Your Profile' });
+    setProfileFetchButtonState({ disabled: false, text: 'Fetch' });
     setProfileFetchStatus(
       'warning',
       'Waiting for Warframe',
-      'Open Warframe and log in. I will keep watching for the process, then ask you to refresh the profile cache.',
+      'Open Warframe and log in. I will only watch for the local process, not fetch anything in the background.',
       'Watching for up to 90 seconds...'
     );
 
@@ -10880,7 +10937,7 @@
         setProfileFetchStatus(
           'warning',
           'Warframe was not detected',
-          'Open Warframe, log in, then press Fetch Your Profile again. Tiny sentinel went on break.',
+          'Open Warframe, log in, then press Fetch again. Tiny sentinel went on break.',
           ''
         );
         return;
@@ -10890,7 +10947,7 @@
         var detection = await window.electronAPI.detectWarframeProcess();
         if (detection && detection.process && detection.process.running) {
           stopProfileProcessWatch();
-          setProfileFetchButtonState({ disabled: false, text: 'Fetch After Relay Refresh' });
+          setProfileFetchButtonState({ disabled: false, text: 'Fetch' });
           setProfileFetchStatus(
             'warning',
             'Warframe detected',
@@ -11284,6 +11341,9 @@
     if (analysis && typeof analysis.profileEntryCount === 'number') {
       parts.push(analysis.profileEntryCount.toLocaleString() + ' profile XP entries');
     }
+    if (profileResponse && profileResponse.cached) {
+      parts.push('local cache');
+    }
     if (profileResponse && profileResponse.logUpdatedAt) {
       parts.push('EE.log ' + formatProfileFetchDate(profileResponse.logUpdatedAt));
     }
@@ -11299,11 +11359,21 @@
       return;
     }
 
+    if (reason === 'profile-cooldown') {
+      setProfileFetchStatus(
+        'warning',
+        'Profile fetch is cooling down',
+        message,
+        result && result.cooldownMs ? 'Try again later to avoid Warframe rate limits.' : ''
+      );
+      return;
+    }
+
     if (reason === 'account-id-not-found' || reason === 'profile-empty') {
       setProfileFetchStatus(
         'warning',
         'Refresh your Warframe profile',
-        message + ' Enter and leave a Relay or Dojo, then press Fetch Your Profile again.',
+        message + ' Enter and leave a Relay or Dojo, then press Fetch again.',
         result && result.logUpdatedAt ? ('EE.log updated: ' + formatProfileFetchDate(result.logUpdatedAt)) : ''
       );
       return;
@@ -11313,9 +11383,10 @@
       setProfileFetchStatus(
         'warning',
         'EE.log was not found',
-        message + ' Start Warframe once so it creates the local log file, then try again.',
+        message + ' Start Warframe once so it creates the local log file, or use Change EE.log if your file is in another folder.',
         ''
       );
+      refreshProfileLogPathUI();
       return;
     }
 
@@ -11348,7 +11419,7 @@
 
     setProfileFetchStatus(
       'success',
-      mode === 'auto' ? 'Profile auto-sync complete' : 'Profile levels imported',
+      result && result.cached ? 'Profile levels imported from local cache' : 'Profile levels imported',
       'Matched ' + matchedCount.toLocaleString() + ' checklist items from your profile. ' + details,
       buildProfileFetchMeta(result, analysis)
     );
@@ -11425,7 +11496,8 @@
       );
     } finally {
       profileFetchInProgress = false;
-      setProfileFetchButtonState({ disabled: false, text: 'Fetch Your Profile' });
+      setProfileFetchButtonState({ disabled: false, text: 'Fetch' });
+      refreshProfileLogPathUI();
     }
   }
 
@@ -11438,7 +11510,7 @@
       setProfileFetchStatus(
         'error',
         'Warframe is not running',
-        'Automatic profile sync will turn green after Warframe opens and the profile can be fetched.',
+        'Open Warframe, refresh EE.log in a Relay or Dojo, then press Fetch.',
         ''
       );
       return;
@@ -11447,7 +11519,7 @@
     setProfileSyncIndicator('offline', 'profile not fetched', message);
     setProfileFetchStatus(
       'error',
-      reason === 'account-id-not-found' ? 'Refresh profile cache' : 'Automatic sync failed',
+      reason === 'account-id-not-found' ? 'Refresh profile cache' : 'Profile sync failed',
       reason === 'account-id-not-found'
         ? message + ' Enter and leave a Relay or Dojo so EE.log receives your account id.'
         : message,
@@ -11456,66 +11528,22 @@
   }
 
   async function runAutomaticProfileSync(force) {
-    if (profileFetchInProgress) return false;
-    if (!allItems.length) return false;
-    if (!window.electronAPI || !window.electronAPI.fetchWarframeProfile) {
-      setProfileSyncIndicator('offline', 'profile bridge missing', 'This build cannot fetch Warframe profile data.');
-      return false;
-    }
-    if (!force && profileLastAutoSyncAt && Date.now() - profileLastAutoSyncAt < PROFILE_AUTO_SYNC_MIN_GAP_MS) {
-      return false;
-    }
-
-    profileFetchInProgress = true;
-    setProfileSyncIndicator('syncing', 'syncing profile', 'Checking Warframe and profile data...');
+    setProfileSyncIndicator('offline', 'profile offline', 'Manual profile sync is idle.');
     setProfileFetchStatus(
-      'busy',
-      'Automatic profile sync running',
-      'Checking Warframe, reading EE.log, and importing profile item levels plus account XP.',
+      'idle',
+      'Manual sync only',
+      'Open Settings and press Fetch when you want to import Warframe profile levels.',
       ''
     );
-
-    try {
-      var result = await window.electronAPI.fetchWarframeProfile();
-      profileLastAutoSyncAt = Date.now();
-      if (!result || result.ok === false) {
-        handleAutoProfileFetchFailure(result || {});
-        return false;
-      }
-      applyProfileFetchSuccess(result, 'auto');
-      return true;
-    } catch (err) {
-      setProfileSyncIndicator('offline', 'profile not fetched', err && err.message ? err.message : 'Automatic profile sync failed.');
-      setProfileFetchStatus(
-        'error',
-        'Automatic sync failed',
-        err && err.message ? err.message : 'Unexpected profile sync error.',
-        ''
-      );
-      return false;
-    } finally {
-      profileFetchInProgress = false;
-    }
+    return false;
   }
 
   function initProfileAutoSync() {
     if (profileAutoSyncInitialized) return;
     profileAutoSyncInitialized = true;
     if (!els.profileSyncPill || !els.profileSyncPill.classList.contains('is-online')) {
-      setProfileSyncIndicator('offline', 'profile offline', 'Waiting for Warframe profile sync.');
+      setProfileSyncIndicator('offline', 'profile offline', 'Manual profile sync is idle.');
     }
-
-    window.setTimeout(function() {
-      runAutomaticProfileSync(true);
-    }, 1500);
-
-    profileAutoSyncTimer = window.setInterval(function() {
-      runAutomaticProfileSync(false);
-    }, PROFILE_AUTO_SYNC_INTERVAL_MS);
-
-    window.addEventListener('focus', function() {
-      runAutomaticProfileSync(false);
-    });
   }
 
   function getMRFromXP(xp) {
@@ -12531,9 +12559,27 @@
     });
   }
 
+  if (els.selectEeLogBtn) {
+    els.selectEeLogBtn.addEventListener('click', function() {
+      chooseProfileLogPath();
+    });
+  }
+
+  if (els.resetEeLogBtn) {
+    els.resetEeLogBtn.addEventListener('click', function() {
+      resetProfileLogPath();
+    });
+  }
+
   if (els.profileSyncPill) {
     els.profileSyncPill.addEventListener('click', function() {
-      runAutomaticProfileSync(true);
+      showPanel('settings', true);
+      setProfileFetchStatus(
+        'idle',
+        'Manual sync only',
+        'Press Fetch when you want to import your Warframe account data.',
+        ''
+      );
     });
   }
 
@@ -12977,31 +13023,6 @@
         }, 50);
       }
       renderStarchartNightwavePanel({ loading: !cycleSnapshot || !cycleSnapshot.worldstate });
-    } else if (panel === 'squad') {
-      contentEl.classList.add('hidden');
-      marketPanel.classList.add('hidden');
-      if (analyticsPanel) analyticsPanel.classList.add('hidden');
-      if (primePanel) primePanel.classList.add('hidden');
-      if (relicsPanel) relicsPanel.classList.add('hidden');
-      if (arcanesPanel) arcanesPanel.classList.add('hidden');
-      if (cyclesPanel) cyclesPanel.classList.add('hidden');
-      if (starchartPanel) starchartPanel.classList.add('hidden');
-      if (squadPanel) squadPanel.classList.remove('hidden');
-      settingsPage.classList.add('hidden');
-      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
-      if (navMarket) navMarket.classList.remove('active');
-      if (navAnalytics) navAnalytics.classList.remove('active');
-      if (navPrime) navPrime.classList.remove('active');
-      if (navRelics) navRelics.classList.remove('active');
-      if (navArcanes) navArcanes.classList.remove('active');
-      if (navCycles) navCycles.classList.remove('active');
-      if (navStarchart) navStarchart.classList.remove('active');
-      if (navSquad) navSquad.classList.add('active');
-      stopPrimeCountdown();
-      stopCycleCountdown();
-      syncSquadRequirementOptions();
-      syncSquadFarmTargetOptions();
-      renderSquadBoard();
     } else if (panel === 'compare') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
@@ -13356,15 +13377,6 @@
   initProfileFetchSetting();
   initSidebarToggle();
   initRemovedProfileStorageMigration();
-  loadSquadOwnerTokens();
-  loadSquadPostLog();
-  loadSquadPosts();
-  syncSquadMissionOptions();
-  syncSquadFarmTargetOptions();
-  renderSquadMissionSlider();
-  renderSquadRequirementDraft();
-  renderSquadBoard();
-  startSquadServerPolling();
   // ---------- Frame Comparison ----------
   var compareInitialized = false;
   var compareLeftFrame = null;

@@ -1,6 +1,7 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { createWorker } = require('tesseract.js');
@@ -13,6 +14,10 @@ let updateDownloaded = false;
 let ocrWorkerPromise = null;
 let activeOcrProgressTarget = null;
 const PROFILE_FETCH_TIMEOUT_MS = 15000;
+const PROFILE_REMOTE_FETCH_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours between successful Warframe profile calls.
+const PROFILE_REMOTE_RETRY_COOLDOWN_MS = 15 * 60 * 1000; // Failed remote calls must cool down too.
+const PROFILE_LOG_CONFIG_FILE = 'warframe-profile-log.json';
+const PROFILE_CACHE_FILE = 'warframe-profile-cache.json';
 const PROFILE_INTRINSIC_RANK_XP = 1500;
 const PROFILE_NORMAL_STAR_CHART_XP_MAX = 27519;
 const PROFILE_STEEL_PATH_XP_MAX = 27519;
@@ -154,8 +159,25 @@ function uniquePaths(paths) {
   return output;
 }
 
+function getDefaultWarframeLogPath() {
+  const homeDir = app.getPath('home');
+
+  if (process.platform === 'win32') {
+    if (process.env.LOCALAPPDATA) {
+      return path.join(process.env.LOCALAPPDATA, 'Warframe', 'EE.log');
+    }
+    return path.join(homeDir, 'AppData', 'Local', 'Warframe', 'EE.log');
+  }
+
+  if (process.platform === 'darwin') {
+    return path.join(homeDir, 'Library', 'Application Support', 'CrossOver', 'Bottles', 'Warframe', 'drive_c', 'users', 'crossover', 'AppData', 'Local', 'Warframe', 'EE.log');
+  }
+
+  return path.join(homeDir, '.steam', 'steam', 'steamapps', 'compatdata', '230410', 'pfx', 'drive_c', 'users', 'steamuser', 'AppData', 'Local', 'Warframe', 'EE.log');
+}
+
 function getWarframeLogCandidates() {
-  const candidates = [];
+  const candidates = [getDefaultWarframeLogPath()];
   const homeDir = app.getPath('home');
 
   if (process.env.LOCALAPPDATA) {
@@ -166,13 +188,107 @@ function getWarframeLogCandidates() {
     candidates.push(path.join(homeDir, 'AppData', 'Local', 'Warframe', 'EE.log'));
     candidates.push(path.join(homeDir, '.steam', 'steam', 'steamapps', 'compatdata', '230410', 'pfx', 'drive_c', 'users', 'steamuser', 'AppData', 'Local', 'Warframe', 'EE.log'));
     candidates.push(path.join(homeDir, '.local', 'share', 'Steam', 'steamapps', 'compatdata', '230410', 'pfx', 'drive_c', 'users', 'steamuser', 'AppData', 'Local', 'Warframe', 'EE.log'));
+    candidates.push(path.join(homeDir, 'Library', 'Application Support', 'CrossOver', 'Bottles', 'Warframe', 'drive_c', 'users', 'crossover', 'AppData', 'Local', 'Warframe', 'EE.log'));
   }
 
   return uniquePaths(candidates);
 }
 
+function getProfileLogConfigPath() {
+  return path.join(app.getPath('userData'), PROFILE_LOG_CONFIG_FILE);
+}
+
+function getProfileCachePath() {
+  return path.join(app.getPath('userData'), PROFILE_CACHE_FILE);
+}
+
+async function readJsonFile(filePath, fallbackValue) {
+  try {
+    const raw = await fs.readFile(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : fallbackValue;
+  } catch (err) {
+    return fallbackValue;
+  }
+}
+
+async function writeJsonFile(filePath, value) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
+}
+
+function normalizeConfiguredLogPath(value) {
+  const rawPath = String(value || '').trim();
+  return rawPath ? path.normalize(rawPath) : '';
+}
+
+async function readProfileLogConfig() {
+  const config = await readJsonFile(getProfileLogConfigPath(), {});
+  return {
+    customPath: normalizeConfiguredLogPath(config && config.customPath)
+  };
+}
+
+async function getConfiguredWarframeLogPath() {
+  const config = await readProfileLogConfig();
+  return config.customPath || '';
+}
+
+async function setConfiguredWarframeLogPath(filePath) {
+  const customPath = normalizeConfiguredLogPath(filePath);
+  if (!customPath) {
+    throw new Error('No EE.log path was selected.');
+  }
+
+  const stat = await fs.stat(customPath);
+  if (!stat.isFile()) {
+    throw new Error('Selected path is not a file.');
+  }
+
+  await writeJsonFile(getProfileLogConfigPath(), {
+    customPath,
+    updatedAt: Date.now()
+  });
+  return getWarframeLogConfigSummary();
+}
+
+async function clearConfiguredWarframeLogPath() {
+  try {
+    await fs.unlink(getProfileLogConfigPath());
+  } catch (err) {
+    if (!err || err.code !== 'ENOENT') throw err;
+  }
+  return getWarframeLogConfigSummary();
+}
+
+async function pathExistsAsFile(filePath) {
+  if (!filePath) return false;
+  try {
+    const stat = await fs.stat(filePath);
+    return stat.isFile();
+  } catch (err) {
+    return false;
+  }
+}
+
+async function getWarframeLogConfigSummary() {
+  const defaultPath = getDefaultWarframeLogPath();
+  const configuredPath = await getConfiguredWarframeLogPath();
+  const activePath = configuredPath || defaultPath;
+
+  return {
+    ok: true,
+    defaultPath,
+    configuredPath,
+    activePath,
+    usingCustomPath: !!configuredPath,
+    exists: await pathExistsAsFile(activePath)
+  };
+}
+
 async function findWarframeLog() {
-  const candidates = getWarframeLogCandidates();
+  const configuredPath = await getConfiguredWarframeLogPath();
+  const candidates = configuredPath ? [configuredPath] : getWarframeLogCandidates();
   const found = [];
 
   for (const candidate of candidates) {
@@ -553,58 +669,135 @@ function extractProfileSummary(profileData, fallbackDisplayName) {
   };
 }
 
+function getProfileAccountCacheKey(accountId) {
+  return crypto.createHash('sha256').update(String(accountId || '')).digest('hex');
+}
+
+async function readProfileCacheState() {
+  const state = await readJsonFile(getProfileCachePath(), { entries: {} });
+  if (!state.entries || typeof state.entries !== 'object') {
+    state.entries = {};
+  }
+  return state;
+}
+
+async function writeProfileCacheState(state) {
+  await writeJsonFile(getProfileCachePath(), Object.assign({ entries: {} }, state || {}));
+}
+
+async function getProfileCacheEntry(accountId) {
+  const key = getProfileAccountCacheKey(accountId);
+  if (!key) return null;
+  const state = await readProfileCacheState();
+  return state.entries[key] || null;
+}
+
+function createCacheableProfileResult(result) {
+  const cached = Object.assign({}, result || {});
+  delete cached.process;
+  delete cached.logPath;
+  delete cached.logUpdatedAt;
+  delete cached.endpoint;
+  delete cached.cacheControl;
+  delete cached.expires;
+  delete cached.cached;
+  delete cached.cacheAgeMs;
+  return cached;
+}
+
+async function updateProfileCacheEntry(accountId, patch) {
+  const key = getProfileAccountCacheKey(accountId);
+  if (!key) return;
+  const state = await readProfileCacheState();
+  const previous = state.entries[key] || {};
+  state.entries[key] = Object.assign({}, previous, patch || {}, {
+    accountHash: key,
+    updatedAt: Date.now()
+  });
+  await writeProfileCacheState(state);
+}
+
+async function saveProfileCacheAttempt(accountId, attemptedAt) {
+  await updateProfileCacheEntry(accountId, {
+    lastAttemptAt: attemptedAt || Date.now()
+  });
+}
+
+async function saveProfileCacheFailure(accountId, failedAt, message) {
+  await updateProfileCacheEntry(accountId, {
+    lastAttemptAt: failedAt || Date.now(),
+    lastError: String(message || 'Profile fetch failed.')
+  });
+}
+
+async function saveProfileCacheResult(accountId, result) {
+  const fetchedAt = Number(result && result.fetchedAt) || Date.now();
+  await updateProfileCacheEntry(accountId, {
+    fetchedAt,
+    lastAttemptAt: fetchedAt,
+    lastError: '',
+    result: createCacheableProfileResult(result)
+  });
+}
+
+function formatCooldownMs(ms) {
+  const totalMinutes = Math.max(1, Math.ceil(Number(ms || 0) / 60000));
+  if (totalMinutes < 60) return totalMinutes + ' minute' + (totalMinutes === 1 ? '' : 's');
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours + ' hour' + (hours === 1 ? '' : 's') + (minutes ? ' ' + minutes + ' minute' + (minutes === 1 ? '' : 's') : '');
+}
+
 async function fetchProfileJson(accountId) {
   const encodedId = encodeURIComponent(accountId);
-  const endpoints = [
-    `https://api.warframe.com/cdn/getProfileViewingData.php?playerId=${encodedId}`,
-    `http://content.warframe.com/dynamic/getProfileViewingData.php?playerId=${encodedId}`
-  ];
-  const errors = [];
+  const endpoint = `https://api.warframe.com/cdn/getProfileViewingData.php?playerId=${encodedId}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), PROFILE_FETCH_TIMEOUT_MS);
 
-  for (const endpoint of endpoints) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), PROFILE_FETCH_TIMEOUT_MS);
-
-    try {
-      const response = await fetch(endpoint, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'Warframe Companion App'
-        }
-      });
-      const text = await response.text();
-
-      if (!response.ok) {
-        errors.push(`${response.status} ${response.statusText || 'profile request failed'}`);
-        continue;
+  try {
+    const response = await fetch(endpoint, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Warframe Companion App'
       }
+    });
+    const text = await response.text();
 
-      let json;
-      try {
-        json = JSON.parse(text);
-      } catch (err) {
-        errors.push('Profile endpoint returned non-JSON data.');
-        continue;
-      }
-
+    if (!response.ok) {
       return {
-        ok: true,
-        data: json,
-        endpoint,
-        cacheControl: response.headers.get('cache-control') || '',
-        expires: response.headers.get('expires') || ''
+        ok: false,
+        status: response.status,
+        message: response.status === 429
+          ? 'Warframe rejected the profile request because too many requests were made. Wait before trying again.'
+          : `${response.status} ${response.statusText || 'profile request failed'}`
       };
-    } catch (err) {
-      errors.push(err && err.name === 'AbortError' ? 'Profile request timed out.' : (err && err.message ? err.message : 'Profile request failed.'));
-    } finally {
-      clearTimeout(timeout);
     }
-  }
 
-  return {
-    ok: false,
-    message: errors.filter(Boolean).join(' / ') || 'Profile request failed.'
-  };
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (err) {
+      return {
+        ok: false,
+        message: 'Profile endpoint returned non-JSON data.'
+      };
+    }
+
+    return {
+      ok: true,
+      data: json,
+      endpoint,
+      cacheControl: response.headers.get('cache-control') || '',
+      expires: response.headers.get('expires') || ''
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err && err.name === 'AbortError' ? 'Profile request timed out.' : (err && err.message ? err.message : 'Profile request failed.')
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function fetchWarframeProfileFromLog() {
@@ -643,8 +836,45 @@ async function fetchWarframeProfileFromLog() {
     };
   }
 
+  const now = Date.now();
+  const cacheEntry = await getProfileCacheEntry(accountId);
+  const cachedFetchedAt = Number(cacheEntry && cacheEntry.fetchedAt) || 0;
+  const cacheAgeMs = cachedFetchedAt ? now - cachedFetchedAt : Infinity;
+
+  if (cacheEntry && cacheEntry.result && cachedFetchedAt && cacheAgeMs < PROFILE_REMOTE_FETCH_COOLDOWN_MS) {
+    return Object.assign({}, cacheEntry.result, {
+      ok: true,
+      process: processInfo,
+      logPath: logInfo.path,
+      logUpdatedAt: logInfo.mtimeMs,
+      cached: true,
+      cacheAgeMs,
+      fetchedAt: cachedFetchedAt,
+      message: 'Using locally cached Warframe profile data to avoid repeated requests.'
+    });
+  }
+
+  const lastAttemptAt = Number(cacheEntry && cacheEntry.lastAttemptAt) || 0;
+  const retryAgeMs = lastAttemptAt ? now - lastAttemptAt : Infinity;
+  const lastAttemptWasFailed = lastAttemptAt && (!cachedFetchedAt || lastAttemptAt > cachedFetchedAt);
+  if (lastAttemptWasFailed && retryAgeMs < PROFILE_REMOTE_RETRY_COOLDOWN_MS) {
+    const remainingMs = PROFILE_REMOTE_RETRY_COOLDOWN_MS - retryAgeMs;
+    return {
+      ok: false,
+      reason: 'profile-cooldown',
+      process: processInfo,
+      logPath: logInfo.path,
+      logUpdatedAt: logInfo.mtimeMs,
+      cooldownMs: remainingMs,
+      message: 'Profile fetch is cooling down for about ' + formatCooldownMs(remainingMs) + ' to protect you from Warframe rate limits.'
+    };
+  }
+
+  await saveProfileCacheAttempt(accountId, now);
+
   const profileResponse = await fetchProfileJson(accountId);
   if (!profileResponse.ok) {
+    await saveProfileCacheFailure(accountId, now, profileResponse.message);
     return {
       ok: false,
       reason: 'profile-fetch-failed',
@@ -661,6 +891,7 @@ async function fetchWarframeProfileFromLog() {
   const summary = extractProfileSummary(profileData, fallbackDisplayName);
 
   if (xpInfo.length === 0) {
+    await saveProfileCacheFailure(accountId, now, 'No mastery XP entries were found.');
     return {
       ok: false,
       reason: 'profile-empty',
@@ -673,7 +904,7 @@ async function fetchWarframeProfileFromLog() {
     };
   }
 
-  return {
+  const result = {
     ok: true,
     process: processInfo,
     logPath: logInfo.path,
@@ -688,6 +919,9 @@ async function fetchWarframeProfileFromLog() {
     expires: profileResponse.expires,
     fetchedAt: Date.now()
   };
+
+  await saveProfileCacheResult(accountId, result);
+  return result;
 }
 
 function setupAutoUpdater() {
@@ -902,6 +1136,52 @@ ipcMain.handle('detect-warframe-process', async () => {
       ok: false,
       process: { running: false, name: '' },
       message: err && err.message ? err.message : 'Warframe process detection failed.'
+    };
+  }
+});
+
+ipcMain.handle('get-warframe-log-config', async () => {
+  try {
+    return await getWarframeLogConfigSummary();
+  } catch (err) {
+    return {
+      ok: false,
+      message: err && err.message ? err.message : 'Could not read EE.log location settings.'
+    };
+  }
+});
+
+ipcMain.handle('select-warframe-log-file', async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose Warframe EE.log',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Warframe EE.log', extensions: ['log'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
+
+    if (!result || result.canceled || !result.filePaths || !result.filePaths[0]) {
+      return Object.assign({ canceled: true }, await getWarframeLogConfigSummary());
+    }
+
+    return await setConfiguredWarframeLogPath(result.filePaths[0]);
+  } catch (err) {
+    return {
+      ok: false,
+      message: err && err.message ? err.message : 'Could not change EE.log location.'
+    };
+  }
+});
+
+ipcMain.handle('reset-warframe-log-path', async () => {
+  try {
+    return await clearConfiguredWarframeLogPath();
+  } catch (err) {
+    return {
+      ok: false,
+      message: err && err.message ? err.message : 'Could not reset EE.log location.'
     };
   }
 });
