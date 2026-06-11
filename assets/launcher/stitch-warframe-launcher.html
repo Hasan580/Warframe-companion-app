@@ -1,0 +1,312 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Warframe Launcher</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+<style data-purpose="custom-styles">@import url("https://fonts.googleapis.com/css2?family=Teko:wght@400;500;600;700&display=swap");
+body {
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 0;
+    background-color: #000;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh
+    }
+.launcher-container {
+    width: 1288px;
+    height: 808px;
+    position: relative;
+    background-image: url(https://lh3.googleusercontent.com/aida-public/AB6AXuDRBCQvtDOlVEghAtd-ZzWeadpwmM50X7S2pO-bmxxTP3i6JSDwNidZd6AjiWlZ_W7sqTv-jSvuh9OBiIhNEA90woQ2pU9y2Hfat82BOMa3uyed13P6pn1WXclUHoCjUI_ASGEEqA-9Zvm_FICGHCAOFRf7xHVJzvx06oyJ2N5WN5D3A5d-7WgqWOWi0dmDnbYtThdlWTek6AQe6Y5n-ug8ygXXWLcokuIVdRf0w5ROlfQqcMChInyyhxq135w7k9mm1dAKG0GMiPMy);
+    background-size: cover;
+    background-position: center;
+    border: 1px solid #333;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+    overflow: hidden
+    }
+/* Top Bar Styles */
+.top-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 50px;
+    background: linear-gradient(to right, #ececec 0%, #d4d4d4 25%, #222 25%, #222 100%);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 10
+    }
+.logo-container {
+    padding-left: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px
+    }
+.logo-text {
+    font-family: "Teko", sans-serif;
+    font-size: 28px;
+    font-weight: 600;
+    color: #333;
+    letter-spacing: 2px;
+    text-transform: uppercase
+    }
+.top-nav {
+    position: absolute;
+    left: 50%;
+    transform: translatex(-50%);
+    display: flex;
+    height: 100%;
+    top: 25px;
+    /* Offset to overlap the background slightly */
+    }
+.nav-tab {
+    position: relative;
+    padding: 5px 40px;
+    color: #000;
+    font-weight: bold;
+    font-size: 14px;
+    text-transform: uppercase;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    clip-path: polygon(10% 0, 100% 0, 90% 100%, 0% 100%);
+    background-color: #fff;
+    margin-right: -20px;
+    /* Overlap tabs */
+    z-index: 1;
+    transition: background-color 0.2s
+    }
+.nav-tab.active {
+    background-color: #d13223;
+    color: white;
+    z-index: 2
+    }
+.nav-tab:not(.active):hover {
+    background-color: #eee
+    }
+.window-controls {
+    display: flex;
+    align-items: center;
+    padding-right: 15px;
+    background-color: #d4d4d4;
+    height: 100%;
+    clip-path: polygon(20px 0, 100% 0, 100% 100%, 0% 100%);
+    padding-left: 40px
+    }
+.lang-selector {
+    background: transparent;
+    border: none;
+    font-size: 14px;
+    margin-right: 15px;
+    cursor: pointer;
+    outline: none
+    }
+.control-icon {
+    margin-left: 15px;
+    cursor: pointer;
+    color: #333;
+    font-size: 14px
+    }
+.control-icon:hover {
+    color: #000
+    }
+/* Left Side Panels */
+.left-panels {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    width: 400px;
+    pointer-events: none;
+    z-index: 5
+    }
+.panel {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 120%;
+    background-size: cover;
+    background-position: center;
+    transform: skewx(-35deg);
+    transform-origin: bottom left;
+    border-right: 2px solid rgba(255, 255, 255, 0.2)
+    }
+.panel-1 {
+    width: 150px;
+    background-color: rgba(20, 20, 20, 0.9);
+    left: -100px
+    }
+.panel-2 {
+    width: 250px;
+    background-color: rgba(40, 40, 40, 0.85);
+    left: 50px
+    }
+/* Content Area */
+.content-area {
+    position: absolute;
+    right: 50px;
+    top: 50%;
+    transform: translatey(-30%);
+    width: 500px;
+    z-index: 8;
+    text-align: left
+    }
+.content-title {
+    font-family: "Segoe UI", sans-serif;
+    font-size: 36px;
+    font-weight: 300;
+    color: white;
+    text-transform: uppercase;
+    line-height: 1.1;
+    margin-bottom: 20px;
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8)
+    }
+.content-desc {
+    font-size: 16px;
+    color: #e0e0e0;
+    line-height: 1.5;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8)
+    }
+/* Bottom Bar Styles */
+.bottom-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 80px;
+    display: flex;
+    justify-content: space-between;
+    align-items: stretch;
+    z-index: 10
+    }
+.status-bar {
+    background-color: #e8e8e8;
+    display: flex;
+    align-items: center;
+    padding-left: 200px;
+    /* Make room for left panels */
+    padding-right: 60px;
+    clip-path: polygon(0 0, 100% 0, 95% 100%, 0% 100%);
+    width: 60%;
+    position: relative
+    }
+.status-bar::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 150px;
+    background-color: transparent;
+    clip-path: polygon(0 0, 100% 0, 0% 100%, 0% 100%)
+    }
+.status-text {
+    font-size: 16px;
+    font-weight: bold;
+    color: #333;
+    display: flex;
+    align-items: center;
+    gap: 10px
+    }
+.play-button-container {
+    flex-grow: 1;
+    position: relative
+    }
+.play-button {
+    position: absolute;
+    right: 150px;
+    /* Offset from right edge */
+    bottom: 0;
+    height: 100%;
+    width: 350px;
+    background-color: #d13223;
+    clip-path: polygon(15% 0, 100% 0, 85% 100%, 0% 100%);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    transition: background-color 0.2s
+    }
+.play-button:hover {
+    background-color: #e34536
+    }
+.play-text {
+    color: white;
+    font-size: 42px;
+    font-weight: 800;
+    letter-spacing: 2px;
+    transform: skewx(0deg);
+    /* Adjust text inside skewed container */
+    }</style>
+</head>
+<body>
+<!-- BEGIN: Main Launcher Container -->
+<div class="launcher-container">
+<!-- Left Decorative Panels -->
+<div class="left-panels">
+<div class="panel panel-1"></div>
+<div class="panel panel-2"></div>
+</div>
+<!-- BEGIN: Top Navigation Bar -->
+<div class="top-bar">
+<!-- Logo -->
+<div class="logo-container">
+<i class="fa-solid fa-layer-group text-2xl text-gray-800"></i>
+<span class="logo-text">WARFRAME</span>
+</div>
+<!-- Navigation Tabs -->
+<div class="top-nav">
+<a class="nav-tab active" href="#">WHAT'S NEW</a>
+<a class="nav-tab" href="#">PRIME ACCESS</a>
+<a class="nav-tab" href="#">BUILD NOTES</a>
+</div>
+<!-- Window Controls -->
+<div class="window-controls">
+<select class="lang-selector">
+<option>English</option>
+</select>
+<i class="fa-solid fa-caret-down text-xs mr-2"></i>
+<i class="fa-solid fa-gear control-icon"></i>
+<i class="fa-solid fa-minus control-icon"></i>
+<i class="fa-solid fa-xmark control-icon"></i>
+</div>
+</div>
+<!-- END: Top Navigation Bar -->
+<!-- BEGIN: Main Content Area -->
+<div class="content-area">
+<h1 class="content-title">GAUSS MOTO AND GRENDEL<br>TURBIS</h1>
+<p class="content-desc">
+        The next evolution of your favorite odd couple continues with<br>
+        retro-inspired mecha designs for Gauss and Grendel. The rapid<br>
+        meets the ravenous like never before with robust new suites of<br>
+        Customizations, available together in the aptly-named Eat &amp; Run<br>
+        Collection.
+      </p>
+</div>
+<!-- END: Main Content Area -->
+<!-- BEGIN: Bottom Action Bar -->
+<div class="bottom-bar">
+<!-- Status -->
+<div class="status-bar">
+<div class="status-text">
+<span class="">WARFRAME IS UP TO DATE!</span>
+</div>
+</div>
+<!-- Play Button -->
+<div class="play-button-container">
+<div class="play-button">
+<span class="play-text">PLAY</span>
+</div>
+</div>
+</div>
+<!-- END: Bottom Action Bar -->
+</div>
+<!-- END: Main Launcher Container -->
+
+
+</body></html>

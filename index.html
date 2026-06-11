@@ -122,6 +122,14 @@
           <span class="nav-text">Mods</span>
           <span class="nav-count" id="count-mods">0</span>
         </button>
+        <button class="nav-item" id="nav-mastery-recommendations" data-panel="recommendations">
+          <span class="material-icons-round">tips_and_updates</span>
+          <span class="nav-text">Recommendations</span>
+        </button>
+        <button class="nav-item" id="nav-resource-search" data-panel="resources">
+          <span class="material-icons-round">travel_explore</span>
+          <span class="nav-text">Resources</span>
+        </button>
 
         <div class="nav-section-label" style="margin-top: 16px;">TRADING</div>
         <button class="nav-item" id="nav-market" data-panel="market">
@@ -531,6 +539,11 @@
           <button class="search-clear hidden" id="relic-search-clear" type="button" aria-label="Clear relic search">
             <span class="material-icons-round">close</span>
           </button>
+        </div>
+        <div class="relic-reward-filter-group" aria-label="Relic reward filters">
+          <button class="relic-reward-filter-btn is-active" data-relic-reward-filter="all" type="button">All</button>
+          <button class="relic-reward-filter-btn" data-relic-reward-filter="missing" type="button">Needed Items</button>
+          <button class="relic-reward-filter-btn" data-relic-reward-filter="completed" type="button">Mastered Items</button>
         </div>
       </div>
 
@@ -972,6 +985,139 @@
           </h3>
           <p class="compare-top10-sub">Based on community tier lists and meta usage. Click a frame to add it to comparison.</p>
           <div class="compare-top10-grid" id="compare-top10-grid"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mastery Recommendations Panel (hidden by default) -->
+    <div class="recommendations-panel hidden" id="recommendations-panel">
+      <div class="content-topbar recommendations-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Mastery Recommendations</h1>
+          <span class="category-count" id="recommendation-summary-text">Smart next steps based on your current progress</span>
+        </div>
+        <div class="recommendation-score-strip">
+          <article class="recommendation-score-card">
+            <span class="material-icons-round">inventory_2</span>
+            <div>
+              <div class="recommendation-score-value" id="recommendation-owned-count">0</div>
+              <div class="recommendation-score-label">Owned unfinished</div>
+            </div>
+          </article>
+          <article class="recommendation-score-card">
+            <span class="material-icons-round">military_tech</span>
+            <div>
+              <div class="recommendation-score-value" id="recommendation-next-xp">0 XP</div>
+              <div class="recommendation-score-label">Visible mastery XP</div>
+            </div>
+          </article>
+          <article class="recommendation-score-card">
+            <span class="material-icons-round">construction</span>
+            <div>
+              <div class="recommendation-score-value" id="recommendation-craft-score">--</div>
+              <div class="recommendation-score-label">Craft pressure</div>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div class="recommendations-content" id="recommendations-content">
+        <section class="recommendation-hero">
+          <div class="recommendation-hero-copy">
+            <span class="recommendation-kicker">Cephalon Route Planner</span>
+            <h2>What should you master next?</h2>
+            <p>
+              The app ranks items by practical priority: finish owned gear first, then intrinsics,
+              craftable blueprints, story and clan sources, and finally prime relic farms.
+            </p>
+          </div>
+          <div class="recommendation-hero-note">
+            <span class="material-icons-round">info</span>
+            <span>The app does not read memory or private inventory. Blueprint ownership and resource difficulty are estimated from local progress, recipes, and known resource weight.</span>
+          </div>
+        </section>
+
+        <div class="recommendation-controls">
+          <div class="search-container recommendation-search">
+            <span class="material-icons-round search-icon">search</span>
+            <input type="text" class="search-input" id="recommendation-search-input"
+              placeholder="Search recommendations, source, or item..." autocomplete="off">
+            <button class="search-clear hidden" id="recommendation-search-clear" type="button" aria-label="Clear recommendation search">
+              <span class="material-icons-round">close</span>
+            </button>
+          </div>
+          <div class="recommendation-filter-group" aria-label="Recommendation filters">
+            <button class="recommendation-filter-btn is-active" data-recommendation-filter="all" type="button">All</button>
+            <button class="recommendation-filter-btn" data-recommendation-filter="owned" type="button">Owned</button>
+            <button class="recommendation-filter-btn" data-recommendation-filter="craft" type="button">Craft</button>
+            <button class="recommendation-filter-btn" data-recommendation-filter="prime" type="button">Primes</button>
+            <button class="recommendation-filter-btn" data-recommendation-filter="intrinsics" type="button">Intrinsics</button>
+          </div>
+        </div>
+
+        <div class="recommendation-list" id="recommendation-list"></div>
+        <div class="recommendation-empty hidden" id="recommendation-empty">
+          <span class="material-icons-round">search_off</span>
+          <h3>No recommendation matches</h3>
+          <p>Try a broader search or switch back to All.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resource Search Panel (hidden by default) -->
+    <div class="resource-search-panel hidden" id="resource-search-panel">
+      <div class="content-topbar resource-search-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Resource Search</h1>
+          <span class="category-count" id="resource-count-text">Search resources, farms, and crafting usage.</span>
+        </div>
+      </div>
+
+      <div class="resource-search-content" id="resource-search-content">
+        <section class="resource-search-hero">
+          <div>
+            <span class="recommendation-kicker">Foundry Intelligence</span>
+            <h2>Find a resource and the best way to farm it.</h2>
+            <p>
+              Search by resource name, planet, mission, or farming tip. Each result combines the app item database with curated farm notes.
+            </p>
+          </div>
+        </section>
+
+        <div class="resource-search-layout">
+          <section class="resource-browser">
+            <div class="resource-search-controls">
+              <div class="search-container resource-search-box">
+                <span class="material-icons-round search-icon">search</span>
+                <input type="text" class="search-input" id="resource-search-input"
+                  placeholder="Search Orokin Cell, Argon Crystal, Deimos..." autocomplete="off">
+                <button class="search-clear hidden" id="resource-search-clear" type="button" aria-label="Clear resource search">
+                  <span class="material-icons-round">close</span>
+                </button>
+              </div>
+              <div class="resource-filter-group" aria-label="Resource filters">
+                <button class="resource-filter-btn is-active" data-resource-filter="all" type="button">All</button>
+                <button class="resource-filter-btn" data-resource-filter="common" type="button">Common</button>
+                <button class="resource-filter-btn" data-resource-filter="rare" type="button">Rare</button>
+                <button class="resource-filter-btn" data-resource-filter="open-world" type="button">Open World</button>
+                <button class="resource-filter-btn" data-resource-filter="railjack" type="button">Railjack</button>
+              </div>
+            </div>
+            <div class="resource-results-grid" id="resource-results-grid"></div>
+            <div class="resource-empty hidden" id="resource-empty">
+              <span class="material-icons-round">science_off</span>
+              <h3>No resources found</h3>
+              <p>Try searching a planet, open-world zone, or resource name.</p>
+            </div>
+          </section>
+
+          <aside class="resource-detail-card" id="resource-detail-card">
+            <div class="resource-detail-placeholder">
+              <span class="material-icons-round">travel_explore</span>
+              <h3>Select a resource</h3>
+              <p>Pick a result to see best farms, usage, farming tips, and a wiki shortcut.</p>
+            </div>
+          </aside>
         </div>
       </div>
     </div>

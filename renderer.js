@@ -48,6 +48,7 @@
   const RELIC_LOOKUP_CACHE_KEY = 'warframe_relic_projection_lookup_v1';
   const RELIC_DIRECTORY_CACHE_KEY = 'warframe_relic_directory_v2';
   const ARCANE_DIRECTORY_CACHE_KEY = 'warframe_arcane_directory_v2';
+  const RESOURCE_CATALOG_CACHE_KEY = 'warframe_resource_catalog_cache_v1';
   const NEWS_CACHE_KEY = 'warframe_news_cache_v1';
   const NIGHTWAVE_ARTICLE_REFRESH_TTL = 6 * 60 * 60 * 1000; // 6 hours
   const PRIME_RESURGENCE_CACHE_KEY = 'warframe_prime_resurgence_cache_v2';
@@ -115,10 +116,13 @@
   const RELIC_LOOKUP_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
   const RELIC_DIRECTORY_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
   const ARCANE_DIRECTORY_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+  const RESOURCE_CATALOG_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
   const RELIC_RENDER_BATCH_SIZE = 120;
   const ARCANE_RENDER_BATCH_SIZE = 72;
   const MOD_RENDER_BATCH_SIZE = 180;
   const ALL_ITEMS_RENDER_BATCH_SIZE = 120;
+  const RESOURCE_FEATURED_LIMIT = 64;
+  const RESOURCE_SEARCH_RESULT_LIMIT = 180;
   const WIKI_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
   const WIKI_ERROR_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
   const BUILD_SLOT_COUNT = 8;
@@ -147,6 +151,11 @@
   const SIROCCO_NAME_KEY = 'sirocco';
   const FOLLIE_NAME_KEY = 'follie';
   const ENKAUS_RIFLE_NAME_KEY = 'enkaus';
+  const FOUNDER_ITEM_KEYS = Object.freeze({
+    'excalibur prime': true,
+    'lato prime': true,
+    'skana prime': true
+  });
   const FOLLIE_THUMB_IMAGE = 'assets/Follie_Thumb.png';
   const ENKAUS_RIFLE_THUMB_IMAGE = 'enkaus-0ffed0644c.png';
   const MANUAL_CHECKLIST_ITEMS = Object.freeze([
@@ -289,6 +298,7 @@
   let recipeIndexByName = null;
   let recipeIndexByUnique = null;
   let recipeIndexPromise = null;
+  let recipeIndexWarmupStarted = false;
   let relicProjectionLookup = Object.create(null);
   let relicDirectory = [];
   let arcaneDirectory = [];
@@ -296,14 +306,26 @@
   let relicDirectoryPromise = null;
   let arcaneDirectoryPromise = null;
   let relicSearchQuery = '';
+  let relicRewardFilterMode = 'all';
   let arcaneSearchQuery = '';
   let relicVisibleCount = RELIC_RENDER_BATCH_SIZE;
   let arcaneVisibleCount = ARCANE_RENDER_BATCH_SIZE;
   let modVisibleCount = MOD_RENDER_BATCH_SIZE;
   let allVisibleCount = ALL_ITEMS_RENDER_BATCH_SIZE;
   let relicRenderFrame = 0;
+  let relicSearchRenderTimer = 0;
   let arcaneRenderFrame = 0;
   let primeRelicRewardsCache = Object.create(null);
+  let masteryDataRevision = 0;
+  let masteryItemLookupSource = null;
+  let masteryItemLookupCache = null;
+  let itemNameLookupSource = null;
+  let itemNameLookupCache = null;
+  let relicRewardCompletionCacheRevision = -1;
+  let relicRewardCompletionCache = Object.create(null);
+  let relicResultsCacheDirectory = null;
+  let relicResultsCacheKey = '';
+  let relicResultsCache = null;
   let primeCountdownTimer = null;
   let removeUpdateEventListener = null;
   let updateAvailableForDownload = false;
@@ -322,6 +344,19 @@
   let squadServerOnline = false;
   let squadServerCheckTimer = null;
   let squadServerBusy = false;
+  let recommendationSearchQuery = '';
+  let recommendationFilterMode = 'all';
+  let resourceSearchQuery = '';
+  let resourceFilterMode = 'all';
+  let selectedResourceName = '';
+  let resourceIndexCache = null;
+  let resourceCatalogItems = [];
+  let resourceCatalogLoaded = false;
+  let resourceCatalogPromise = null;
+  let resourceCatalogLookupSource = null;
+  let resourceCatalogLookupCache = null;
+  let resourceFallbackImageCache = Object.create(null);
+  let resourceRenderTimer = 0;
   let currentCycleTab = 'overview';
   let cycleSnapshot = null;
   let cycleCountdownTimer = null;
@@ -542,6 +577,24 @@
     squadSearchInput: $('#squad-search-input'),
     squadSearchClear: $('#squad-search-clear'),
     squadBoardGrid: $('#squad-board-grid'),
+    recommendationsPanel: $('#recommendations-panel'),
+    recommendationsContent: $('#recommendations-content'),
+    recommendationSummaryText: $('#recommendation-summary-text'),
+    recommendationOwnedCount: $('#recommendation-owned-count'),
+    recommendationNextXp: $('#recommendation-next-xp'),
+    recommendationCraftScore: $('#recommendation-craft-score'),
+    recommendationSearchInput: $('#recommendation-search-input'),
+    recommendationSearchClear: $('#recommendation-search-clear'),
+    recommendationList: $('#recommendation-list'),
+    recommendationEmpty: $('#recommendation-empty'),
+    resourceSearchPanel: $('#resource-search-panel'),
+    resourceSearchContent: $('#resource-search-content'),
+    resourceCountText: $('#resource-count-text'),
+    resourceSearchInput: $('#resource-search-input'),
+    resourceSearchClear: $('#resource-search-clear'),
+    resourceResultsGrid: $('#resource-results-grid'),
+    resourceDetailCard: $('#resource-detail-card'),
+    resourceEmpty: $('#resource-empty'),
     updateDownloadBtn: $('#btn-download-update'),
     settingsCheckUpdateBtn: $('#btn-settings-check-update'),
     settingsUpdateDetails: $('#settings-update-details'),
@@ -654,6 +707,313 @@
     { id: 'penjaga', label: 'Penjaga (Y)' },
     { id: 'umbra', label: 'Umbra' },
   ];
+
+  var RESOURCE_WEIGHT_OVERRIDES = {
+    'alloy plate': 1,
+    'ferrite': 1,
+    'nano spores': 1,
+    'salvage': 1,
+    'polymer bundle': 2,
+    'plastids': 2,
+    'rubedo': 2,
+    'circuits': 2,
+    'cryotic': 3,
+    'oxium': 5,
+    'hexenon': 6,
+    'morphics': 6,
+    'gallium': 7,
+    'control module': 7,
+    'neurodes': 8,
+    'neural sensors': 8,
+    'orokin cell': 9,
+    'tellurium': 12,
+    'argon crystal': 12,
+    'nitain extract': 14,
+    'entrati lanthorn': 13,
+    'scintillant': 13,
+    'seriglass shard': 15,
+    'cetus wisp': 11,
+    'breath of the eidolon': 10,
+    'toroid': 12,
+    'vega toroid': 12,
+    'calda toroid': 12,
+    'sola toroid': 12,
+    'lazulite toroid': 16,
+    'crisma toroid': 16,
+    'carbides': 4,
+    'copernics': 4,
+    'pustrels': 4,
+    'cubic diodes': 5,
+    'void traces': 5,
+    'kuva': 7,
+    'endo': 4,
+    'riven sliver': 9,
+    'voidplume pinion': 12,
+    'voidplume quill': 8,
+    'rune marrow': 9,
+    'pathos clamp': 11
+  };
+
+  var RESOURCE_FARM_NOTES = {
+    'alloy plate': {
+      rarity: 'Common',
+      group: 'common',
+      farms: ['Gabii, Ceres', 'Draco, Ceres', 'Piscinas, Saturn'],
+      tips: ['Run a fast endless Grineer mission with Nekros, Khora, or Hydroid.', 'Break containers while leveling gear on Ceres or Saturn.']
+    },
+    'argon crystal': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['Hepit, Void', 'Mot, Void', 'Ani, Void'],
+      tips: ['Argon decays over time, so farm it only when you are ready to craft.', 'Capture is fast for quick checks; Survival is better if you want a longer farm.']
+    },
+    'carbides': {
+      rarity: 'Railjack',
+      group: 'railjack',
+      farms: ['Earth Proxima Railjack', 'Saturn Proxima Railjack'],
+      tips: ['Clear fighters and crewships, then loot the battlefield before extraction.', 'A resource booster helps a lot because Railjack drops are clustered.']
+    },
+    'cetus wisp': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Plains of Eidolon lake edges at night'],
+      tips: ['Circle lakes with a fast frame, vacuum them up, then re-enter the Plains.', 'Night routes are usually the most consistent.']
+    },
+    'breath of the eidolon': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Plains of Eidolon bounties'],
+      tips: ['Check bounty reward rotations before farming.', 'Stack this with Cetus standing, mining, or fish goals to avoid dead runs.']
+    },
+    'circuits': {
+      rarity: 'Uncommon',
+      group: 'common',
+      farms: ['Gabii, Ceres', 'Seimeni, Ceres', 'Venus survival/defense nodes'],
+      tips: ['Ceres gives Circuits while also feeding Orokin Cell farms.', 'Use loot abilities if you need a large batch.']
+    },
+    'control module': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['Void missions', 'Neptune missions', 'Europa missions'],
+      tips: ['Void fissures are efficient because you can farm relic rewards at the same time.', 'You usually need fewer of these than common resources.']
+    },
+    'copernics': {
+      rarity: 'Railjack',
+      group: 'railjack',
+      farms: ['Earth Proxima Railjack', 'Venus Proxima Railjack'],
+      tips: ['Loot after objectives and destroy resource containers inside points of interest.', 'Run quick lower-level Proxima missions if you only need materials.']
+    },
+    'calda toroid': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Orb Vallis enrichment lab area'],
+      tips: ['Raise the alert level and keep killing enemies near the matching facility.', 'Bring survivability and loot boosters if you plan a longer run.']
+    },
+    'cubic diodes': {
+      rarity: 'Railjack',
+      group: 'railjack',
+      farms: ['Saturn Proxima Railjack', 'Veil Proxima Railjack'],
+      tips: ['Clear fighters and crewships, then loot before extraction.', 'Railjack resource pickups are easy to miss if you rush objectives.']
+    },
+    'cryotic': {
+      rarity: 'Mission',
+      group: 'common',
+      farms: ['Excavation missions', 'Hieracon, Pluto', 'Everest, Earth'],
+      tips: ['Each completed excavator gives Cryotic, so mission speed matters more than enemy level.', 'Bring defensive crowd control to keep excavators alive.']
+    },
+    'endo': {
+      rarity: 'Currency',
+      group: 'common',
+      farms: ['Arbitrations', 'Arena on Sedna', 'Railjack salvage'],
+      tips: ['Arbitrations are the strongest general-purpose Endo route once unlocked.', 'Dissolve duplicate mods when cleaning your inventory.']
+    },
+    'entrati lanthorn': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['Zariman missions', 'Albrecht Labs missions'],
+      tips: ['Use loot radar and check containers carefully.', 'Endless Zariman missions are good when you also need standing or arcanes.']
+    },
+    'ferrite': {
+      rarity: 'Common',
+      group: 'common',
+      farms: ['Apollodorus, Mercury', 'Void missions', 'Earth missions'],
+      tips: ['Ferrite comes naturally from early planets and Void runs.', 'If you are low, do a quick survival with a loot frame.']
+    },
+    'gallium': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['Mars missions', 'Uranus missions', 'Assassination nodes on Mars/Uranus'],
+      tips: ['Boss runs are a decent burst option.', 'Longer Uranus missions can double as Polymer Bundle farms.']
+    },
+    'hexenon': {
+      rarity: 'Uncommon',
+      group: 'rare',
+      farms: ['Jupiter disruption', 'Jupiter survival', 'Amalgam enemies on Jupiter'],
+      tips: ['Stay on Jupiter; Hexenon is tied strongly to the Gas City tileset.', 'Disruption is good if you can clear conduits quickly.']
+    },
+    'grokdrul': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Plains of Eidolon Grineer camps'],
+      tips: ['Break Grokdrul drums around camps and outposts.', 'Use a fast frame or Archwing route for quick loops.']
+    },
+    'iradite': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Plains of Eidolon red mineral formations'],
+      tips: ['Run a quick Plains route and break Iradite deposits from the air.', 'Higher bounty tiers can improve open-world resource gains.']
+    },
+    'kuva': {
+      rarity: 'Currency',
+      group: 'rare',
+      farms: ['Kuva Survival', 'Kuva Flood/Siphon alerts', 'Steel Path honors'],
+      tips: ['Kuva Survival is steady; Floods are good bursts when available.', 'Resource boosters and Smeeta charm make a big difference.']
+    },
+    'morphics': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['Mars missions', 'Mercury missions', 'Europa missions'],
+      tips: ['Early boss runs and short missions are enough for most crafting needs.', 'Break lockers and containers while rushing captures.']
+    },
+    'nano spores': {
+      rarity: 'Common',
+      group: 'common',
+      farms: ['Piscinas, Saturn', 'Gabii, Ceres', 'Deimos missions'],
+      tips: ['Saturn survival piles these up quickly.', 'Use endless Infested or Grineer nodes with a loot frame.']
+    },
+    'neural sensors': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['Cameria, Jupiter', 'Alad V, Jupiter', 'Kuva Fortress missions'],
+      tips: ['Jupiter is the reliable route for most players.', 'A short survival can beat repeated boss loading screens.']
+    },
+    'neurodes': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['E Prime, Earth', 'Magnacidium, Deimos', 'Tycho, Lua'],
+      tips: ['Earth is beginner-friendly; Lua is better if you can clear fast.', 'Bring loot radar and smash containers.']
+    },
+    'nitain extract': {
+      rarity: 'Alert',
+      group: 'rare',
+      farms: ['Nightwave Cred Offerings'],
+      tips: ['Nightwave is the dependable source. Save creds when you know a craft needs Nitain.', 'Do not rely on old alert routes; they are not the normal path anymore.']
+    },
+    'nistlepod': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Plains of Eidolon Nistlebrush plants'],
+      tips: ['Break Nistlebrush plants while doing Plains routes.', 'A loot detector makes plant clusters easier to notice.']
+    },
+    'orokin cell': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['Gabii, Ceres', 'Helene, Saturn', 'General Sargas Ruk, Saturn'],
+      tips: ['Ceres/Saturn survival and defense are the steady route.', 'Level gear on Helene while passively farming cells.']
+    },
+    'oxium': {
+      rarity: 'Uncommon',
+      group: 'rare',
+      farms: ['Corpus missions with Oxium Ospreys', 'Io, Jupiter', 'Galatea, Neptune'],
+      tips: ['Kill Oxium Ospreys before they self-destruct.', 'Corpus defense and mobile defense missions spawn them consistently.']
+    },
+    'pathos clamp': {
+      rarity: 'Duviri',
+      group: 'open-world',
+      farms: ['Duviri Orowyrm runs'],
+      tips: ['Complete full Duviri spirals and defeat the Orowyrm.', 'Steel Path Duviri gives more if you can clear it comfortably.']
+    },
+    'plastids': {
+      rarity: 'Uncommon',
+      group: 'common',
+      farms: ['Piscinas, Saturn', 'Ophelia, Uranus', 'Deimos missions'],
+      tips: ['Saturn survival is a comfortable early farm.', 'Ophelia is strong if you also want Polymer Bundle and Tellurium chances.']
+    },
+    'polymer bundle': {
+      rarity: 'Uncommon',
+      group: 'common',
+      farms: ['Ophelia, Uranus', 'Assur, Uranus', 'Venus missions'],
+      tips: ['Uranus survival is one of the best long farms.', 'Bring a loot frame if you are crafting energy pads or clan tech.']
+    },
+    'pustrels': {
+      rarity: 'Railjack',
+      group: 'railjack',
+      farms: ['Earth Proxima Railjack', 'Mining on Plains of Eidolon'],
+      tips: ['Railjack cleanup gives steady drops.', 'If you prefer open world, mine red veins on the Plains.']
+    },
+    'rubedo': {
+      rarity: 'Uncommon',
+      group: 'common',
+      farms: ['Earth missions', 'Phobos missions', 'Void missions'],
+      tips: ['Void fissures are efficient because you can farm relics and Rubedo together.', 'Earth is safe for early accounts.']
+    },
+    'salvage': {
+      rarity: 'Common',
+      group: 'common',
+      farms: ['Mars missions', 'Jupiter missions', 'Sedna missions'],
+      tips: ['Salvage stacks naturally while farming Mars and Jupiter.', 'Endless missions work best when you need thousands.']
+    },
+    'scintillant': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Cambion Drift vault bounties', 'Isolation Vaults'],
+      tips: ['Check bounty reward tables before committing to a run.', 'Isolation Vaults can be slow, so stack multiple Deimos goals.']
+    },
+    'seriglass shard': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Grandmother on Deimos'],
+      tips: ['Trade Grandmother tokens for the shard.', 'Farm family tokens first, then convert through Grandmother.']
+    },
+    'sola toroid': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Orb Vallis Temple of Profit area'],
+      tips: ['Keep the alert level up near the facility for enemy drops.', 'This is best done with a squad or durable loot setup.']
+    },
+    'tellurium': {
+      rarity: 'Rare',
+      group: 'rare',
+      farms: ['Ophelia, Uranus', 'Archwing missions', 'Railjack missions'],
+      tips: ['Ophelia is popular because submerged enemies can drop Tellurium.', 'Use loot abilities and stay longer if spawns are good.']
+    },
+    'thermal sludge': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Orb Vallis coolant containers'],
+      tips: ['Break containers around Corpus bases on Orb Vallis.', 'Farm it while doing Fortuna bounties or Toroid routes.']
+    },
+    'vega toroid': {
+      rarity: 'Open World',
+      group: 'open-world',
+      farms: ['Orb Vallis Spaceport area'],
+      tips: ['Raise the alert level at the Spaceport and stay in the area.', 'A loot frame and resource booster make toroid farming much less painful.']
+    },
+    'void traces': {
+      rarity: 'Relic',
+      group: 'rare',
+      farms: ['Void Fissure missions'],
+      tips: ['Run fast fissures and refine relics only when needed.', 'A resource booster increases trace gains.']
+    },
+    'voidplume pinion': {
+      rarity: 'Zariman',
+      group: 'rare',
+      farms: ['Zariman Angels'],
+      tips: ['Defeat dormant Void Angels during Zariman missions.', 'Bring an amp/operator setup that can handle the angel phase quickly.']
+    },
+    'voidplume quill': {
+      rarity: 'Zariman',
+      group: 'rare',
+      farms: ['Zariman missions', 'Zariman bounty rewards'],
+      tips: ['Search side rooms for Voidplumes while clearing objectives.', 'Use loot radar and learn the hidden-room routes.']
+    },
+    'rune marrow': {
+      rarity: 'Duviri',
+      group: 'open-world',
+      farms: ['Duviri Undercroft', 'Duviri resource containers'],
+      tips: ['Break containers during Undercroft stages and Duviri side routes.', 'Farm it while progressing Duviri intrinsics.']
+    }
+  };
 
   function escapeHtml(str) {
     const div = document.createElement('div');
@@ -958,6 +1318,8 @@
       masteryReq: item.masteryReq || 0,
       profileOnly: parseBooleanFlag(item.profileOnly),
       syncOptional: parseBooleanFlag(item.syncOptional),
+      unobtainable: parseBooleanFlag(item.unobtainable),
+      unobtainableReason: cleanDisplayText(item.unobtainableReason || ''),
       maxLevelCap: normalizeMaxLevelCap(item),
       levelStats: Array.isArray(item.levelStats) ? item.levelStats : [],
       rarity: cleanDisplayText(item.rarity || ''),
@@ -976,6 +1338,15 @@
       .replace(/[^a-z0-9+]+/g, ' ')
       .trim()
       .replace(/\s+/g, ' ');
+  }
+
+  function isUnobtainableItem(item) {
+    return !!(item && item.unobtainable === true);
+  }
+
+  function getUnobtainableReason(item) {
+    if (!isUnobtainableItem(item)) return '';
+    return cleanDisplayText(item.unobtainableReason || 'Unobtainable');
   }
 
   function cloneNormalizedChecklistItem(item) {
@@ -1004,6 +1375,8 @@
       masteryReq: source.masteryReq || 0,
       profileOnly: source.profileOnly === true,
       syncOptional: source.syncOptional === true,
+      unobtainable: source.unobtainable === true,
+      unobtainableReason: cleanDisplayText(source.unobtainableReason || ''),
       maxLevelCap: normalizeMaxLevelCap(source),
       levelStats: Array.isArray(source.levelStats) ? source.levelStats.slice() : [],
       rarity: cleanDisplayText(source.rarity || ''),
@@ -1223,6 +1596,17 @@
         }
       }
 
+      if (FOUNDER_ITEM_KEYS[key]) {
+        item.unobtainable = true;
+        item.unobtainableReason = 'Founder exclusive - no longer obtainable';
+        item.tradable = false;
+        item.hasVaultedStatus = false;
+        item.vaulted = false;
+        if (!String(item.description || '').trim()) {
+          item.description = item.name + ' is a Founder exclusive item and is no longer obtainable.';
+        }
+      }
+
       seenNames[toLookupKey(item.name)] = true;
     }
 
@@ -1287,6 +1671,15 @@
   }
 
   function getPrimeVaultStatusMeta(item) {
+    if (isUnobtainableItem(item)) {
+      return {
+        visible: true,
+        text: 'Founder Exclusive',
+        detail: getUnobtainableReason(item),
+        className: 'is-unobtainable'
+      };
+    }
+
     if (!item || !item.isPrime || !item.hasVaultedStatus) {
       return {
         visible: false,
@@ -3531,6 +3924,22 @@
     }
   }
 
+  function warmRecommendationRecipeData() {
+    if (recipeIndexWarmupStarted) return;
+    recipeIndexWarmupStarted = true;
+    ensureRecipeIndexLoaded().then(function() {
+      resourceIndexCache = null;
+      if (els.recommendationsPanel && !els.recommendationsPanel.classList.contains('hidden')) {
+        renderMasteryRecommendations();
+      }
+      if (els.resourceSearchPanel && !els.resourceSearchPanel.classList.contains('hidden')) {
+        renderResourceSearch();
+      }
+    }).catch(function(err) {
+      console.warn('Recipe warmup failed:', err && err.message ? err.message : err);
+    });
+  }
+
   function isLikelyPartName(componentName) {
     var name = String(componentName || '').toLowerCase();
     if (!name || name === 'blueprint') return false;
@@ -4828,6 +5237,7 @@
       var frameName = frameNames && frameNames[i] ? frameNames[i] : '';
       var frameItem = findPrimeWarframeItemByName(frameName);
       var imageUrl = getItemImageUrl(frameItem);
+      updatePrimeSlotMastery(slot, frameItem, frameName || 'Prime frame');
 
       if (imageUrl) {
         slot.src = imageUrl;
@@ -4864,6 +5274,7 @@
       var weaponName = weaponNames && weaponNames[i] ? weaponNames[i] : '';
       var weaponItem = findPrimeWeaponItemByName(weaponName);
       var imageUrl = getItemImageUrl(weaponItem);
+      updatePrimeSlotMastery(slot, weaponItem, weaponName || 'Prime weapon');
 
       if (imageUrl) {
         slot.src = imageUrl;
@@ -4874,6 +5285,21 @@
         slot.alt = 'Prime weapon';
         slot.classList.add('hidden');
       }
+    }
+  }
+
+  function updatePrimeSlotMastery(imgEl, item, label) {
+    var slot = imgEl && imgEl.parentElement ? imgEl.parentElement : null;
+    if (!slot) return;
+
+    var mastered = !!(item && isItemFullyRanked(item));
+    slot.classList.toggle('prime-slot-mastered', mastered);
+    if (mastered) {
+      slot.setAttribute('title', (label || item.name || 'Prime item') + ' mastered');
+      slot.setAttribute('aria-label', (label || item.name || 'Prime item') + ' mastered');
+    } else {
+      slot.removeAttribute('title');
+      slot.removeAttribute('aria-label');
     }
   }
 
@@ -4910,6 +5336,218 @@
     }
   }
 
+  function invalidateMasteryDerivedData(itemsChanged) {
+    masteryDataRevision++;
+    relicRewardCompletionCacheRevision = -1;
+    relicRewardCompletionCache = Object.create(null);
+    relicResultsCacheDirectory = null;
+    relicResultsCacheKey = '';
+    relicResultsCache = null;
+    if (itemsChanged) {
+      masteryItemLookupSource = null;
+      masteryItemLookupCache = null;
+      itemNameLookupSource = null;
+      itemNameLookupCache = null;
+    }
+  }
+
+  function getMasteryItemLookup() {
+    if (masteryItemLookupSource === allItems && masteryItemLookupCache) {
+      return masteryItemLookupCache;
+    }
+
+    var exact = Object.create(null);
+    var loose = [];
+    for (var i = 0; i < allItems.length; i++) {
+      var item = allItems[i];
+      if (!isMasteryRelevantItem(item)) continue;
+      var key = toLookupKey(normalizePrimeDisplayName(item.name));
+      if (!key) continue;
+      if (!exact[key]) exact[key] = item;
+      loose.push({ key: key, item: item });
+    }
+
+    masteryItemLookupSource = allItems;
+    masteryItemLookupCache = {
+      exact: exact,
+      loose: loose
+    };
+    return masteryItemLookupCache;
+  }
+
+  function findMasteryItemByName(name, allowLoose) {
+    var key = toLookupKey(normalizePrimeDisplayName(name));
+    if (!key) return null;
+
+    var lookup = getMasteryItemLookup();
+    if (lookup.exact[key]) return lookup.exact[key];
+    if (!allowLoose) return null;
+
+    for (var i = 0; i < lookup.loose.length; i++) {
+      var entry = lookup.loose[i];
+      if (entry.key.indexOf(key) !== -1 || key.indexOf(entry.key) !== -1) {
+        return entry.item;
+      }
+    }
+    return null;
+  }
+
+  function getRelicRewardBaseName(rewardName) {
+    var cleaned = normalizePrimeDisplayName(rewardName)
+      .replace(/\b(chassis|neuroptics|systems|barrel|receiver|stock|blade|handle|hilt|grip|string|link|stars|disc|guard|gauntlet|boot|pouch|chain|head|ornament|lower limb|upper limb)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return normalizePrimeDisplayName(cleaned);
+  }
+
+  function getRelicRewardCompletion(rewardName) {
+    var cleanName = cleanDisplayText(rewardName || '');
+    if (relicRewardCompletionCacheRevision !== masteryDataRevision) {
+      relicRewardCompletionCacheRevision = masteryDataRevision;
+      relicRewardCompletionCache = Object.create(null);
+    }
+
+    var cacheKey = toLookupKey(normalizePrimeDisplayName(cleanName));
+    if (cacheKey && Object.prototype.hasOwnProperty.call(relicRewardCompletionCache, cacheKey)) {
+      return relicRewardCompletionCache[cacheKey];
+    }
+
+    var directItem = findMasteryItemByName(cleanName, false);
+    var baseName = getRelicRewardBaseName(cleanName);
+    var baseItem = directItem || findMasteryItemByName(baseName, true);
+    var isPrimeReward = /\bprime\b/i.test(cleanName) || !!(baseItem && baseItem.isPrime);
+    var result;
+
+    if (directItem) {
+      var directlyComplete = isItemFullyRanked(directItem);
+      result = {
+        status: directlyComplete ? 'complete' : 'missing',
+        checkable: true,
+        isPrimeReward: isPrimeReward,
+        item: directItem,
+        baseItem: directItem,
+        baseComplete: directlyComplete,
+        label: directlyComplete
+          ? (directItem.name + ' mastered')
+          : (directItem.name + ' not mastered yet')
+      };
+    } else if (baseItem) {
+      var baseComplete = isItemFullyRanked(baseItem);
+      result = {
+        status: baseComplete ? 'base-complete' : 'base-missing',
+        checkable: false,
+        isPrimeReward: isPrimeReward,
+        item: null,
+        baseItem: baseItem,
+        baseComplete: baseComplete,
+        label: baseComplete
+          ? (baseItem.name + ' is mastered. Part ownership is not tracked by profile sync.')
+          : (baseItem.name + ' is not mastered yet. Part ownership is not tracked by profile sync.')
+      };
+    } else {
+      result = {
+        status: 'unknown',
+        checkable: false,
+        isPrimeReward: isPrimeReward,
+        item: null,
+        baseItem: null,
+        baseComplete: false,
+        label: 'No matching mastery item found'
+      };
+    }
+
+    if (cacheKey) relicRewardCompletionCache[cacheKey] = result;
+    return result;
+  }
+
+  function getRelicRewardStats(rewards) {
+    var stats = {
+      primeTotal: 0,
+      primeCompleted: 0,
+      primeMissing: 0,
+      knownTotal: 0,
+      knownCompleted: 0,
+      knownMissing: 0
+    };
+
+    if (!Array.isArray(rewards)) return stats;
+    for (var i = 0; i < rewards.length; i++) {
+      var reward = rewards[i] || {};
+      var completion = getRelicRewardCompletion(reward.name || '');
+      if (completion.status !== 'unknown') {
+        stats.knownTotal++;
+        if (completion.baseComplete) stats.knownCompleted++;
+        if (!completion.baseComplete) stats.knownMissing++;
+      }
+      if (completion.isPrimeReward) {
+        stats.primeTotal++;
+        if (completion.baseComplete) stats.primeCompleted++;
+        if (!completion.baseComplete) stats.primeMissing++;
+      }
+    }
+    return stats;
+  }
+
+  function getRelicRewardStatsForRelic(relic) {
+    if (!relic) return getRelicRewardStats([]);
+    if (relic._rewardStatsRevision === masteryDataRevision && relic._rewardStats) {
+      return relic._rewardStats;
+    }
+
+    var stats = getRelicRewardStats(relic.rewards);
+    try {
+      Object.defineProperty(relic, '_rewardStatsRevision', {
+        value: masteryDataRevision,
+        configurable: true
+      });
+      Object.defineProperty(relic, '_rewardStats', {
+        value: stats,
+        configurable: true
+      });
+    } catch (e) {
+      relic._rewardStatsRevision = masteryDataRevision;
+      relic._rewardStats = stats;
+    }
+    return stats;
+  }
+
+  function relicMatchesRewardFilter(relic) {
+    if (relicRewardFilterMode === 'all') return true;
+    var stats = getRelicRewardStatsForRelic(relic);
+    if (relicRewardFilterMode === 'missing') {
+      return stats.primeMissing > 0;
+    }
+    if (relicRewardFilterMode === 'completed') {
+      return stats.primeCompleted > 0;
+    }
+    return true;
+  }
+
+  function formatRelicRewardProgressFromStats(stats) {
+    stats = stats || {};
+    if (stats.primeTotal > 0) {
+      return stats.primeCompleted + '/' + stats.primeTotal + ' prime items mastered';
+    }
+    if (stats.knownTotal > 0) {
+      return stats.knownCompleted + '/' + stats.knownTotal + ' items mastered';
+    }
+    return 'Reward mastery unknown';
+  }
+
+  function formatRelicRewardProgress(rewards) {
+    return formatRelicRewardProgressFromStats(getRelicRewardStats(rewards));
+  }
+
+  function updatePrimeRelicCardProgress(card, rewards) {
+    if (!card) return;
+    var progress = card.querySelector('.prime-relic-progress');
+    if (!progress) return;
+    var stats = getRelicRewardStats(rewards);
+    progress.textContent = formatRelicRewardProgressFromStats(stats);
+    progress.classList.toggle('is-complete', stats.primeTotal > 0 && stats.primeCompleted >= stats.primeTotal);
+    progress.classList.toggle('is-partial', stats.primeCompleted > 0 && stats.primeCompleted < stats.primeTotal);
+  }
+
   function renderRelicRewards(hoverEl, rewards) {
     if (!hoverEl) return;
     hoverEl.textContent = '';
@@ -4922,11 +5560,24 @@
       return;
     }
 
+    var fragment = document.createDocumentFragment();
     for (var i = 0; i < rewards.length; i++) {
       var reward = rewards[i];
+      var completion = getRelicRewardCompletion(reward.name);
 
       var row = document.createElement('div');
-      row.className = 'prime-relic-reward-row';
+      row.className = 'prime-relic-reward-row is-' + completion.status;
+      row.title = completion.label;
+
+      var check = document.createElement('span');
+      check.className = 'prime-relic-reward-check is-' + completion.status;
+      check.setAttribute('aria-label', completion.label);
+      if (completion.checkable && completion.status === 'complete') {
+        var checkIcon = document.createElement('span');
+        checkIcon.className = 'material-icons-round';
+        checkIcon.textContent = 'check';
+        check.appendChild(checkIcon);
+      }
 
       var left = document.createElement('span');
       left.className = 'prime-relic-reward-name';
@@ -4937,10 +5588,12 @@
       var chance = formatRewardChance(reward.chance);
       right.textContent = cleanDisplayText(reward.rarity) + (chance ? ' - ' + chance : '');
 
+      row.appendChild(check);
       row.appendChild(left);
       row.appendChild(right);
-      hoverEl.appendChild(row);
+      fragment.appendChild(row);
     }
+    hoverEl.appendChild(fragment);
   }
 
   function renderPrimeRelics(relics) {
@@ -4979,21 +5632,27 @@
       hint.className = 'prime-relic-hint';
       hint.textContent = 'Hover to see drops';
 
+      var progress = document.createElement('div');
+      progress.className = 'prime-relic-progress';
+      progress.textContent = 'Checking reward mastery...';
+
       var hover = document.createElement('div');
       hover.className = 'prime-relic-hover';
       hover.innerHTML = '<div class="prime-relic-loading">Loading rewards...</div>';
 
       card.appendChild(title);
       card.appendChild(cost);
+      card.appendChild(progress);
       card.appendChild(hint);
       card.appendChild(hover);
       els.primeRelicsGrid.appendChild(card);
 
-      fetchRelicRewardsByName(relic.name).then(function(targetHover) {
+      fetchRelicRewardsByName(relic.name).then(function(targetHover, targetCard) {
         return function(rewards) {
+          updatePrimeRelicCardProgress(targetCard, rewards);
           renderRelicRewards(targetHover, rewards);
         };
-      }(hover));
+      }(hover, card));
     }
   }
 
@@ -5013,7 +5672,7 @@
       els.primeNextDate.textContent = nextDate ? ('Starts: ' + nextDate) : 'Starts: TBA';
     }
     if (els.primeRelicsSub) {
-      els.primeRelicsSub.textContent = 'Hover a relic to see in-game style rewards';
+      els.primeRelicsSub.textContent = 'Hover a relic to compare rewards with your mastered items';
     }
 
     updatePrimeFrameImages(data.currentFrames || [], [els.primeFrameAImg, els.primeFrameBImg], true);
@@ -5089,19 +5748,32 @@
 
   function getVisibleRelicResults() {
     if (!Array.isArray(relicDirectory) || relicDirectory.length === 0) return [];
+    var cacheKey = normalizeSearchText(relicSearchQuery) + '|' + relicRewardFilterMode + '|' + masteryDataRevision;
+    if (relicResultsCacheDirectory === relicDirectory && relicResultsCacheKey === cacheKey && Array.isArray(relicResultsCache)) {
+      return relicResultsCache;
+    }
+
+    var computedResults;
     if (!normalizeSearchText(relicSearchQuery)) {
-      return relicDirectory.map(function(relic) {
-        return {
-          relic: relic,
-          score: 0,
-          matchedRewards: []
-        };
-      });
+      computedResults = relicDirectory
+        .filter(relicMatchesRewardFilter)
+        .map(function(relic) {
+          return {
+            relic: relic,
+            score: 0,
+            matchedRewards: []
+          };
+        });
+      relicResultsCacheDirectory = relicDirectory;
+      relicResultsCacheKey = cacheKey;
+      relicResultsCache = computedResults;
+      return computedResults;
     }
 
     var results = [];
     for (var i = 0; i < relicDirectory.length; i++) {
       var relic = relicDirectory[i];
+      if (!relicMatchesRewardFilter(relic)) continue;
       var matchInfo = getRelicSearchMatches(relic, relicSearchQuery);
       if (!matchInfo) continue;
       results.push({
@@ -5115,6 +5787,9 @@
       if (b.score !== a.score) return b.score - a.score;
       return String(a.relic.displayName || a.relic.name || '').localeCompare(String(b.relic.displayName || b.relic.name || ''));
     });
+    relicResultsCacheDirectory = relicDirectory;
+    relicResultsCacheKey = cacheKey;
+    relicResultsCache = results;
     return results;
   }
 
@@ -5123,6 +5798,9 @@
     var visibleCount = Array.isArray(results) ? results.length : 0;
     var renderedCount = Math.min(visibleCount, relicVisibleCount);
     var hasQuery = !!normalizeSearchText(relicSearchQuery);
+    var filterLabel = relicRewardFilterMode === 'missing'
+      ? 'needed prime items'
+      : (relicRewardFilterMode === 'completed' ? 'mastered prime items' : 'all rewards');
 
     if (els.relicsTotalCount) {
       els.relicsTotalCount.textContent = totalCount ? totalCount.toLocaleString() : '0';
@@ -5132,13 +5810,13 @@
     }
     if (els.relicsCountText) {
       els.relicsCountText.textContent = hasQuery
-        ? 'Showing ' + renderedCount.toLocaleString() + ' of ' + visibleCount.toLocaleString() + ' matches for "' + relicSearchQuery + '".'
-        : 'Showing ' + renderedCount.toLocaleString() + ' of ' + totalCount.toLocaleString() + ' relics in the full in-game reward table.';
+        ? 'Showing ' + renderedCount.toLocaleString() + ' of ' + visibleCount.toLocaleString() + ' ' + filterLabel + ' matches for "' + relicSearchQuery + '".'
+        : 'Showing ' + renderedCount.toLocaleString() + ' of ' + visibleCount.toLocaleString() + ' relics filtered by ' + filterLabel + '.';
     }
     if (els.relicsSearchSummary) {
       els.relicsSearchSummary.textContent = hasQuery
         ? 'Matches by relic name and reward name'
-        : 'Search by relic name, Warframe, weapon, or prime part';
+        : 'Reward markers use mastered item status. Prime part ownership is not tracked.';
     }
   }
 
@@ -5149,6 +5827,9 @@
     if (els.relicSearchClear) {
       els.relicSearchClear.classList.toggle('hidden', !relicSearchQuery);
     }
+    document.querySelectorAll('.relic-reward-filter-btn[data-relic-reward-filter]').forEach(function(btn) {
+      btn.classList.toggle('is-active', (btn.getAttribute('data-relic-reward-filter') || 'all') === relicRewardFilterMode);
+    });
   }
 
   function scrollRelicsToTop(smooth) {
@@ -5160,8 +5841,23 @@
     els.relicsContent.scrollTop = 0;
   }
 
+  function scheduleRelicDirectoryRenderSoon(options) {
+    if (relicSearchRenderTimer) {
+      window.clearTimeout(relicSearchRenderTimer);
+      relicSearchRenderTimer = 0;
+    }
+    relicSearchRenderTimer = window.setTimeout(function() {
+      relicSearchRenderTimer = 0;
+      scheduleRelicDirectoryRender(options);
+    }, 70);
+  }
+
   function scheduleRelicDirectoryRender(options) {
     var opts = options || {};
+    if (relicSearchRenderTimer) {
+      window.clearTimeout(relicSearchRenderTimer);
+      relicSearchRenderTimer = 0;
+    }
     if (opts.resetLimit) {
       relicVisibleCount = RELIC_RENDER_BATCH_SIZE;
     }
@@ -5197,7 +5893,9 @@
     if (results.length === 0) {
       var empty = document.createElement('div');
       empty.className = 'prime-empty';
-      empty.textContent = relicSearchQuery
+      empty.textContent = relicRewardFilterMode !== 'all'
+        ? 'No relics matched this reward filter with your current mastered data.'
+        : relicSearchQuery
         ? 'No relics matched "' + relicSearchQuery + '". Try a broader item or relic name.'
         : 'No relics are available right now.';
       els.relicsGrid.appendChild(empty);
@@ -5235,8 +5933,19 @@
       countPill.className = 'relic-card-pill';
       countPill.textContent = relic.rewardCount + ' rewards';
 
+      var progressPill = document.createElement('span');
+      var rewardStats = getRelicRewardStatsForRelic(relic);
+      progressPill.className = 'relic-card-pill relic-card-progress-pill';
+      if (rewardStats.primeTotal > 0 && rewardStats.primeCompleted >= rewardStats.primeTotal) {
+        progressPill.classList.add('is-complete');
+      } else if (rewardStats.primeCompleted > 0) {
+        progressPill.classList.add('is-partial');
+      }
+      progressPill.textContent = formatRelicRewardProgressFromStats(rewardStats);
+
       pillRow.appendChild(tierPill);
       pillRow.appendChild(countPill);
+      pillRow.appendChild(progressPill);
 
       var detail = document.createElement('div');
       if (result.matchedRewards && result.matchedRewards.length > 0) {
@@ -5267,7 +5976,18 @@
 
       var hover = document.createElement('div');
       hover.className = 'prime-relic-hover';
-      renderRelicRewards(hover, relic.rewards);
+      hover.innerHTML = '<div class="prime-relic-loading">Drop table ready on hover</div>';
+
+      var renderRewardsOnce = function(targetHover, targetRewards) {
+        var rendered = false;
+        return function() {
+          if (rendered) return;
+          rendered = true;
+          renderRelicRewards(targetHover, targetRewards);
+        };
+      }(hover, relic.rewards);
+      card.addEventListener('pointerenter', renderRewardsOnce, { once: true });
+      card.addEventListener('focus', renderRewardsOnce, { once: true });
 
       card.appendChild(title);
       card.appendChild(meta);
@@ -6439,14 +7159,19 @@
       masteryRankValue = isItemFullyRanked(item) ? 'Checked' : 'Not checked';
       masteryXpValue = 'No mastery XP';
     }
+    if (isUnobtainableItem(item)) {
+      masteryRankValue = isItemFullyRanked(item) ? 'Mastered Founder item' : 'Unobtainable';
+      masteryXpValue = 'Excluded from normal completion';
+    }
 
     var summary = [
       { label: 'Category', value: item.category || '-' },
       { label: 'Type', value: item.type || '-' },
+      isUnobtainableItem(item) ? { label: 'Status', value: getUnobtainableReason(item) } : null,
       { label: 'Level', value: masteryRankValue },
       { label: 'Mastery XP', value: masteryXpValue },
       { label: 'Mastery Req', value: String(item.masteryReq || 0) }
-    ];
+    ].filter(Boolean);
 
     for (var i = 0; i < summary.length; i++) {
       var block = document.createElement('div');
@@ -6560,6 +7285,11 @@
       if (seen[key]) return;
       seen[key] = true;
       hints.push({ main: m, sub: s });
+    }
+
+    if (isUnobtainableItem(item)) {
+      add('Founder Exclusive', getUnobtainableReason(item) + '. This item stays visible for reference, but it is excluded from normal completion tracking.');
+      return hints;
     }
 
     if (nameLower.indexOf('kuva ') === 0) {
@@ -6792,6 +7522,1154 @@
         container.appendChild(row);
       }
     }
+  }
+
+  function getComponentQuantity(component) {
+    var comp = component || {};
+    var candidates = [comp.itemCount, comp.count, comp.quantity, comp.qty];
+    for (var i = 0; i < candidates.length; i++) {
+      var value = Number(candidates[i]);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return 1;
+  }
+
+  function getComponentDisplayName(component) {
+    var comp = component || {};
+    return cleanDisplayText(comp.name || comp.itemName || comp.type || '');
+  }
+
+  function getItemNameLookup() {
+    if (itemNameLookupSource === allItems && itemNameLookupCache) {
+      return itemNameLookupCache;
+    }
+
+    var lookup = Object.create(null);
+    for (var i = 0; i < allItems.length; i++) {
+      var item = allItems[i] || {};
+      var key = toLookupKey(item.name);
+      if (key && !lookup[key]) lookup[key] = item;
+    }
+    itemNameLookupSource = allItems;
+    itemNameLookupCache = lookup;
+    return lookup;
+  }
+
+  function getResourceCatalogLookup() {
+    if (resourceCatalogLookupSource === resourceCatalogItems && resourceCatalogLookupCache) {
+      return resourceCatalogLookupCache;
+    }
+
+    var lookup = Object.create(null);
+    for (var i = 0; i < resourceCatalogItems.length; i++) {
+      var item = resourceCatalogItems[i] || {};
+      var key = toLookupKey(item.name);
+      if (key && !lookup[key]) lookup[key] = item;
+    }
+
+    resourceCatalogLookupSource = resourceCatalogItems;
+    resourceCatalogLookupCache = lookup;
+    return lookup;
+  }
+
+  function getResourceCatalogItemByExactName(name) {
+    var key = toLookupKey(name);
+    if (!key) return null;
+    return getResourceCatalogLookup()[key] || null;
+  }
+
+  function getCatalogItemByExactName(name) {
+    var key = toLookupKey(name);
+    if (!key) return null;
+    return getItemNameLookup()[key] || getResourceCatalogItemByExactName(name) || null;
+  }
+
+  function shouldExcludeResourceCatalogName(name) {
+    var key = toLookupKey(name);
+    if (!key) return true;
+    return /^(?:alert)?(?:reward)?fusionbundle/.test(key) ||
+      /fusionbundle/.test(key) ||
+      /circuit(?:repeatable|silver)/.test(key) ||
+      /^cetustier[a-z]*endo/.test(key) ||
+      key === 'plantitem';
+  }
+
+  function isActualResourceCatalogItem(item) {
+    if (!item || !item.name || shouldExcludeResourceCatalogName(item.name)) return false;
+    var category = String(item.category || '').trim().toLowerCase();
+    var type = String(item.type || '').trim().toLowerCase();
+    var productCategory = String(item.productCategory || '').trim().toLowerCase();
+    var nameKey = toLookupKey(item.name);
+
+    if (category === 'resources' && /^(resource|gem|plant)$/.test(type)) return true;
+    if (category === 'fish' && type === 'fish') return true;
+    if (category === 'misc' && /^(resource|fish part|cut gem|conservation tag|conservation prey|pet resource|fish bait)$/.test(type)) return true;
+    if (category === 'pets' && type === 'pet resource') return true;
+    if (category === 'gear' && /bait/.test(nameKey) && /fish|bait/.test(type + ' ' + productCategory)) return true;
+    return false;
+  }
+
+  function normalizeResourceCatalogItems(rawItems) {
+    var seen = Object.create(null);
+    var out = [];
+    var sourceItems = Array.isArray(rawItems) ? rawItems : [];
+
+    for (var i = 0; i < sourceItems.length; i++) {
+      var item = normalizeItem(sourceItems[i] || {});
+      var key = toLookupKey(item.name);
+      if (!key || seen[key] || !isActualResourceCatalogItem(item)) continue;
+      seen[key] = true;
+      out.push(item);
+    }
+
+    out.sort(function(a, b) {
+      return a.name.localeCompare(b.name);
+    });
+    return out;
+  }
+
+  function saveResourceCatalogToCache(items) {
+    try {
+      localStorage.setItem(RESOURCE_CATALOG_CACHE_KEY, JSON.stringify({
+        timestamp: Date.now(),
+        items: items
+      }));
+    } catch (e) { /* ignore resource catalog cache failures */ }
+  }
+
+  function loadResourceCatalogFromCache() {
+    try {
+      var raw = localStorage.getItem(RESOURCE_CATALOG_CACHE_KEY);
+      if (!raw) return null;
+      var cached = JSON.parse(raw);
+      if (!cached || Date.now() - Number(cached.timestamp || 0) > RESOURCE_CATALOG_CACHE_TTL) return null;
+      if (!Array.isArray(cached.items)) return null;
+      return normalizeResourceCatalogItems(cached.items);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function applyResourceCatalogItems(items) {
+    resourceCatalogItems = Array.isArray(items) ? items : [];
+    resourceCatalogLoaded = true;
+    resourceCatalogLookupSource = null;
+    resourceCatalogLookupCache = null;
+    resourceIndexCache = null;
+  }
+
+  async function ensureResourceCatalogLoaded() {
+    if (resourceCatalogLoaded) return resourceCatalogItems;
+    if (resourceCatalogPromise) return resourceCatalogPromise;
+
+    var cached = loadResourceCatalogFromCache();
+    if (cached && cached.length > 0) {
+      applyResourceCatalogItems(cached);
+      return resourceCatalogItems;
+    }
+
+    resourceCatalogPromise = fetchAllItemsResilient()
+      .then(function(rawItems) {
+        var normalized = normalizeResourceCatalogItems(rawItems);
+        applyResourceCatalogItems(normalized);
+        saveResourceCatalogToCache(normalized);
+        return resourceCatalogItems;
+      })
+      .catch(function(err) {
+        console.warn('Resource catalog load failed:', err);
+        applyResourceCatalogItems([]);
+        return resourceCatalogItems;
+      })
+      .finally(function() {
+        resourceCatalogPromise = null;
+      });
+
+    return resourceCatalogPromise;
+  }
+
+  function isEquipmentCatalogItem(item) {
+    if (!item) return false;
+    if (isMasteryRelevantItem(item)) return true;
+    var category = String(item.category || '').toLowerCase();
+    var type = String(item.type || '').toLowerCase();
+    var productCategory = String(item.productCategory || '').toLowerCase();
+    if (/\b(resource|gem|fish|fish part|plant|cut gem|pet resource)\b/.test(type + ' ' + category)) return false;
+    return /warframe|primary|secondary|melee|archgun|archmelee|robotic|companion|vehicle|weapon|longguns|pistols|melee/.test(category + ' ' + productCategory);
+  }
+
+  function isCatalogResourceLike(item) {
+    if (!item || !item.name) return false;
+    if (getResourceNoteByName(item.name)) return true;
+    var explicitText = normalizeSearchText([item.category, item.type, item.productCategory].join(' '));
+    if (/\b(resources?|gems?|fish|fish part|plants?|cut gem|pet resource)\b/.test(explicitText)) return true;
+    if (isEquipmentCatalogItem(item)) return false;
+    var text = normalizeSearchText([
+      item.category,
+      item.type,
+      item.productCategory,
+      item.description,
+      Array.isArray(item.tags) ? item.tags.join(' ') : ''
+    ].join(' '));
+    return /\b(resource|resources|crafting component|component|gem|fish|ore|mineral|plant|residue|antigen|mutagen|toroid|voidplume)\b/.test(text);
+  }
+
+  function isNonResourceCraftName(name) {
+    var key = toLookupKey(name);
+    if (!key) return true;
+    if (key === 'credits' || key === 'platinum' || key === 'blueprint') return true;
+    if (key === 'forma' || key === 'built forma' || key === 'exilus adapter') return true;
+    if (key.indexOf('ayatan ') === 0) return true;
+    var catalogItem = getCatalogItemByExactName(name);
+    if (catalogItem) return !isCatalogResourceLike(catalogItem);
+    if (isLikelyPartName(name)) return true;
+    return /\b(set|prime set|chassis|neuroptics|systems|barrel|receiver|stock|blade|handle|hilt|grip|string|link|casing|engine|capsule|pouch|band|guard|gauntlet|boot|cerebrum|carapace|subcortex|wings|harness|fuselage)\b/i.test(String(name || ''));
+  }
+
+  function getResourceWeight(name) {
+    var key = toLookupKey(name);
+    if (Object.prototype.hasOwnProperty.call(RESOURCE_WEIGHT_OVERRIDES, key)) {
+      return RESOURCE_WEIGHT_OVERRIDES[key];
+    }
+    if (/nitain|lanthorn|scintillant|seriglass|tellurium|argon|toroid/.test(key)) return 12;
+    if (/cell|sensor|neurode|gallium|morphic|module|kuva/.test(key)) return 8;
+    if (/wisp|eidolon|voidplume|pathos|rune/.test(key)) return 9;
+    if (/bundle|plastid|rubedo|circuit|cryotic|hexenon|oxium/.test(key)) return 4;
+    return 3;
+  }
+
+  function mergeCraftResource(map, name, quantity) {
+    var cleanName = cleanDisplayText(name);
+    var key = toLookupKey(cleanName);
+    if (!key || isNonResourceCraftName(cleanName)) return;
+    var qty = Number(quantity);
+    if (!Number.isFinite(qty) || qty <= 0) qty = 1;
+    if (!map[key]) {
+      map[key] = {
+        name: cleanName,
+        quantity: 0,
+        weight: getResourceWeight(cleanName)
+      };
+    }
+    map[key].quantity += qty;
+  }
+
+  function collectCraftResourcesFromComponents(components, multiplier, map, depth) {
+    if (!Array.isArray(components) || depth > 4) return;
+    var scale = Number(multiplier);
+    if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+
+    for (var i = 0; i < components.length; i++) {
+      var comp = components[i] || {};
+      var name = getComponentDisplayName(comp);
+      if (!name) continue;
+
+      var quantity = getComponentQuantity(comp) * scale;
+      var nested = Array.isArray(comp.components) ? comp.components : [];
+      if (nested.length > 0) {
+        collectCraftResourcesFromComponents(nested, quantity, map, depth + 1);
+      }
+
+      if (!isNonResourceCraftName(name)) {
+        mergeCraftResource(map, name, quantity);
+      }
+    }
+  }
+
+  function getCraftResourceEntries(item) {
+    var map = Object.create(null);
+    if (item && Array.isArray(item.components)) {
+      for (var i = 0; i < item.components.length; i++) {
+        var comp = item.components[i] || {};
+        var recipe = getRecipeCandidate(item, comp);
+        if (recipe && Array.isArray(recipe.components) && recipe.components.length > 0) {
+          collectCraftResourcesFromComponents(recipe.components, getComponentQuantity(comp), map, 1);
+        } else {
+          collectCraftResourcesFromComponents([comp], 1, map, 0);
+        }
+      }
+    }
+    return Object.values(map).sort(function(a, b) {
+      var scoreDiff = (b.quantity * b.weight) - (a.quantity * a.weight);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  function getCraftPressure(item) {
+    var resources = getCraftResourceEntries(item);
+    var score = 0;
+    for (var i = 0; i < resources.length; i++) {
+      score += resources[i].quantity * resources[i].weight;
+    }
+    if (item && typeof item.buildPrice === 'number' && item.buildPrice > 0) {
+      score += Math.round(item.buildPrice / 250);
+    }
+    if (item && typeof item.bpCost === 'number' && item.bpCost > 0) {
+      score += Math.round(item.bpCost / 500);
+    }
+
+    var label = 'Unknown';
+    var tone = 'unknown';
+    if (score > 0 && score < 2500) {
+      label = 'Easy';
+      tone = 'easy';
+    } else if (score < 12000) {
+      label = score > 0 ? 'Medium' : 'Unknown';
+      tone = score > 0 ? 'medium' : 'unknown';
+    } else if (score < 45000) {
+      label = 'Heavy';
+      tone = 'heavy';
+    } else if (score >= 45000) {
+      label = 'Expensive';
+      tone = 'expensive';
+    }
+
+    return {
+      score: Math.round(score),
+      label: label,
+      tone: tone,
+      resources: resources
+    };
+  }
+
+  function getCraftPressureLabelFromScore(score) {
+    var value = Number(score);
+    if (!Number.isFinite(value) || value <= 0) return '--';
+    if (value < 2500) return 'Easy';
+    if (value < 12000) return 'Medium';
+    if (value < 45000) return 'Heavy';
+    return 'Expensive';
+  }
+
+  function getDropLocationTextFromItem(item) {
+    var out = [];
+    var seen = Object.create(null);
+
+    function add(text) {
+      var clean = cleanDisplayText(text || '');
+      var key = toLookupKey(clean);
+      if (!key || seen[key]) return;
+      seen[key] = true;
+      out.push(clean);
+    }
+
+    function ingest(drops) {
+      if (!Array.isArray(drops)) return;
+      for (var i = 0; i < drops.length; i++) {
+        add(drops[i] && drops[i].location);
+      }
+    }
+
+    if (item) {
+      ingest(item.drops);
+      if (Array.isArray(item.components)) {
+        for (var c = 0; c < item.components.length; c++) {
+          var comp = item.components[c] || {};
+          ingest(comp.drops);
+          if (Array.isArray(comp.components)) {
+            for (var s = 0; s < comp.components.length; s++) {
+              ingest(comp.components[s] && comp.components[s].drops);
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  function getRecommendationSourceKind(item, locations, craftPressure) {
+    var search = normalizeSearchText([
+      item && item.name,
+      item && item.description,
+      item && item.uniqueName,
+      locations.join(' '),
+      item && item.isPrime ? 'prime relic' : ''
+    ].join(' '));
+
+    if (item && item.isPrime) {
+      if (/\b(lith|meso|neo|axi|requiem|relic|void fissure)\b/.test(search)) {
+        return {
+          filter: 'prime',
+          priority: 6,
+          label: 'Prime with relic route',
+          reason: 'Prime item. Farm or open relics for the missing parts.'
+        };
+      }
+      return {
+        filter: 'prime',
+        priority: 7,
+        label: 'Partial prime route',
+        reason: 'Prime item with limited relic data. Check relics or trading for the missing parts.'
+      };
+    }
+
+    if (/\b(quest|junction|story|sacrifice|war within|new war|heart of deimos|mask of the revenant|hidden messages|limbo theorem|octavia)\b/.test(search)) {
+      return {
+        filter: 'craft',
+        priority: 4,
+        label: 'Story blueprint',
+        reason: 'Looks tied to a quest or story source, so finish that unlock before farming resources.'
+      };
+    }
+
+    if (/\b(clan|dojo|tenno lab|chem lab|bio lab|energy lab|clantech|research)\b/.test(search)) {
+      return {
+        filter: 'craft',
+        priority: 5,
+        label: 'Clan blueprint',
+        reason: 'Likely Clan Dojo research. Grab the blueprint from the matching lab, then craft it.'
+      };
+    }
+
+    if ((craftPressure && craftPressure.resources.length > 0) || (item && (item.bpCost > 0 || item.buildPrice > 0 || (Array.isArray(item.components) && item.components.length > 0)))) {
+      return {
+        filter: 'craft',
+        priority: 3,
+        label: 'Craftable blueprint',
+        reason: 'Recipe data exists, so this is a good foundry target after owned gear.'
+      };
+    }
+
+    return {
+      filter: 'all',
+      priority: 8,
+      label: 'Unmastered item',
+      reason: 'No clear recipe route found in the local item data. Open details or wiki to plan it.'
+    };
+  }
+
+  function buildItemRecommendation(item) {
+    if (!isMasteryRelevantItem(item) || isItemFullyRanked(item)) return null;
+    var maxRank = getItemMaxRank(item);
+    if (maxRank <= 0) return null;
+
+    var rank = getStoredItemRank(item);
+    var remainingXp = Math.max(0, getItemXP(item) - getTrackedItemXp(item));
+    var craftPressure = getCraftPressure(item);
+    var locations = getDropLocationTextFromItem(item);
+    var source = getRecommendationSourceKind(item, locations, craftPressure);
+    var filter = source.filter;
+    var priority = source.priority;
+    var label = source.label;
+    var reason = source.reason;
+
+    if (rank > 0 && rank < maxRank) {
+      filter = 'owned';
+      priority = 1;
+      label = 'Finish owned gear';
+      reason = 'You already have progress on this item. Finish leveling it before starting a new craft.';
+    }
+
+    return {
+      kind: 'item',
+      uniqueName: item.uniqueName,
+      title: item.name,
+      imageUrl: getItemImageUrl(item),
+      category: item.category,
+      type: item.type || item.category,
+      rank: rank,
+      maxRank: maxRank,
+      rankLabel: 'Level ' + rank + ' / ' + maxRank,
+      remainingXp: remainingXp,
+      priority: priority,
+      filter: filter,
+      label: label,
+      reason: reason,
+      craft: craftPressure,
+      sources: locations.slice(0, 4),
+      searchText: normalizeSearchText([
+        item.name,
+        item.category,
+        item.type,
+        label,
+        reason,
+        locations.join(' '),
+        craftPressure.resources.map(function(r) { return r.name; }).join(' ')
+      ].join(' '))
+    };
+  }
+
+  function buildIntrinsicRecommendations() {
+    var extras = getMasteryExtrasBreakdown();
+    var cards = [];
+
+    function addIntrinsic(id, title, currentRanks, maxRanks, description) {
+      if (currentRanks >= maxRanks) return;
+      var remainingRanks = maxRanks - currentRanks;
+      cards.push({
+        kind: 'intrinsic',
+        uniqueName: 'intrinsic:' + id,
+        title: title,
+        imageUrl: '',
+        category: 'Intrinsics',
+        type: 'Account Progress',
+        rank: currentRanks,
+        maxRank: maxRanks,
+        rankLabel: currentRanks + ' / ' + maxRanks + ' ranks',
+        remainingXp: remainingRanks * INTRINSIC_RANK_XP,
+        priority: 2,
+        filter: 'intrinsics',
+        label: 'Intrinsic ranks',
+        reason: description,
+        craft: { score: 0, label: 'No craft', tone: 'easy', resources: [] },
+        sources: ['MR Calculator', 'Profile Sync'],
+        searchText: normalizeSearchText(title + ' intrinsic account railjack duviri mastery ranks ' + description)
+      });
+    }
+
+    addIntrinsic('railjack', 'Railjack Intrinsics', extras.railjackRanks, RAILJACK_INTRINSIC_RANK_MAX, 'Intrinsic ranks give mastery XP and should be handled before deeper blueprint grinds.');
+    addIntrinsic('duviri', 'Duviri Intrinsics', extras.duviriRanks, DUVIRI_INTRINSIC_RANK_MAX, 'Duviri intrinsics are account mastery. Keep them in your next-session checklist.');
+    return cards;
+  }
+
+  function getAllMasteryRecommendations() {
+    var cards = buildIntrinsicRecommendations();
+    for (var i = 0; i < allItems.length; i++) {
+      var card = buildItemRecommendation(allItems[i]);
+      if (card) cards.push(card);
+    }
+
+    cards.sort(function(a, b) {
+      if (a.priority !== b.priority) return a.priority - b.priority;
+      if (b.rank !== a.rank) return b.rank - a.rank;
+      if (b.remainingXp !== a.remainingXp) return b.remainingXp - a.remainingXp;
+      return a.title.localeCompare(b.title);
+    });
+    return cards;
+  }
+
+  function getVisibleMasteryRecommendations() {
+    var query = normalizeSearchText(recommendationSearchQuery);
+    var cards = getAllMasteryRecommendations();
+    return cards.filter(function(card) {
+      if (recommendationFilterMode !== 'all' && card.filter !== recommendationFilterMode) return false;
+      if (query && card.searchText.indexOf(query) === -1) return false;
+      return true;
+    });
+  }
+
+  function syncRecommendationControls() {
+    if (els.recommendationSearchInput && els.recommendationSearchInput.value !== recommendationSearchQuery) {
+      els.recommendationSearchInput.value = recommendationSearchQuery;
+    }
+    if (els.recommendationSearchClear) {
+      els.recommendationSearchClear.classList.toggle('hidden', !recommendationSearchQuery);
+    }
+    document.querySelectorAll('.recommendation-filter-btn[data-recommendation-filter]').forEach(function(btn) {
+      btn.classList.toggle('is-active', (btn.getAttribute('data-recommendation-filter') || 'all') === recommendationFilterMode);
+    });
+  }
+
+  function renderMasteryRecommendations() {
+    if (!els.recommendationList) return;
+    var allCards = getAllMasteryRecommendations();
+    var cards = getVisibleMasteryRecommendations();
+    syncRecommendationControls();
+
+    var ownedCount = allCards.filter(function(card) { return card.filter === 'owned'; }).length;
+    var totalRemainingXp = allCards.reduce(function(sum, card) { return sum + (card.remainingXp || 0); }, 0);
+    var craftCards = allCards.filter(function(card) { return card.craft && card.craft.score > 0; });
+    var averageCraft = craftCards.length
+      ? Math.round(craftCards.reduce(function(sum, card) { return sum + card.craft.score; }, 0) / craftCards.length)
+      : 0;
+
+    if (els.recommendationOwnedCount) els.recommendationOwnedCount.textContent = ownedCount.toLocaleString();
+    if (els.recommendationNextXp) els.recommendationNextXp.textContent = totalRemainingXp.toLocaleString() + ' XP';
+    if (els.recommendationCraftScore) els.recommendationCraftScore.textContent = getCraftPressureLabelFromScore(averageCraft);
+    if (els.recommendationSummaryText) {
+      els.recommendationSummaryText.textContent = cards.length.toLocaleString() + ' visible - ' + allCards.length.toLocaleString() + ' total next mastery targets';
+    }
+
+    els.recommendationList.textContent = '';
+    if (els.recommendationEmpty) {
+      els.recommendationEmpty.classList.toggle('hidden', cards.length > 0);
+    }
+
+    if (cards.length === 0) return;
+
+    var fragment = document.createDocumentFragment();
+    var limit = Math.min(cards.length, 120);
+    for (var i = 0; i < limit; i++) {
+      var card = cards[i];
+      var node = document.createElement('article');
+      node.className = 'recommendation-card recommendation-priority-' + card.priority;
+      node.setAttribute('data-recommendation-kind', card.kind);
+
+      var imgHtml = card.imageUrl
+        ? '<img src="' + escapeHtml(card.imageUrl) + '" alt="' + escapeHtml(card.title) + '" loading="lazy">'
+        : '<span class="material-icons-round recommendation-card-placeholder">' + (card.kind === 'intrinsic' ? 'account_tree' : 'inventory_2') + '</span>';
+      var resourceChips = card.craft.resources.slice(0, 4).map(function(resource) {
+        return '<span class="recommendation-resource-chip">' + escapeHtml(resource.name) + ' x' + escapeHtml(String(resource.quantity.toLocaleString())) + '</span>';
+      }).join('');
+      var sourceChips = card.sources.slice(0, 3).map(function(source) {
+        return '<span class="recommendation-source-chip">' + escapeHtml(source) + '</span>';
+      }).join('');
+      var openButton = card.kind === 'item'
+        ? '<button class="recommendation-action-btn" type="button" data-recommendation-open="' + escapeHtml(card.uniqueName) + '"><span class="material-icons-round">open_in_new</span>Details</button>'
+        : '<button class="recommendation-action-btn" type="button" data-recommendation-calculator><span class="material-icons-round">calculate</span>MR Calculator</button>';
+      var wikiButton = card.kind === 'item'
+        ? '<button class="recommendation-action-btn secondary" type="button" data-recommendation-wiki="' + escapeHtml(card.title) + '"><span class="material-icons-round">menu_book</span>Wiki</button>'
+        : '';
+
+      node.innerHTML =
+        '<div class="recommendation-card-media">' + imgHtml + '</div>' +
+        '<div class="recommendation-card-main">' +
+          '<div class="recommendation-card-head">' +
+            '<div>' +
+              '<div class="recommendation-card-kicker">' + escapeHtml(card.label) + '</div>' +
+              '<h3 class="recommendation-card-title">' + escapeHtml(card.title) + '</h3>' +
+            '</div>' +
+            '<span class="recommendation-priority-badge">P' + escapeHtml(String(card.priority)) + '</span>' +
+          '</div>' +
+          '<div class="recommendation-card-meta">' +
+            '<span>' + escapeHtml(card.type || card.category) + '</span>' +
+            '<span>' + escapeHtml(card.rankLabel) + '</span>' +
+            '<span>' + escapeHtml((card.remainingXp || 0).toLocaleString()) + ' XP left</span>' +
+          '</div>' +
+          '<p class="recommendation-card-reason">' + escapeHtml(card.reason) + '</p>' +
+          '<div class="recommendation-card-row">' +
+            '<span class="recommendation-difficulty is-' + escapeHtml(card.craft.tone) + '">' + escapeHtml(card.craft.label) + '</span>' +
+            '<div class="recommendation-chip-row">' + (resourceChips || sourceChips || '<span class="recommendation-source-chip">Open details for source data</span>') + '</div>' +
+          '</div>' +
+          '<div class="recommendation-source-row">' + sourceChips + '</div>' +
+          '<div class="recommendation-card-actions">' + openButton + wikiButton + '</div>' +
+        '</div>';
+      fragment.appendChild(node);
+    }
+
+    if (cards.length > limit) {
+      var more = document.createElement('div');
+      more.className = 'recommendation-more-card';
+      more.textContent = 'Showing the first ' + limit.toLocaleString() + ' recommendations. Use search or filters to narrow the list.';
+      fragment.appendChild(more);
+    }
+
+    els.recommendationList.appendChild(fragment);
+  }
+
+  function getResourceNoteByName(name) {
+    return RESOURCE_FARM_NOTES[toLookupKey(name)] || null;
+  }
+
+  function getComponentImageUrl(component) {
+    var comp = component || {};
+    var imageName = String(comp.imageName || comp.image_name || comp.icon || comp.thumbnail || '').trim();
+    if (!imageName) return '';
+    return getItemImageUrl({
+      name: getComponentDisplayName(comp),
+      imageName: imageName,
+      wikiaThumbnail: comp.wikiaThumbnail || ''
+    });
+  }
+
+  function formatResourceTitle(name) {
+    return String(name || '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(function(part) { return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase(); })
+      .join(' ');
+  }
+
+  function getResourceCatalogImage(name) {
+    var item = getResourceCatalogItemByExactName(name) || getCatalogItemByExactName(name);
+    if (!item || !isCatalogResourceLike(item)) return '';
+    return getItemImageUrl(item);
+  }
+
+  function createResourceEntry(name) {
+    var cleanName = cleanDisplayText(name);
+    if (cleanName === cleanName.toLowerCase()) cleanName = formatResourceTitle(cleanName);
+    var note = getResourceNoteByName(cleanName);
+    var catalogImage = getResourceCatalogImage(cleanName);
+    return {
+      name: cleanName,
+      key: toLookupKey(cleanName),
+      rarity: note && note.rarity ? note.rarity : 'Resource',
+      group: note && note.group ? note.group : (getResourceWeight(cleanName) >= 7 ? 'rare' : 'common'),
+      farms: note && Array.isArray(note.farms) ? note.farms.slice() : [],
+      tips: note && Array.isArray(note.tips) ? note.tips.slice() : [],
+      usedBy: [],
+      sources: [],
+      description: '',
+      imageUrl: catalogImage,
+      catalog: !!catalogImage,
+      featured: false,
+      curated: !!note,
+      searchText: ''
+    };
+  }
+
+  function escapeSvgText(text) {
+    return String(text || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function getResourceInitials(name) {
+    var parts = String(name || '')
+      .split(/\s+/)
+      .filter(function(part) {
+        return part && !/^(of|the|and)$/i.test(part);
+      });
+    if (parts.length === 0) return 'R';
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+  }
+
+  function getResourceFallbackImageUrl(entry) {
+    var safeEntry = entry || {};
+    var key = safeEntry.key || toLookupKey(safeEntry.name) || 'resource';
+    if (resourceFallbackImageCache[key]) return resourceFallbackImageCache[key];
+
+    var group = String(safeEntry.group || '').toLowerCase();
+    var accent = group === 'railjack' ? '#71d7ff' : (group === 'open-world' ? '#9dffcf' : (group === 'rare' ? '#ffe158' : '#dce9ec'));
+    var glow = group === 'rare' ? '#735f13' : (group === 'railjack' ? '#16455a' : '#1d4b43');
+    var initials = escapeSvgText(getResourceInitials(safeEntry.name));
+    var svg =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">' +
+        '<defs>' +
+          '<radialGradient id="g" cx="50%" cy="34%" r="62%">' +
+            '<stop offset="0" stop-color="' + accent + '" stop-opacity="0.54"/>' +
+            '<stop offset="0.52" stop-color="' + glow + '" stop-opacity="0.36"/>' +
+            '<stop offset="1" stop-color="#102930" stop-opacity="1"/>' +
+          '</radialGradient>' +
+        '</defs>' +
+        '<rect width="96" height="96" rx="16" fill="url(#g)"/>' +
+        '<path d="M48 13 75 29v35L48 82 21 64V29z" fill="none" stroke="' + accent + '" stroke-width="4" stroke-opacity="0.78"/>' +
+        '<path d="M48 24 66 35v23L48 70 30 58V35z" fill="#dce9ec" fill-opacity="0.11" stroke="#ffffff" stroke-opacity="0.18"/>' +
+        '<circle cx="48" cy="47" r="15" fill="' + accent + '" fill-opacity="0.22"/>' +
+        '<text x="48" y="55" text-anchor="middle" font-family="Arial, sans-serif" font-size="22" font-weight="800" fill="#ffffff">' + initials + '</text>' +
+      '</svg>';
+
+    resourceFallbackImageCache[key] = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+    return resourceFallbackImageCache[key];
+  }
+
+  function getResourceVisualUrl(entry) {
+    return entry && entry.imageUrl ? entry.imageUrl : getResourceFallbackImageUrl(entry);
+  }
+
+  function isKnownResourceName(name) {
+    var key = toLookupKey(name);
+    if (!key || isNonResourceCraftName(name)) return false;
+    if (Object.prototype.hasOwnProperty.call(RESOURCE_FARM_NOTES, key)) return true;
+    if (Object.prototype.hasOwnProperty.call(RESOURCE_WEIGHT_OVERRIDES, key)) return true;
+    var catalogItem = getCatalogItemByExactName(name);
+    if (catalogItem) return isCatalogResourceLike(catalogItem);
+    return /\b(resource|ore|gem|mineral|spore|plate|bundle|alloy|cell|sensor|neurode|module|crystal|extract|toroid|wisp|kuva|endo|plume|marrow|clamp|lanthorn|tellurium|hexenon|oxium|cryotic|rubedo|plastid|ferrite|salvage|circuit)\b/i.test(String(name || ''));
+  }
+
+  function mergeResourceIndexCraftResource(map, name, quantity) {
+    if (!isKnownResourceName(name)) return;
+    mergeCraftResource(map, name, quantity);
+  }
+
+  function collectResourceIndexCraftResources(components, multiplier, map, depth) {
+    if (!Array.isArray(components) || depth > 3) return;
+    var scale = Number(multiplier);
+    if (!Number.isFinite(scale) || scale <= 0) scale = 1;
+
+    for (var i = 0; i < components.length; i++) {
+      var comp = components[i] || {};
+      var name = getComponentDisplayName(comp);
+      if (!name) continue;
+
+      var quantity = getComponentQuantity(comp) * scale;
+      mergeResourceIndexCraftResource(map, name, quantity);
+
+      if (Array.isArray(comp.components) && comp.components.length > 0) {
+        collectResourceIndexCraftResources(comp.components, quantity, map, depth + 1);
+      }
+    }
+  }
+
+  function getResourceIndexCraftEntries(item) {
+    var map = Object.create(null);
+    if (item && Array.isArray(item.components)) {
+      collectResourceIndexCraftResources(item.components, 1, map, 0);
+    }
+    return Object.values(map).sort(function(a, b) {
+      var scoreDiff = (b.quantity * b.weight) - (a.quantity * a.weight);
+      if (scoreDiff !== 0) return scoreDiff;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  function addUniqueText(list, text, limit) {
+    var clean = cleanDisplayText(text || '');
+    if (!clean) return;
+    for (var i = 0; i < list.length; i++) {
+      if (toLookupKey(list[i]) === toLookupKey(clean)) return;
+    }
+    if (!limit || list.length < limit) list.push(clean);
+  }
+
+  function addResourceSource(entry, drop, label) {
+    if (!entry || !drop) return;
+    var location = cleanDisplayText(drop.location || '');
+    if (!location) return;
+    var chance = formatPercentChance(drop.chance);
+    var rarity = cleanDisplayText(drop.rarity || '');
+    var parts = [location];
+    if (label) parts.push(label);
+    if (chance) parts.push(chance);
+    if (rarity) parts.push(rarity);
+    addUniqueText(entry.sources, joinDisplayParts(parts), 12);
+  }
+
+  function getOrCreateResource(index, name) {
+    var cleanName = cleanDisplayText(name);
+    var key = toLookupKey(cleanName);
+    if (!key || isNonResourceCraftName(cleanName)) return null;
+    if (!index[key]) index[key] = createResourceEntry(cleanName);
+    return index[key];
+  }
+
+  function isResourceCatalogItem(item) {
+    return isActualResourceCatalogItem(item) || isCatalogResourceLike(item);
+  }
+
+  function getResourceCatalogGroup(item, fallbackName) {
+    var text = normalizeSearchText([
+      item && item.name,
+      fallbackName,
+      item && item.category,
+      item && item.type,
+      item && item.productCategory,
+      item && item.description
+    ].join(' '));
+
+    if (/\b(railjack|asterite|carbides|cubic diodes|copernics|pustrels|komms|ticor|kesslers)\b/.test(text)) return 'railjack';
+    if (/\b(fish|bait|gem|ore|mineral|plant|conservation|tag|toroid|voca|voidplume|cetus|eidolon|fortuna|vallis|deimos|cambion|duviri|zariman|hollvania)\b/.test(text)) return 'open-world';
+    if (getResourceWeight((item && item.name) || fallbackName) >= 7) return 'rare';
+    return 'common';
+  }
+
+  function buildResourceIndex() {
+    if (resourceIndexCache) return resourceIndexCache;
+    var index = Object.create(null);
+
+    Object.keys(RESOURCE_FARM_NOTES).forEach(function(key) {
+      getOrCreateResource(index, formatResourceTitle(key));
+    });
+
+    for (var ci = 0; ci < resourceCatalogItems.length; ci++) {
+      var catalogItem = resourceCatalogItems[ci];
+      if (!catalogItem || !isResourceCatalogItem(catalogItem)) continue;
+      var catalogResource = getOrCreateResource(index, catalogItem.name);
+      if (!catalogResource) continue;
+      catalogResource.catalog = true;
+      catalogResource.imageUrl = catalogResource.imageUrl || getItemImageUrl(catalogItem);
+      catalogResource.description = catalogResource.description || cleanDisplayText(catalogItem.description || '');
+      catalogResource.rarity = catalogResource.curated ? catalogResource.rarity : cleanDisplayText(catalogItem.type || catalogItem.category || 'Resource');
+      if (!catalogResource.curated) {
+        catalogResource.group = getResourceCatalogGroup(catalogItem, catalogResource.name);
+      }
+      if (Array.isArray(catalogItem.drops)) {
+        for (var cdi = 0; cdi < catalogItem.drops.length; cdi++) {
+          addResourceSource(catalogResource, catalogItem.drops[cdi], catalogItem.type || catalogItem.category);
+        }
+      }
+    }
+
+    for (var i = 0; i < allItems.length; i++) {
+      var item = allItems[i];
+      if (!item) continue;
+
+      if (isResourceCatalogItem(item)) {
+        var catalogEntry = getOrCreateResource(index, item.name);
+        if (catalogEntry) {
+          catalogEntry.catalog = true;
+          catalogEntry.imageUrl = catalogEntry.imageUrl || getItemImageUrl(item);
+          if (Array.isArray(item.drops)) {
+            for (var d = 0; d < item.drops.length; d++) {
+              addResourceSource(catalogEntry, item.drops[d], item.type || item.category);
+            }
+          }
+        }
+      }
+
+      var resources = getResourceIndexCraftEntries(item);
+      for (var r = 0; r < resources.length; r++) {
+        var res = resources[r];
+        var entry = getOrCreateResource(index, res.name);
+        if (!entry) continue;
+        entry.usedBy.push({
+          itemName: item.name,
+          uniqueName: item.uniqueName,
+          category: item.category,
+          quantity: res.quantity,
+          mastered: isItemFullyRanked(item),
+          masteryRelevant: isMasteryRelevantItem(item)
+        });
+      }
+
+      if (Array.isArray(item.components)) {
+        for (var c = 0; c < item.components.length; c++) {
+          var comp = item.components[c] || {};
+          var compName = getComponentDisplayName(comp);
+          if (!isKnownResourceName(compName)) continue;
+          var compEntry = getOrCreateResource(index, compName);
+          if (compEntry) {
+            compEntry.imageUrl = compEntry.imageUrl || getComponentImageUrl(comp);
+            if (Array.isArray(comp.drops)) {
+              for (var cd = 0; cd < comp.drops.length; cd++) {
+                addResourceSource(compEntry, comp.drops[cd], item.name);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    var entries = Object.values(index).filter(function(entry) {
+      return entry && entry.name && (entry.catalog || entry.curated || entry.usedBy.length > 0 || entry.sources.length > 0);
+    });
+
+    for (var e = 0; e < entries.length; e++) {
+      var current = entries[e];
+      current.usedBy.sort(function(a, b) {
+        if (a.masteryRelevant !== b.masteryRelevant) return a.masteryRelevant ? -1 : 1;
+        if (a.mastered !== b.mastered) return a.mastered ? 1 : -1;
+        return a.itemName.localeCompare(b.itemName);
+      });
+      current.searchText = normalizeSearchText([
+        current.name,
+        current.rarity,
+        current.group,
+        current.catalog ? 'catalog resource searchable' : '',
+        current.farms.join(' '),
+        current.tips.join(' '),
+        current.sources.join(' '),
+        current.usedBy.slice(0, 20).map(function(u) { return u.itemName; }).join(' ')
+      ].join(' '));
+      current.featured = !!(current.curated || current.usedBy.length > 0 || current.sources.length > 0);
+    }
+
+    entries.sort(function(a, b) {
+      if (a.curated !== b.curated) return a.curated ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    resourceIndexCache = entries;
+    return entries;
+  }
+
+  function getVisibleResources() {
+    var query = normalizeSearchText(resourceSearchQuery);
+    var entries = buildResourceIndex();
+    var results = [];
+    var featuredShown = 0;
+
+    for (var i = 0; i < entries.length; i++) {
+      var entry = entries[i];
+      if (resourceFilterMode !== 'all' && entry.group !== resourceFilterMode) continue;
+      if (!query) {
+        if (!entry.featured) continue;
+        if (featuredShown >= RESOURCE_FEATURED_LIMIT) continue;
+        featuredShown++;
+      } else if (entry.searchText.indexOf(query) === -1) {
+        continue;
+      }
+      results.push(entry);
+    }
+
+    if (query) {
+      results.sort(function(a, b) {
+        var aName = normalizeSearchText(a.name);
+        var bName = normalizeSearchText(b.name);
+        var aScore = aName === query ? 100 : (aName.indexOf(query) === 0 ? 50 : 0);
+        var bScore = bName === query ? 100 : (bName.indexOf(query) === 0 ? 50 : 0);
+        if (aScore !== bScore) return bScore - aScore;
+        return a.name.localeCompare(b.name);
+      });
+    }
+
+    return results;
+  }
+
+  function syncResourceSearchControls() {
+    if (els.resourceSearchInput && els.resourceSearchInput.value !== resourceSearchQuery) {
+      els.resourceSearchInput.value = resourceSearchQuery;
+    }
+    if (els.resourceSearchClear) {
+      els.resourceSearchClear.classList.toggle('hidden', !resourceSearchQuery);
+    }
+    document.querySelectorAll('.resource-filter-btn[data-resource-filter]').forEach(function(btn) {
+      btn.classList.toggle('is-active', (btn.getAttribute('data-resource-filter') || 'all') === resourceFilterMode);
+    });
+  }
+
+  function renderResourceDetail(entry) {
+    if (!els.resourceDetailCard) return;
+    if (!entry) {
+      els.resourceDetailCard.innerHTML =
+        '<div class="resource-detail-placeholder">' +
+          '<span class="material-icons-round">travel_explore</span>' +
+          '<h3>Select a resource</h3>' +
+          '<p>Pick a result to see best farms, usage, farming tips, and a wiki shortcut.</p>' +
+        '</div>';
+      return;
+    }
+
+    var farms = entry.farms.length
+      ? entry.farms.map(function(farm) { return '<li>' + escapeHtml(farm) + '</li>'; }).join('')
+      : '<li>Open the wiki or item details for current drop-table data.</li>';
+    var tips = entry.tips.length
+      ? entry.tips.map(function(tip) { return '<li>' + escapeHtml(tip) + '</li>'; }).join('')
+      : '<li>Use loot frames, resource boosters, and longer endless runs when the drop source supports it.</li>';
+    var mediaUrl = getResourceVisualUrl(entry);
+    var media = '<div class="resource-detail-media"><img src="' + escapeHtml(mediaUrl) + '" alt="' + escapeHtml(entry.name) + '" loading="lazy"></div>';
+    var usedBy = entry.usedBy.slice(0, 10).map(function(usage) {
+      return '<button class="resource-used-item" type="button" data-resource-open-item="' + escapeHtml(usage.uniqueName) + '">' +
+        '<span>' + escapeHtml(usage.itemName) + '</span>' +
+        '<small>' + escapeHtml(usage.category || 'Item') + ' - x' + escapeHtml(String(usage.quantity.toLocaleString())) + '</small>' +
+      '</button>';
+    }).join('');
+    var sources = entry.sources.slice(0, 8).map(function(source) {
+      return '<li>' + escapeHtml(source) + '</li>';
+    }).join('');
+
+    els.resourceDetailCard.innerHTML =
+      '<div class="resource-detail-head">' +
+        media +
+        '<div>' +
+          '<span class="resource-detail-kicker">' + escapeHtml(entry.rarity) + '</span>' +
+          '<h2>' + escapeHtml(entry.name) + '</h2>' +
+        '</div>' +
+        '<button class="resource-wiki-btn" type="button" data-resource-wiki="' + escapeHtml(entry.name) + '">' +
+          '<span class="material-icons-round">menu_book</span>Wiki' +
+        '</button>' +
+      '</div>' +
+      '<div class="resource-detail-section">' +
+        '<h3><span class="material-icons-round">place</span>Best Farms</h3>' +
+        '<ul>' + farms + '</ul>' +
+      '</div>' +
+      '<div class="resource-detail-section">' +
+        '<h3><span class="material-icons-round">tips_and_updates</span>Farm Tips</h3>' +
+        '<ul>' + tips + '</ul>' +
+      '</div>' +
+      (sources ? '<div class="resource-detail-section"><h3><span class="material-icons-round">list_alt</span>Drop Data</h3><ul>' + sources + '</ul></div>' : '') +
+      '<div class="resource-detail-section">' +
+        '<h3><span class="material-icons-round">construction</span>Used By</h3>' +
+        '<div class="resource-used-list">' + (usedBy || '<div class="resource-detail-muted">No crafting usage found in the current item data.</div>') + '</div>' +
+      '</div>';
+  }
+
+  function setResourceSearchLoading(message) {
+    if (els.resourceResultsGrid) {
+      els.resourceResultsGrid.innerHTML = '<div class="resource-more-card">' + escapeHtml(message || 'Loading resources...') + '</div>';
+    }
+    if (els.resourceCountText) {
+      els.resourceCountText.textContent = 'Preparing resource index...';
+    }
+    renderResourceDetail(null);
+  }
+
+  function scheduleResourceSearchRender(delay) {
+    if (resourceRenderTimer) {
+      window.clearTimeout(resourceRenderTimer);
+      resourceRenderTimer = 0;
+    }
+    if (!resourceCatalogLoaded) {
+      setResourceSearchLoading('Loading all Warframe resources...');
+      ensureResourceCatalogLoaded().then(function() {
+        resourceIndexCache = null;
+        scheduleResourceSearchRender(0);
+      });
+      return;
+    }
+    if (!resourceIndexCache) {
+      setResourceSearchLoading('Loading resources...');
+    }
+    resourceRenderTimer = window.setTimeout(function() {
+      resourceRenderTimer = 0;
+      renderResourceSearch();
+    }, typeof delay === 'number' ? delay : 50);
+  }
+
+  function renderResourceSearch() {
+    if (!els.resourceResultsGrid) return;
+    if (!resourceCatalogLoaded) {
+      setResourceSearchLoading('Loading all Warframe resources...');
+      ensureResourceCatalogLoaded().then(function() {
+        resourceIndexCache = null;
+        renderResourceSearch();
+      });
+      return;
+    }
+
+    var entries;
+    var results;
+    try {
+      entries = buildResourceIndex();
+      results = getVisibleResources();
+      syncResourceSearchControls();
+    } catch (err) {
+      console.error('Resource search render failed:', err);
+      els.resourceResultsGrid.innerHTML = '<div class="resource-empty"><span class="material-icons-round">error</span><h3>Resources could not load</h3><p>' + escapeHtml(err && err.message ? err.message : 'Unexpected resource index error.') + '</p></div>';
+      if (els.resourceCountText) {
+        els.resourceCountText.textContent = 'Resource search failed to load.';
+      }
+      renderResourceDetail(null);
+      return;
+    }
+
+    var hasQuery = !!normalizeSearchText(resourceSearchQuery);
+    if (els.resourceCountText) {
+      els.resourceCountText.textContent = hasQuery
+        ? results.length.toLocaleString() + ' matches from ' + entries.length.toLocaleString() + ' searchable resources.'
+        : 'Showing ' + results.length.toLocaleString() + ' starter resources - search ' + entries.length.toLocaleString() + ' total resources, fish, gems, and materials.';
+    }
+
+    if (!selectedResourceName && results.length > 0) {
+      selectedResourceName = results[0].name;
+    }
+    var selectedEntry = null;
+    for (var i = 0; i < results.length; i++) {
+      if (toLookupKey(results[i].name) === toLookupKey(selectedResourceName)) {
+        selectedEntry = results[i];
+        break;
+      }
+    }
+    if (!selectedEntry && results.length > 0) {
+      selectedEntry = results[0];
+      selectedResourceName = selectedEntry.name;
+    }
+
+    els.resourceResultsGrid.textContent = '';
+    if (els.resourceEmpty) {
+      els.resourceEmpty.classList.toggle('hidden', results.length > 0);
+    }
+
+    var fragment = document.createDocumentFragment();
+    var limit = hasQuery ? results.length : Math.min(results.length, RESOURCE_SEARCH_RESULT_LIMIT);
+    for (var r = 0; r < limit; r++) {
+      var entry = results[r];
+      var card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'resource-result-card' + (toLookupKey(entry.name) === toLookupKey(selectedResourceName) ? ' is-selected' : '');
+      card.setAttribute('data-resource-name', entry.name);
+      var resultMedia = '<span class="resource-result-media"><img src="' + escapeHtml(getResourceVisualUrl(entry)) + '" alt="' + escapeHtml(entry.name) + '" loading="lazy"></span>';
+      card.innerHTML =
+        resultMedia +
+        '<span class="resource-result-main">' +
+          '<strong>' + escapeHtml(entry.name) + '</strong>' +
+          '<small>' + escapeHtml(entry.rarity) + ' - ' + escapeHtml(entry.usedBy.length.toLocaleString()) + ' craft uses</small>' +
+        '</span>';
+      fragment.appendChild(card);
+    }
+
+    if (results.length > limit) {
+      var more = document.createElement('div');
+      more.className = 'resource-more-card';
+      more.textContent = 'Showing ' + limit.toLocaleString() + ' results. Keep typing to narrow the full resource catalog.';
+      fragment.appendChild(more);
+    }
+
+    els.resourceResultsGrid.appendChild(fragment);
+    renderResourceDetail(selectedEntry);
   }
 
   function isWikiTabActive() {
@@ -9369,6 +11247,8 @@
       if ((a.maxLevelCap || 0) !== (b.maxLevelCap || 0)) return false;
       if (!!a.profileOnly !== !!b.profileOnly) return false;
       if (!!a.syncOptional !== !!b.syncOptional) return false;
+      if (!!a.unobtainable !== !!b.unobtainable) return false;
+      if ((a.unobtainableReason || '') !== (b.unobtainableReason || '')) return false;
     }
 
     return true;
@@ -9378,7 +11258,9 @@
     var changed = !areItemsEquivalent(allItems, items);
     tradabilityPromise = null;
     tradabilityEnriched = false;
+    resourceIndexCache = null;
     allItems = items;
+    invalidateMasteryDerivedData(true);
     saveToCache(allItems);
     if (!initialLoad) {
       reconcileMasteryProgressWithItems();
@@ -9481,7 +11363,11 @@
   }
 
   function isMasteryRelevantItem(item) {
-    return !!item && item.category !== 'Mods' && item.masterable === true;
+    return !!item && item.category !== 'Mods' && item.masterable === true && !isUnobtainableItem(item);
+  }
+
+  function isChecklistCountableItem(item) {
+    return !!item && !isUnobtainableItem(item);
   }
 
   // ---------- Data Loading ----------
@@ -9489,6 +11375,7 @@
     const cached = loadFromCache();
     if (cached) {
       allItems = cached;
+      invalidateMasteryDerivedData(true);
       tradabilityPromise = null;
       tradabilityEnriched = false;
       saveToCache(allItems);
@@ -9693,7 +11580,9 @@
       } else {
         masteredSet.delete(item.uniqueName);
       }
-      return shouldOwn !== wasOwned;
+      var modChanged = shouldOwn !== wasOwned;
+      if (modChanged) invalidateMasteryDerivedData(false);
+      return modChanged;
     }
 
     var maxRank = getItemMaxRank(item);
@@ -9706,7 +11595,9 @@
         masteredSet.delete(item.uniqueName);
       }
       delete itemLevelMap[item.uniqueName];
-      return shouldMark !== wasMarked;
+      var unrankedChanged = shouldMark !== wasMarked;
+      if (unrankedChanged) invalidateMasteryDerivedData(false);
+      return unrankedChanged;
     }
 
     var nextRank = clampWholeNumber(rank, 0, maxRank);
@@ -9725,6 +11616,7 @@
       masteredSet.delete(item.uniqueName);
     }
 
+    invalidateMasteryDerivedData(false);
     return true;
   }
 
@@ -9791,7 +11683,10 @@
       }
     }
 
-    if (changed) saveMasteryProgress();
+    if (changed) {
+      invalidateMasteryDerivedData(false);
+      saveMasteryProgress();
+    }
   }
 
   function getTrackedItemMasteryXp() {
@@ -9899,6 +11794,10 @@
   function toggleMastered(uniqueName) {
     var item = findChecklistItemByUniqueName(uniqueName);
     if (!item) return;
+    if (isUnobtainableItem(item) && !isItemFullyRanked(item)) {
+      openItemInfoModal(item);
+      return;
+    }
 
     if (item.category === 'Mods') {
       setItemRank(item, masteredSet.has(uniqueName) ? 0 : 1);
@@ -9914,6 +11813,7 @@
   // ---------- Item Rendering ----------
   function onItemsLoaded() {
     els.loadingContainer.classList.add('hidden');
+    resourceIndexCache = null;
     loadBuilds();
     loadMastered();
     loadItemLevels();
@@ -9923,6 +11823,13 @@
     applyFilters();
     updateStats();
     renderStarchartNightwavePanel();
+    if (els.recommendationsPanel && !els.recommendationsPanel.classList.contains('hidden')) {
+      renderMasteryRecommendations();
+    }
+    if (els.resourceSearchPanel && !els.resourceSearchPanel.classList.contains('hidden')) {
+      renderResourceSearch();
+    }
+    warmRecommendationRecipeData();
     initItemsAutoRefresh();
   }
 
@@ -9933,7 +11840,7 @@
       if (currentCategory === 'all' && item.category === 'Mods') return false;
       if (currentCategory !== 'all' && item.category !== currentCategory) return false;
       if (currentFilter === 'mastered' && !isItemFullyRanked(item)) return false;
-      if (currentFilter === 'unmastered' && isItemFullyRanked(item)) return false;
+      if (currentFilter === 'unmastered' && (isItemFullyRanked(item) || isUnobtainableItem(item))) return false;
       if (normalizedSearchQuery && normalizeSearchText(item.name).indexOf(normalizedSearchQuery) === -1) return false;
       return true;
     });
@@ -10316,6 +12223,9 @@
 
   function getItemProgressLabel(item) {
     if (!item || item.category === 'Mods') return '';
+    if (isUnobtainableItem(item)) {
+      return isItemFullyRanked(item) ? 'Founder exclusive - optional mastery' : getUnobtainableReason(item);
+    }
     var rank = getStoredItemRank(item);
     var maxRank = getItemMaxRank(item);
     var trackedXp = getTrackedItemXp(item);
@@ -10326,10 +12236,25 @@
     return 'Rank ' + rank + '/' + maxRank + ' - ' + trackedXp.toLocaleString() + '/' + totalXp.toLocaleString() + ' XP';
   }
 
+  function getItemTileNameLabel(item) {
+    if (!item) return '';
+    if (item.category === 'Mods') return item.name || '';
+    var maxRank = getItemMaxRank(item);
+    if (maxRank <= 0) return item.name || '';
+    return (item.name || 'Item') + ' [' + getStoredItemRank(item) + ']';
+  }
+
   function updateItemCardProgress(card, item) {
     if (!card || !item) return;
     var fullyRanked = isItemFullyRanked(item);
     card.classList.toggle('mastered', fullyRanked);
+    card.classList.toggle('unobtainable', isUnobtainableItem(item));
+
+    var nameEl = card.querySelector('.item-card-name');
+    if (nameEl) {
+      nameEl.textContent = getItemTileNameLabel(item);
+      nameEl.title = item.name || '';
+    }
 
     var xpEl = card.querySelector('.item-card-xp');
     if (xpEl && item.category !== 'Mods') {
@@ -10355,6 +12280,7 @@
   }
 
   function commitItemRankChange(card, item) {
+    resourceIndexCache = null;
     saveMasteryProgress();
     updateCounts();
     updateStats();
@@ -10425,8 +12351,13 @@
 
   function createItemCard(item, index) {
     var card = document.createElement('div');
-    card.className = 'item-card' + (isItemFullyRanked(item) ? ' mastered' : '');
+    var itemIsUnobtainable = isUnobtainableItem(item);
+    card.className = 'item-card' + (isItemFullyRanked(item) ? ' mastered' : '') + (itemIsUnobtainable ? ' unobtainable' : '');
     if (item.category === 'Mods') card.setAttribute('data-mastery-label', 'OWNED');
+    if (itemIsUnobtainable) {
+      card.setAttribute('data-unobtainable-label', 'FOUNDER');
+      card.title = getUnobtainableReason(item);
+    }
     card.setAttribute('data-unique-name', item.uniqueName);
     card.style.animationDelay = Math.min(index * 15, 400) + 'ms';
 
@@ -10478,11 +12409,19 @@
     var nameDiv = document.createElement('div');
     nameDiv.className = 'item-card-name';
     nameDiv.title = item.name;
-    nameDiv.textContent = item.name;
+    nameDiv.textContent = getItemTileNameLabel(item);
 
     var typeDiv = document.createElement('div');
     typeDiv.className = 'item-card-type';
     typeDiv.textContent = item.type || item.category;
+
+    var unobtainableBadge = null;
+    if (itemIsUnobtainable) {
+      unobtainableBadge = document.createElement('div');
+      unobtainableBadge.className = 'item-card-unobtainable-badge';
+      unobtainableBadge.textContent = 'Founder Exclusive';
+      unobtainableBadge.title = getUnobtainableReason(item);
+    }
 
     var xpDiv = document.createElement('div');
     xpDiv.className = 'item-card-xp';
@@ -10500,6 +12439,7 @@
 
     bodyDiv.appendChild(nameDiv);
     if (tradeBadge) bodyDiv.appendChild(tradeBadge);
+    if (unobtainableBadge) bodyDiv.appendChild(unobtainableBadge);
     bodyDiv.appendChild(typeDiv);
     if (item.category !== 'Mods') {
       bodyDiv.appendChild(xpDiv);
@@ -10512,6 +12452,10 @@
     card.appendChild(bodyDiv);
 
     card.addEventListener('click', function() {
+      if (itemIsUnobtainable && !isItemFullyRanked(item)) {
+        openItemInfoModal(item);
+        return;
+      }
       if (item.category === 'Mods') {
         setItemRank(item, masteredSet.has(item.uniqueName) ? 0 : 1);
       } else {
@@ -10640,6 +12584,21 @@
     };
     els.categoryTitle.textContent = labels[currentCategory] || currentCategory;
 
+    function countVisibleUnobtainable() {
+      var count = 0;
+      for (var u = 0; u < filteredItems.length; u++) {
+        if (isUnobtainableItem(filteredItems[u])) count++;
+      }
+      return count;
+    }
+
+    function setCategoryCountText(text) {
+      var unobtainableCount = countVisibleUnobtainable();
+      els.categoryItemCount.textContent = text + (unobtainableCount > 0
+        ? ' - ' + unobtainableCount.toLocaleString() + ' unobtainable'
+        : '');
+    }
+
     if (currentCategory === 'all' && tradeModeEnabled) {
       var tradableCount = 0;
       for (var i = 0; i < allItems.length; i++) {
@@ -10650,12 +12609,12 @@
       if (filteredItems.length > ALL_ITEMS_RENDER_BATCH_SIZE) {
         allItemsText += ' - showing ' + Math.min(filteredItems.length, allVisibleCount).toLocaleString();
       }
-      els.categoryItemCount.textContent = allItemsText + ' - ' + tradableCount + ' tradable';
+      setCategoryCountText(allItemsText + ' - ' + tradableCount + ' tradable');
       return;
     }
 
     if (isChecklistBatchingActive() && filteredItems.length > getChecklistBatchSize()) {
-      els.categoryItemCount.textContent = filteredItems.length + ' items - showing ' + Math.min(filteredItems.length, getChecklistVisibleCount()).toLocaleString();
+      setCategoryCountText(filteredItems.length + ' items - showing ' + Math.min(filteredItems.length, getChecklistVisibleCount()).toLocaleString());
       return;
     }
 
@@ -10665,16 +12624,16 @@
         if (allItems[i].category === 'Mods') continue;
         if (allItems[i].tradable) tradableCount++;
       }
-      els.categoryItemCount.textContent = filteredItems.length + ' items - ' + tradableCount + ' tradable';
+      setCategoryCountText(filteredItems.length + ' items - ' + tradableCount + ' tradable');
       return;
     }
 
     if (isModBatchingActive() && filteredItems.length > MOD_RENDER_BATCH_SIZE) {
-      els.categoryItemCount.textContent = filteredItems.length + ' items - showing ' + Math.min(filteredItems.length, modVisibleCount).toLocaleString();
+      setCategoryCountText(filteredItems.length + ' items - showing ' + Math.min(filteredItems.length, modVisibleCount).toLocaleString());
       return;
     }
 
-    els.categoryItemCount.textContent = filteredItems.length + ' items';
+    setCategoryCountText(filteredItems.length + ' items');
   }
 
   // ---------- Stats ----------
@@ -10718,6 +12677,19 @@
     updateCalculator();
     if (els.squadFinderPanel && !els.squadFinderPanel.classList.contains('hidden')) {
       renderSquadBoard();
+    }
+    if (els.recommendationsPanel && !els.recommendationsPanel.classList.contains('hidden')) {
+      renderMasteryRecommendations();
+    }
+    if (els.resourceSearchPanel && !els.resourceSearchPanel.classList.contains('hidden')) {
+      resourceIndexCache = null;
+      renderResourceSearch();
+    }
+    if (els.primePanel && !els.primePanel.classList.contains('hidden') && primeResurgenceData) {
+      renderPrimeResurgence(primeResurgenceData);
+    }
+    if (els.relicsPanel && !els.relicsPanel.classList.contains('hidden')) {
+      scheduleRelicDirectoryRender({ resetScroll: false });
     }
   }
 
@@ -12176,6 +14148,7 @@
     for (var i = 0; i < allItems.length; i++) {
       var item = allItems[i];
       if (!counts[item.category]) counts[item.category] = { total: 0, mastered: 0 };
+      if (!isChecklistCountableItem(item)) continue;
       counts[item.category].total++;
       if (item.category !== 'Mods') totalAll++;
       if (isItemFullyRanked(item)) {
@@ -12189,7 +14162,7 @@
 
     var masteredCount = 0;
     for (var j = 0; j < allItems.length; j++) {
-      if (allItems[j].category !== 'Mods' && isItemFullyRanked(allItems[j])) {
+      if (allItems[j].category !== 'Mods' && isChecklistCountableItem(allItems[j]) && isItemFullyRanked(allItems[j])) {
         masteredCount++;
       }
     }
@@ -12252,6 +14225,7 @@
     var itemsToMark = filteredItems;
     for (var i = 0; i < itemsToMark.length; i++) {
       var item = itemsToMark[i];
+      if (isUnobtainableItem(item)) continue;
       var maxRank = getItemMaxRank(item);
       setItemRank(item, item.category === 'Mods' ? 1 : (maxRank > 0 ? maxRank : 1));
     }
@@ -12347,7 +14321,7 @@
       relicSearchQuery = String(e.target.value || '');
       syncRelicSearchControls();
       if (Array.isArray(relicDirectory) && relicDirectory.length > 0) {
-        scheduleRelicDirectoryRender({ resetLimit: true, resetScroll: true, smoothScroll: false });
+        scheduleRelicDirectoryRenderSoon({ resetLimit: true, resetScroll: true, smoothScroll: false });
       } else {
         loadRelicDirectory(false);
       }
@@ -12368,6 +14342,18 @@
       }
     });
   }
+
+  document.querySelectorAll('.relic-reward-filter-btn[data-relic-reward-filter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      relicRewardFilterMode = btn.getAttribute('data-relic-reward-filter') || 'all';
+      syncRelicSearchControls();
+      if (Array.isArray(relicDirectory) && relicDirectory.length > 0) {
+        scheduleRelicDirectoryRender({ resetLimit: true, resetScroll: true, smoothScroll: false });
+      } else {
+        loadRelicDirectory(false);
+      }
+    });
+  });
 
   if (els.arcaneSearchInput) {
     els.arcaneSearchInput.addEventListener('input', function(e) {
@@ -12706,6 +14692,7 @@
   $('#reset-confirm').addEventListener('click', function() {
     masteredSet.clear();
     itemLevelMap = Object.create(null);
+    invalidateMasteryDerivedData(false);
     saveMasteryProgress();
     els.resetModal.classList.add('hidden');
     updateCounts();
@@ -12721,8 +14708,14 @@
       var relicsPanel = $('#relics-panel');
       var arcanesPanel = $('#arcanes-panel');
       var squadPanel = $('#squad-finder-panel');
+      var recommendationsPanel = $('#recommendations-panel');
+      var resourceSearchPanel = $('#resource-search-panel');
       if (marketPanel && !marketPanel.classList.contains('hidden')) {
         $('#market-search-input').focus();
+      } else if (recommendationsPanel && !recommendationsPanel.classList.contains('hidden') && els.recommendationSearchInput) {
+        els.recommendationSearchInput.focus();
+      } else if (resourceSearchPanel && !resourceSearchPanel.classList.contains('hidden') && els.resourceSearchInput) {
+        els.resourceSearchInput.focus();
       } else if (squadPanel && !squadPanel.classList.contains('hidden') && els.squadSearchInput) {
         els.squadSearchInput.focus();
       } else if (arcanesPanel && !arcanesPanel.classList.contains('hidden') && els.arcaneSearchInput) {
@@ -12805,6 +14798,8 @@
       starchart: $('#starchart-panel'),
       squad: $('#squad-finder-panel'),
       compare: $('#compare-panel'),
+      recommendations: $('#recommendations-panel'),
+      resources: $('#resource-search-panel'),
       settings: $('#settings-page')
     };
   }
@@ -12812,6 +14807,8 @@
   function getCurrentPanelName() {
     var refs = getPanelRefs();
     if (refs.settings && !refs.settings.classList.contains('hidden')) return 'settings';
+    if (refs.resources && !refs.resources.classList.contains('hidden')) return 'resources';
+    if (refs.recommendations && !refs.recommendations.classList.contains('hidden')) return 'recommendations';
     if (refs.compare && !refs.compare.classList.contains('hidden')) return 'compare';
     if (refs.squad && !refs.squad.classList.contains('hidden')) return 'squad';
     if (refs.starchart && !refs.starchart.classList.contains('hidden')) return 'starchart';
@@ -12835,6 +14832,8 @@
     var starchartPanel = refs.starchart;
     var squadPanel = refs.squad;
     var comparePanel = refs.compare;
+    var recommendationsPanel = refs.recommendations;
+    var resourceSearchPanel = refs.resources;
     var settingsPage = refs.settings;
 
     var navMarket = $('#nav-market');
@@ -12846,11 +14845,17 @@
     var navStarchart = $('#nav-starchart');
     var navSquad = $('#nav-squad-finder');
     var navCompare = $('#nav-compare');
+    var navRecommendations = $('#nav-mastery-recommendations');
+    var navResourceSearch = $('#nav-resource-search');
 
     if (squadPanel) squadPanel.classList.add('hidden');
     if (navSquad) navSquad.classList.remove('active');
     if (comparePanel) comparePanel.classList.add('hidden');
     if (navCompare) navCompare.classList.remove('active');
+    if (recommendationsPanel) recommendationsPanel.classList.add('hidden');
+    if (navRecommendations) navRecommendations.classList.remove('active');
+    if (resourceSearchPanel) resourceSearchPanel.classList.add('hidden');
+    if (navResourceSearch) navResourceSearch.classList.remove('active');
 
     // Stop starchart animation when leaving that panel
     if (panel !== 'starchart' && window.warframeStarchart) {
@@ -13048,6 +15053,52 @@
       initComparePanel();
       // Always refresh top 10 in case items loaded since last visit
       renderCompareTop10();
+    } else if (panel === 'recommendations') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
+      if (recommendationsPanel) recommendationsPanel.classList.remove('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
+      if (navRecommendations) navRecommendations.classList.add('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      renderMasteryRecommendations();
+    } else if (panel === 'resources') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
+      if (resourceSearchPanel) resourceSearchPanel.classList.remove('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
+      if (navResourceSearch) navResourceSearch.classList.add('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      scheduleResourceSearchRender(0);
     } else if (panel === 'settings') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
@@ -13203,6 +15254,30 @@
     });
   }
 
+  var navRecommendationsEl = $('#nav-mastery-recommendations');
+  if (navRecommendationsEl) {
+    navRecommendationsEl.addEventListener('click', function() {
+      showPanel('recommendations', true);
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          if (els.recommendationSearchInput) els.recommendationSearchInput.focus();
+        });
+      }
+    });
+  }
+
+  var navResourceSearchEl = $('#nav-resource-search');
+  if (navResourceSearchEl) {
+    navResourceSearchEl.addEventListener('click', function() {
+      showPanel('resources', true);
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          if (els.resourceSearchInput) els.resourceSearchInput.focus();
+        });
+      }
+    });
+  }
+
   document.querySelectorAll('.cycles-nav-btn[data-cycle-tab]').forEach(function(btn) {
     btn.addEventListener('click', function() {
       setActiveCycleTab(btn.getAttribute('data-cycle-tab'));
@@ -13349,6 +15424,99 @@
       var deleteTarget = event.target && event.target.closest ? event.target.closest('[data-squad-delete]') : null;
       if (deleteTarget) {
         deleteSquadPost(deleteTarget.getAttribute('data-squad-delete'));
+      }
+    });
+  }
+
+  if (els.recommendationSearchInput) {
+    els.recommendationSearchInput.addEventListener('input', function() {
+      recommendationSearchQuery = els.recommendationSearchInput.value || '';
+      renderMasteryRecommendations();
+    });
+  }
+
+  if (els.recommendationSearchClear) {
+    els.recommendationSearchClear.addEventListener('click', function() {
+      recommendationSearchQuery = '';
+      renderMasteryRecommendations();
+      if (els.recommendationSearchInput) els.recommendationSearchInput.focus();
+    });
+  }
+
+  document.querySelectorAll('.recommendation-filter-btn[data-recommendation-filter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      recommendationFilterMode = btn.getAttribute('data-recommendation-filter') || 'all';
+      renderMasteryRecommendations();
+    });
+  });
+
+  if (els.recommendationList) {
+    els.recommendationList.addEventListener('click', function(event) {
+      var openTarget = event.target && event.target.closest ? event.target.closest('[data-recommendation-open]') : null;
+      if (openTarget) {
+        var item = findItemByUniqueName(openTarget.getAttribute('data-recommendation-open'));
+        if (item) openItemInfoModal(item);
+        return;
+      }
+
+      var wikiTarget = event.target && event.target.closest ? event.target.closest('[data-recommendation-wiki]') : null;
+      if (wikiTarget) {
+        openExternalUrl(buildWikiUrl({ name: wikiTarget.getAttribute('data-recommendation-wiki') || '' }));
+        return;
+      }
+
+      var calculatorTarget = event.target && event.target.closest ? event.target.closest('[data-recommendation-calculator]') : null;
+      if (calculatorTarget) {
+        updateCalculator();
+        if (els.calculatorModal) els.calculatorModal.classList.remove('hidden');
+      }
+    });
+  }
+
+  if (els.resourceSearchInput) {
+    els.resourceSearchInput.addEventListener('input', function() {
+      resourceSearchQuery = els.resourceSearchInput.value || '';
+      scheduleResourceSearchRender(70);
+    });
+  }
+
+  if (els.resourceSearchClear) {
+    els.resourceSearchClear.addEventListener('click', function() {
+      resourceSearchQuery = '';
+      scheduleResourceSearchRender(0);
+      if (els.resourceSearchInput) els.resourceSearchInput.focus();
+    });
+  }
+
+  document.querySelectorAll('.resource-filter-btn[data-resource-filter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      resourceFilterMode = btn.getAttribute('data-resource-filter') || 'all';
+      selectedResourceName = '';
+      scheduleResourceSearchRender(0);
+    });
+  });
+
+  if (els.resourceResultsGrid) {
+    els.resourceResultsGrid.addEventListener('click', function(event) {
+      var card = event.target && event.target.closest ? event.target.closest('[data-resource-name]') : null;
+      if (!card) return;
+      selectedResourceName = card.getAttribute('data-resource-name') || '';
+      renderResourceSearch();
+    });
+  }
+
+  if (els.resourceDetailCard) {
+    els.resourceDetailCard.addEventListener('click', function(event) {
+      var wikiTarget = event.target && event.target.closest ? event.target.closest('[data-resource-wiki]') : null;
+      if (wikiTarget) {
+        openExternalUrl(buildWikiUrl({ name: wikiTarget.getAttribute('data-resource-wiki') || '' }));
+        return;
+      }
+
+      var itemTarget = event.target && event.target.closest ? event.target.closest('[data-resource-open-item]') : null;
+      if (itemTarget) {
+        var item = findItemByUniqueName(itemTarget.getAttribute('data-resource-open-item'));
+        if (item) openItemInfoModal(item);
       }
     });
   }

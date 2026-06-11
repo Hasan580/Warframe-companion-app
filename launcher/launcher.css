@@ -1,0 +1,395 @@
+:root {
+  --launcher-red: #dd2d1e;
+  --launcher-red-hover: #ee3b29;
+  --launcher-white: #f2f3f0;
+  --launcher-ink: #151515;
+  --launcher-shadow: rgba(0, 0, 0, 0.78);
+  --launcher-width: 1288px;
+  --launcher-height: 808px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  color: var(--launcher-white);
+  background:
+    radial-gradient(circle at 50% 42%, rgba(55, 65, 66, 0.38), transparent 48%),
+    #101010;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+}
+
+button {
+  border: 0;
+  font: inherit;
+}
+
+.launcher-stage {
+  min-width: 100vw;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.3)),
+    #111;
+}
+
+.warframe-launcher {
+  position: relative;
+  width: min(var(--launcher-width), calc(100vw - 36px));
+  height: min(var(--launcher-height), calc(100vh - 36px));
+  min-width: 960px;
+  min-height: 600px;
+  overflow: hidden;
+  background: #101415;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.72),
+    0 0 0 1px rgba(0, 0, 0, 0.8) inset;
+}
+
+.launcher-hero {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.18) 34%, rgba(0, 0, 0, 0.08) 66%, rgba(0, 0, 0, 0.58) 100%),
+    radial-gradient(circle at 73% 39%, rgba(205, 240, 216, 0.7), transparent 23%),
+    radial-gradient(circle at 35% 62%, rgba(92, 169, 89, 0.44), transparent 18%),
+    url("../assets/launcher/launcher-hero-stitch.png") center / cover no-repeat;
+  transform: scale(1.02);
+}
+
+.launcher-hero::before {
+  content: "";
+  position: absolute;
+  right: -98px;
+  bottom: -144px;
+  width: 720px;
+  height: 720px;
+  background:
+    radial-gradient(circle at 48% 42%, rgba(73, 252, 70, 0.2), transparent 8%),
+    url("../assets/starchart/earth.png") center / contain no-repeat;
+  opacity: 0.36;
+  filter: saturate(0.82) contrast(1.18) brightness(0.9);
+}
+
+.launcher-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(115deg, rgba(238, 243, 235, 0.55) 0 23%, transparent 23.2%),
+    linear-gradient(106deg, transparent 0 32%, rgba(13, 16, 18, 0.66) 32.3% 43%, transparent 43.4%),
+    linear-gradient(106deg, transparent 0 45%, rgba(255, 255, 255, 0.08) 45.2% 47%, transparent 47.2%),
+    radial-gradient(circle at 83% 16%, rgba(255, 255, 255, 0.34), transparent 18%),
+    linear-gradient(180deg, transparent 0 68%, rgba(0, 0, 0, 0.62));
+}
+
+.launcher-haze {
+  position: absolute;
+  inset: 50px 0 80px;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 74% 48%, rgba(70, 126, 126, 0.42), transparent 36%),
+    radial-gradient(ellipse at 51% 34%, rgba(255, 255, 255, 0.28), transparent 28%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.28), transparent 52%, rgba(0, 0, 0, 0.28));
+  mix-blend-mode: screen;
+  opacity: 0.64;
+}
+
+.launcher-left-stack {
+  position: absolute;
+  inset: 49px auto 80px 0;
+  width: 430px;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 2;
+}
+
+.slash-panel {
+  position: absolute;
+  top: -70px;
+  bottom: -70px;
+  width: 190px;
+  transform: skewX(-33deg);
+  transform-origin: bottom left;
+  border-right: 2px solid rgba(255, 255, 255, 0.22);
+}
+
+.slash-panel-one {
+  left: -150px;
+  background:
+    linear-gradient(180deg, rgba(240, 240, 240, 0.2), rgba(0, 0, 0, 0.72)),
+    rgba(15, 15, 15, 0.92);
+}
+
+.slash-panel-two {
+  left: 36px;
+  width: 230px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(0, 0, 0, 0.64)),
+    rgba(35, 37, 38, 0.86);
+}
+
+.slash-panel-three {
+  left: 260px;
+  width: 80px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.28)),
+    rgba(255, 255, 255, 0.12);
+  border-right-color: rgba(255, 255, 255, 0.36);
+}
+
+.launcher-topbar {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 50px;
+  z-index: 10;
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr) 315px;
+  align-items: stretch;
+  background: linear-gradient(90deg, #e6e6e3 0 310px, #151515 310px);
+}
+
+.launcher-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 70px;
+  color: #3b3d3d;
+  background: #e6e6e3;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 32px) 100%, 0 100%);
+}
+
+.launcher-brand-mark {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  filter: grayscale(1) brightness(0.38);
+}
+
+.launcher-brand-text {
+  font-size: 27px;
+  font-weight: 800;
+  letter-spacing: -1.4px;
+  line-height: 1;
+}
+
+.launcher-tabs {
+  position: absolute;
+  top: 31px;
+  left: 50%;
+  height: 26px;
+  display: flex;
+  transform: translateX(-50%);
+  z-index: 12;
+}
+
+.launcher-tab {
+  position: relative;
+  min-width: 192px;
+  height: 26px;
+  margin-right: -24px;
+  padding: 0 34px;
+  color: #111;
+  background: rgba(255, 255, 255, 0.94);
+  clip-path: polygon(15% 0, 100% 0, 85% 100%, 0 100%);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: -0.2px;
+  line-height: 26px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.launcher-tab.is-active {
+  z-index: 2;
+  color: #fff;
+  background: var(--launcher-red);
+}
+
+.launcher-tab:hover {
+  filter: brightness(1.06);
+}
+
+.launcher-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 15px;
+  height: 50px;
+  padding: 0 18px 0 42px;
+  color: #202020;
+  background: #dededc;
+  clip-path: polygon(40px 0, 100% 0, 100% 100%, 0 100%);
+}
+
+.language-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  color: #0d0d0d;
+  background: transparent;
+  cursor: pointer;
+  font-size: 15px;
+}
+
+.control-caret {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid #494949;
+}
+
+.icon-button,
+.window-button {
+  width: 18px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: #3e3e3e;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.icon-button:hover,
+.window-button:hover,
+.language-button:hover {
+  color: #050505;
+}
+
+.settings-glyph {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #424242;
+  border-radius: 50%;
+}
+
+.settings-glyph::before,
+.settings-glyph::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 20px;
+  height: 2px;
+  background: #424242;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.settings-glyph::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.launcher-copy {
+  position: absolute;
+  right: 138px;
+  top: 56%;
+  z-index: 6;
+  width: 465px;
+  transform: translateY(-50%);
+  color: white;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.88);
+}
+
+.launcher-copy h1 {
+  margin: 0 0 16px;
+  font-size: 34px;
+  font-weight: 300;
+  line-height: 1.03;
+  letter-spacing: -0.7px;
+  text-transform: uppercase;
+}
+
+.launcher-copy p {
+  max-width: 430px;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 16px;
+  line-height: 1.36;
+}
+
+.launcher-actionbar {
+  position: absolute;
+  inset: auto 0 0;
+  z-index: 11;
+  height: 80px;
+  display: flex;
+  align-items: stretch;
+}
+
+.launcher-status {
+  width: 67%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-left: 275px;
+  color: #171717;
+  background: rgba(238, 240, 238, 0.92);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 66px) 100%, 0 100%);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.1px;
+  text-transform: uppercase;
+}
+
+.status-light {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #42db64;
+  box-shadow: 0 0 10px rgba(66, 219, 100, 0.8);
+}
+
+.launcher-play {
+  position: absolute;
+  right: 160px;
+  bottom: 0;
+  width: 352px;
+  height: 80px;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: var(--launcher-red);
+  clip-path: polygon(14% 0, 100% 0, 86% 100%, 0 100%);
+  cursor: pointer;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.launcher-play:hover {
+  background: var(--launcher-red-hover);
+}
+
+.launcher-play span {
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+}
+
+@media (max-width: 1100px), (max-height: 700px) {
+  .warframe-launcher {
+    min-width: 0;
+    min-height: 0;
+    aspect-ratio: 1288 / 808;
+  }
+
+  .warframe-launcher {
+    transform-origin: center;
+  }
+}
