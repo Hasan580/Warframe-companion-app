@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   close: () => ipcRenderer.send('window-close'),
   setTradeMode: (enabled) => ipcRenderer.invoke('set-trade-mode', !!enabled),
   setAlwaysOnTop: (enabled) => ipcRenderer.invoke('set-always-on-top', !!enabled),
+  setRelicOverlayEnabled: (enabled) => ipcRenderer.invoke('set-relic-overlay-enabled', !!enabled),
+  getRelicOverlayStatus: () => ipcRenderer.invoke('get-relic-overlay-status'),
+  updateRelicOverlay: (payload) => ipcRenderer.invoke('update-relic-overlay', payload || {}),
   openExternal: (url) => ipcRenderer.invoke('open-external-url', String(url || '')),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   getVersionHint: () => '',
@@ -34,5 +37,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     var listener = (_event, payload) => callback(payload || {});
     ipcRenderer.on('ocr-scan-progress', listener);
     return () => ipcRenderer.removeListener('ocr-scan-progress', listener);
+  },
+  onRelicOverlayEvent: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    var listener = (_event, payload) => callback(payload || {});
+    ipcRenderer.on('relic-overlay-event', listener);
+    return () => ipcRenderer.removeListener('relic-overlay-event', listener);
   }
 });

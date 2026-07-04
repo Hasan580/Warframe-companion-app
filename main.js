@@ -1,18 +1,31 @@
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, desktopCapturer, screen } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { autoUpdater } = require('electron-updater');
-const { createWorker } = require('tesseract.js');
+const { createWorker, PSM } = require('tesseract.js');
 
 let mainWindow;
+let relicOverlayWindow;
 const DEFAULT_MIN_WIDTH = 900;
 const DEFAULT_MIN_HEIGHT = 600;
 const isDev = !app.isPackaged;
 let updateDownloaded = false;
 let ocrWorkerPromise = null;
 let activeOcrProgressTarget = null;
+let relicOverlayEnabled = false;
+let relicOverlayTimer = null;
+let relicOverlayScanning = false;
+let relicOverlayLastHash = '';
+let relicOverlayLastHashAt = 0;
+let relicOverlayLastDetectionAt = 0;
+let relicOverlayLastCaptureAt = 0;
+let relicOverlayBurstUntil = 0;
+let relicOverlayLogTimer = null;
+let relicOverlayLogPath = '';
+let relicOverlayLogOffset = 0;
+let relicOverlayLogMissingNotified = false;
 const PROFILE_FETCH_TIMEOUT_MS = 15000;
 const PROFILE_REMOTE_FETCH_COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6 hours between successful Warframe profile calls.
 const PROFILE_REMOTE_RETRY_COOLDOWN_MS = 15 * 60 * 1000; // Failed remote calls must cool down too.
@@ -21,6 +34,15 @@ const PROFILE_CACHE_FILE = 'warframe-profile-cache.json';
 const PROFILE_INTRINSIC_RANK_XP = 1500;
 const PROFILE_NORMAL_STAR_CHART_XP_MAX = 27519;
 const PROFILE_STEEL_PATH_XP_MAX = 27519;
+const RELIC_OVERLAY_IDLE_SCAN_INTERVAL_MS = 4500;
+const RELIC_OVERLAY_ACTIVE_SCAN_INTERVAL_MS = 450;
+const RELIC_OVERLAY_DUPLICATE_SCAN_MS = 1800;
+const RELIC_OVERLAY_MAX_CAPTURE_WIDTH = 1280;
+const RELIC_OVERLAY_MAX_CAPTURE_HEIGHT = 720;
+const RELIC_OVERLAY_HOLD_MS = 1800;
+const RELIC_OVERLAY_TRIGGER_WINDOW_MS = 8000;
+const RELIC_OVERLAY_LOG_POLL_INTERVAL_MS = 750;
+const RELIC_OVERLAY_LOG_TAIL_BYTES = 64 * 1024;
 const WARFRAME_PROCESS_NAMES = ['Warframe.x64.exe', 'Warframe.exe'];
 const EXPORT_REGIONS_URL = 'https://raw.githubusercontent.com/calamity-inc/warframe-public-export-plus/senpai/ExportRegions.json';
 const JUNCTION_MASTERY_XP = 1000;
@@ -40,6 +62,450 @@ function sendOcrProgress(payload) {
     return;
   }
   activeOcrProgressTarget.send('ocr-scan-progress', payload || {});
+}
+
+function sendRelicOverlayEvent(type, payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('relic-overlay-event', Object.assign({ type }, payload || {}));
+}
+
+function sanitizeForInlineScript(payload) {
+  return JSON.stringify(payload || {}).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+}
+
+function getDisplayForRelicOverlay(bounds) {
+  if (bounds && Number.isFinite(Number(bounds.x)) && Number.isFinite(Number(bounds.y))) {
+    return screen.getDisplayNearestPoint({
+      x: Math.round(Number(bounds.x)),
+      y: Math.round(Number(bounds.y))
+    });
+  }
+
+  try {
+    return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  } catch (err) {
+    return screen.getPrimaryDisplay();
+  }
+}
+
+function getDisplayCaptureSize(display) {
+  const bounds = display && display.bounds ? display.bounds : { width: 1280, height: 720 };
+  const scaleFactor = Number(display && display.scaleFactor) || 1;
+  const rawWidth = Math.max(1, Math.round(bounds.width * scaleFactor));
+  const rawHeight = Math.max(1, Math.round(bounds.height * scaleFactor));
+  const downscale = Math.min(
+    1,
+    RELIC_OVERLAY_MAX_CAPTURE_WIDTH / rawWidth,
+    RELIC_OVERLAY_MAX_CAPTURE_HEIGHT / rawHeight
+  );
+  return {
+    width: Math.max(1, Math.round(rawWidth * downscale)),
+    height: Math.max(1, Math.round(rawHeight * downscale))
+  };
+}
+
+async function ensureRelicOverlayWindow(display) {
+  const targetDisplay = display || screen.getPrimaryDisplay();
+  const bounds = targetDisplay.bounds || { x: 0, y: 0, width: 1280, height: 720 };
+
+  if (relicOverlayWindow && !relicOverlayWindow.isDestroyed()) {
+    relicOverlayWindow.setBounds(bounds);
+    return relicOverlayWindow;
+  }
+
+  relicOverlayWindow = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    focusable: false,
+    hasShadow: false,
+    alwaysOnTop: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false
+    }
+  });
+
+  relicOverlayWindow.setIgnoreMouseEvents(true);
+  relicOverlayWindow.setAlwaysOnTop(true, 'screen-saver');
+  relicOverlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  try {
+    relicOverlayWindow.setContentProtection(true);
+  } catch (err) {
+    // Best effort: prevents the overlay labels from being read by our own screen OCR on supported systems.
+  }
+  relicOverlayWindow.on('closed', () => {
+    relicOverlayWindow = null;
+  });
+
+  await relicOverlayWindow.loadFile(path.join(__dirname, 'relic-overlay.html'));
+  return relicOverlayWindow;
+}
+
+async function updateRelicOverlayWindow(payload) {
+  const safePayload = payload || {};
+  const display = getDisplayForRelicOverlay(safePayload.displayBounds);
+  const overlay = await ensureRelicOverlayWindow(display);
+  if (!overlay || overlay.isDestroyed()) return { ok: false };
+
+  const labels = Array.isArray(safePayload.labels) ? safePayload.labels : [];
+  const shouldShow = safePayload.detected === true && labels.length > 0 && relicOverlayEnabled;
+  const script = 'window.renderRelicOverlay && window.renderRelicOverlay(' + sanitizeForInlineScript(safePayload) + ');';
+  await overlay.webContents.executeJavaScript(script, true);
+
+  if (shouldShow) {
+    overlay.setBounds((display && display.bounds) || overlay.getBounds());
+    overlay.showInactive();
+  } else {
+    overlay.hide();
+  }
+
+  return { ok: true, visible: shouldShow };
+}
+
+async function clearRelicOverlayWindow(message) {
+  if (!relicOverlayWindow || relicOverlayWindow.isDestroyed()) return;
+  try {
+    await updateRelicOverlayWindow({
+      detected: false,
+      labels: [],
+      message: message || ''
+    });
+  } catch (err) {
+    relicOverlayWindow.hide();
+  }
+}
+
+function getRelicOverlayTextSignature(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .slice(0, 600);
+}
+
+function isLikelyRelicRewardScreen(text, lines) {
+  const normalized = getRelicOverlayTextSignature(text);
+  if (/\bvoid\b.*\bfissure\b.*\brewards?\b/.test(normalized)) return true;
+  if (/\bfissure\b.*\brewards?\b/.test(normalized)) return true;
+  const rewardMatches = String(text || '').match(/(?:\bforma\s+blueprint\b|\bprime\b\s+(?:blueprint|chassis|neuroptics|systems|blade|barrel|receiver|stock|string|handle|hilt|grip|link|pouch|guard|gauntlet|cerebrum|carapace|wings|harness|fuselage|stars|disc|ornament|chain|head|boot|upper limb|lower limb)\b)/ig);
+  if (rewardMatches && rewardMatches.length >= 2) return true;
+  if (rewardMatches && rewardMatches.length >= 1 && Date.now() < relicOverlayBurstUntil) return true;
+  const sourceLines = Array.isArray(lines) ? lines : [];
+  let rewardLineCount = 0;
+  for (const line of sourceLines) {
+    const value = String(line && line.text ? line.text : '');
+    if (/\bforma\s+blueprint\b/i.test(value) || (/\bprime\b/i.test(value) && /\b(blueprint|chassis|neuroptics|systems|blade|barrel|receiver|stock|string|handle|hilt|grip|link|pouch|guard|gauntlet|cerebrum|carapace|wings|harness|fuselage|stars)\b/i.test(value))) {
+      rewardLineCount += 1;
+    }
+  }
+  return rewardLineCount >= 2 && /\b(relic|opened|owned|reward|fissure|prime|forma)\b/.test(normalized);
+}
+
+async function captureRelicOverlayScreen() {
+  const display = getDisplayForRelicOverlay();
+  const captureSize = getDisplayCaptureSize(display);
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: captureSize
+  });
+  const displayId = String(display && display.id ? display.id : '');
+  let source = sources.find((entry) => String(entry.display_id || '') === displayId);
+  if (!source) {
+    source = sources.find((entry) => String(entry.id || '').indexOf(displayId) !== -1) || sources[0];
+  }
+  if (!source || !source.thumbnail || source.thumbnail.isEmpty()) {
+    throw new Error('Screen capture is unavailable. Check OS screen recording permission or use borderless/windowed mode.');
+  }
+
+  return {
+    display,
+    image: source.thumbnail,
+    imageSize: source.thumbnail.getSize()
+  };
+}
+
+function createRelicOverlayOcrRegion(image) {
+  const size = image && image.getSize ? image.getSize() : { width: 0, height: 0 };
+  const width = Math.max(1, Number(size.width) || 1);
+  const height = Math.max(1, Number(size.height) || 1);
+  const crop = {
+    x: Math.max(0, Math.round(width * 0.235)),
+    y: Math.max(0, Math.round(height * 0.315)),
+    width: Math.max(1, Math.round(width * 0.53)),
+    height: Math.max(1, Math.round(height * 0.18))
+  };
+
+  if (crop.x + crop.width > width) crop.width = width - crop.x;
+  if (crop.y + crop.height > height) crop.height = height - crop.y;
+
+  const targetWidth = Math.min(1150, Math.max(900, crop.width * 1.7));
+  const scale = targetWidth / crop.width;
+  const targetHeight = Math.max(1, Math.round(crop.height * scale));
+  const prepared = image
+    .crop(crop)
+    .resize({
+      width: Math.round(targetWidth),
+      height: targetHeight,
+      quality: 'best'
+    });
+
+  return {
+    image: prepared,
+    offsetX: crop.x,
+    offsetY: crop.y,
+    scale
+  };
+}
+
+function isRelicOverlayRewardLogText(text) {
+  return /(?:Got rewards|Pause countdown done|Relic rewards initialized|ProjectionRewardChoice)/i.test(String(text || ''));
+}
+
+function isRelicOverlayRewardEndLogText(text) {
+  return /(?:Relic timer closed|MatchingService::EndSession)/i.test(String(text || ''));
+}
+
+function getRelicOverlayScanDelay() {
+  return Date.now() < relicOverlayBurstUntil
+    ? RELIC_OVERLAY_ACTIVE_SCAN_INTERVAL_MS
+    : RELIC_OVERLAY_IDLE_SCAN_INTERVAL_MS;
+}
+
+function scheduleRelicOverlayScan(delayMs) {
+  if (!relicOverlayEnabled) return;
+  if (relicOverlayTimer) {
+    clearTimeout(relicOverlayTimer);
+    relicOverlayTimer = null;
+  }
+
+  relicOverlayTimer = setTimeout(async () => {
+    relicOverlayTimer = null;
+    try {
+      await scanRelicOverlayOnce();
+    } catch (err) {
+      sendRelicOverlayEvent('error', {
+        ok: false,
+        message: err && err.message ? err.message : 'Relic overlay scan failed.'
+      });
+    }
+
+    if (relicOverlayEnabled) {
+      scheduleRelicOverlayScan(getRelicOverlayScanDelay());
+    }
+  }, Math.max(0, Number(delayMs) || 0));
+}
+
+function triggerRelicOverlayBurst(reason) {
+  if (!relicOverlayEnabled) return;
+  relicOverlayBurstUntil = Math.max(relicOverlayBurstUntil, Date.now() + RELIC_OVERLAY_TRIGGER_WINDOW_MS);
+  relicOverlayLastHash = '';
+  relicOverlayLastHashAt = 0;
+  sendRelicOverlayEvent('status', {
+    enabled: true,
+    message: reason || 'Reward screen detected in EE.log. Reading platinum values...'
+  });
+  scheduleRelicOverlayScan(80);
+}
+
+async function readRelicOverlayLogChunk(filePath, start, end) {
+  const length = Math.max(0, Math.min(RELIC_OVERLAY_LOG_TAIL_BYTES, end - start));
+  if (!filePath || length <= 0) return '';
+
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const buffer = Buffer.alloc(length);
+    const read = await handle.read(buffer, 0, length, start);
+    return buffer.subarray(0, read.bytesRead || 0).toString('utf8');
+  } finally {
+    await handle.close();
+  }
+}
+
+async function pollRelicOverlayLog() {
+  if (!relicOverlayEnabled) return;
+
+  try {
+    const logInfo = await findWarframeLog();
+    if (!logInfo || !logInfo.path) {
+      if (!relicOverlayLogMissingNotified) {
+        relicOverlayLogMissingNotified = true;
+        sendRelicOverlayEvent('status', {
+          enabled: true,
+          message: 'EE.log not found. Overlay is using slower screen fallback scanning.'
+        });
+      }
+      return;
+    }
+
+    const currentPath = path.normalize(logInfo.path);
+    if (currentPath !== relicOverlayLogPath) {
+      relicOverlayLogPath = currentPath;
+      relicOverlayLogOffset = logInfo.size;
+      relicOverlayLogMissingNotified = false;
+      sendRelicOverlayEvent('status', {
+        enabled: true,
+        message: 'Watching EE.log for Void Fissure rewards...'
+      });
+      return;
+    }
+
+    if (logInfo.size < relicOverlayLogOffset) {
+      relicOverlayLogOffset = 0;
+    }
+
+    if (logInfo.size <= relicOverlayLogOffset) return;
+
+    const start = Math.max(relicOverlayLogOffset, logInfo.size - RELIC_OVERLAY_LOG_TAIL_BYTES);
+    const chunk = await readRelicOverlayLogChunk(currentPath, start, logInfo.size);
+    relicOverlayLogOffset = logInfo.size;
+
+    if (isRelicOverlayRewardEndLogText(chunk)) {
+      relicOverlayBurstUntil = 0;
+      relicOverlayLastHash = '';
+      relicOverlayLastHashAt = 0;
+      relicOverlayLastDetectionAt = 0;
+      await clearRelicOverlayWindow('Watching EE.log for Void Fissure rewards...');
+      sendRelicOverlayEvent('status', {
+        enabled: true,
+        message: 'Reward screen closed. Watching EE.log for the next relic.'
+      });
+    } else if (isRelicOverlayRewardLogText(chunk)) {
+      triggerRelicOverlayBurst('Void Fissure reward screen detected. Reading platinum values...');
+    }
+  } catch (err) {
+    if (!relicOverlayLogMissingNotified) {
+      relicOverlayLogMissingNotified = true;
+      sendRelicOverlayEvent('status', {
+        enabled: true,
+        message: 'Could not read EE.log, using slower screen fallback scanning.'
+      });
+    }
+  }
+}
+
+async function startRelicOverlayLogWatcher() {
+  if (relicOverlayLogTimer) {
+    clearInterval(relicOverlayLogTimer);
+    relicOverlayLogTimer = null;
+  }
+
+  relicOverlayLogPath = '';
+  relicOverlayLogOffset = 0;
+  relicOverlayLogMissingNotified = false;
+  await pollRelicOverlayLog();
+  relicOverlayLogTimer = setInterval(() => {
+    pollRelicOverlayLog().catch(() => {});
+  }, RELIC_OVERLAY_LOG_POLL_INTERVAL_MS);
+}
+
+function stopRelicOverlayLogWatcher() {
+  if (relicOverlayLogTimer) {
+    clearInterval(relicOverlayLogTimer);
+    relicOverlayLogTimer = null;
+  }
+  relicOverlayLogPath = '';
+  relicOverlayLogOffset = 0;
+  relicOverlayLogMissingNotified = false;
+}
+
+async function scanRelicOverlayOnce() {
+  if (!relicOverlayEnabled || relicOverlayScanning) return;
+  relicOverlayScanning = true;
+  relicOverlayLastCaptureAt = Date.now();
+
+  try {
+    const capture = await captureRelicOverlayScreen();
+    const ocrRegion = createRelicOverlayOcrRegion(capture.image);
+    const imageHash = crypto.createHash('sha1').update(ocrRegion.image.toBitmap()).digest('hex');
+    const now = Date.now();
+
+    if (imageHash === relicOverlayLastHash && (now - relicOverlayLastHashAt) < RELIC_OVERLAY_DUPLICATE_SCAN_MS) {
+      return;
+    }
+    relicOverlayLastHash = imageHash;
+    relicOverlayLastHashAt = now;
+
+    const worker = await getOcrWorker();
+    const result = await worker.recognize(ocrRegion.image.toPNG(), {
+      tessedit_pageseg_mode: PSM.SINGLE_BLOCK,
+      preserve_interword_spaces: '1'
+    });
+    const data = result && result.data ? result.data : {};
+    const lines = transformOcrLines(extractOcrLines(data), ocrRegion);
+    const text = String(data.text || lines.map((line) => line.text).join('\n'));
+    const detected = isLikelyRelicRewardScreen(text, lines);
+    if (detected) relicOverlayLastDetectionAt = now;
+
+    sendRelicOverlayEvent('scan', {
+      ok: true,
+      detected,
+      text,
+      lines,
+      imageSize: capture.imageSize,
+      displayBounds: capture.display && capture.display.bounds ? capture.display.bounds : null,
+      scaleFactor: capture.display && capture.display.scaleFactor ? capture.display.scaleFactor : 1,
+      capturedAt: now
+    });
+
+    if (!detected && (!relicOverlayLastDetectionAt || Date.now() - relicOverlayLastDetectionAt > RELIC_OVERLAY_HOLD_MS)) {
+      await clearRelicOverlayWindow('Watching EE.log for Void Fissure rewards...');
+    }
+  } catch (err) {
+    sendRelicOverlayEvent('error', {
+      ok: false,
+      message: err && err.message ? err.message : 'Relic overlay scan failed.'
+    });
+    if (!relicOverlayLastDetectionAt || Date.now() - relicOverlayLastDetectionAt > RELIC_OVERLAY_HOLD_MS) {
+      await clearRelicOverlayWindow('');
+    }
+  } finally {
+    relicOverlayScanning = false;
+  }
+}
+
+async function startRelicOverlayLoop() {
+  if (relicOverlayTimer) {
+    clearTimeout(relicOverlayTimer);
+    relicOverlayTimer = null;
+  }
+  relicOverlayBurstUntil = 0;
+  relicOverlayLastHash = '';
+  relicOverlayLastHashAt = 0;
+  relicOverlayLastDetectionAt = 0;
+  await startRelicOverlayLogWatcher();
+  scheduleRelicOverlayScan(250);
+}
+
+async function stopRelicOverlayLoop() {
+  relicOverlayEnabled = false;
+  if (relicOverlayTimer) {
+    clearTimeout(relicOverlayTimer);
+    relicOverlayTimer = null;
+  }
+  stopRelicOverlayLogWatcher();
+  relicOverlayLastHash = '';
+  relicOverlayLastHashAt = 0;
+  relicOverlayLastDetectionAt = 0;
+  relicOverlayBurstUntil = 0;
+  await clearRelicOverlayWindow('');
+  if (relicOverlayWindow && !relicOverlayWindow.isDestroyed()) {
+    relicOverlayWindow.close();
+    relicOverlayWindow = null;
+  }
 }
 
 function getOcrWorker() {
@@ -71,8 +537,86 @@ function dataUrlToBuffer(value) {
   return Buffer.from(match[1], 'base64');
 }
 
+function normalizeOcrBbox(box) {
+  if (!box || typeof box !== 'object') return null;
+  const x0 = Number(box.x0);
+  const y0 = Number(box.y0);
+  const x1 = Number(box.x1);
+  const y1 = Number(box.y1);
+  if (![x0, y0, x1, y1].every((value) => Number.isFinite(value))) return null;
+  if (x1 <= x0 || y1 <= y0) return null;
+  return { x0, y0, x1, y1 };
+}
+
+function transformOcrBbox(box, transform) {
+  const bbox = normalizeOcrBbox(box);
+  if (!bbox) return null;
+  const scale = Number(transform && transform.scale) || 1;
+  const offsetX = Number(transform && transform.offsetX) || 0;
+  const offsetY = Number(transform && transform.offsetY) || 0;
+  return {
+    x0: bbox.x0 / scale + offsetX,
+    y0: bbox.y0 / scale + offsetY,
+    x1: bbox.x1 / scale + offsetX,
+    y1: bbox.y1 / scale + offsetY
+  };
+}
+
+function transformOcrLines(lines, transform) {
+  if (!Array.isArray(lines)) return [];
+  if (!transform) return lines;
+  return lines.map((line) => {
+    const words = Array.isArray(line && line.words) ? line.words : [];
+    return Object.assign({}, line, {
+      bbox: transformOcrBbox(line && line.bbox, transform),
+      words: words.map((word) => Object.assign({}, word, {
+        bbox: transformOcrBbox(word && word.bbox, transform)
+      }))
+    });
+  });
+}
+
+function extractOcrWords(line) {
+  const words = Array.isArray(line && line.words) ? line.words : [];
+  return words
+    .map((word) => {
+      const text = String(word && word.text ? word.text : '').trim();
+      if (!text) return null;
+      const bbox = normalizeOcrBbox(word.bbox);
+      if (bbox && (bbox.x1 - bbox.x0 < 3 || bbox.y1 - bbox.y0 < 6)) return null;
+      return {
+        text,
+        confidence: typeof word.confidence === 'number' ? word.confidence : 0,
+        bbox
+      };
+    })
+    .filter(Boolean);
+}
+
 function extractOcrLines(data) {
   const output = [];
+  const pushLine = (line) => {
+    const text = String(line && line.text ? line.text : '').trim();
+    if (!text) return;
+    const bbox = normalizeOcrBbox(line.bbox);
+    if (bbox && (bbox.x1 - bbox.x0 < 6 || bbox.y1 - bbox.y0 < 8)) return;
+    output.push({
+      text,
+      confidence: typeof line.confidence === 'number' ? line.confidence : 0,
+      bbox,
+      words: extractOcrWords(line)
+    });
+  };
+
+  const directLines = Array.isArray(data && data.lines) ? data.lines : [];
+  for (const line of directLines) {
+    pushLine(line);
+  }
+
+  if (output.length > 0) {
+    return output;
+  }
+
   const blocks = Array.isArray(data && data.blocks) ? data.blocks : [];
 
   for (const block of blocks) {
@@ -80,12 +624,7 @@ function extractOcrLines(data) {
     for (const paragraph of paragraphs) {
       const lines = Array.isArray(paragraph && paragraph.lines) ? paragraph.lines : [];
       for (const line of lines) {
-        const text = String(line && line.text ? line.text : '').trim();
-        if (!text) continue;
-        output.push({
-          text,
-          confidence: typeof line.confidence === 'number' ? line.confidence : 0
-        });
+        pushLine(line);
       }
     }
   }
@@ -1061,6 +1600,64 @@ ipcMain.handle('set-always-on-top', (_event, enabled) => {
   return { ok: true, enabled: next };
 });
 
+ipcMain.handle('set-relic-overlay-enabled', async (_event, enabled) => {
+  const next = !!enabled;
+  relicOverlayEnabled = next;
+
+  if (!next) {
+    await stopRelicOverlayLoop();
+    sendRelicOverlayEvent('status', {
+      enabled: false,
+      message: 'Relic reward overlay disabled.'
+    });
+    return { ok: true, enabled: false };
+  }
+
+  try {
+    await ensureRelicOverlayWindow(getDisplayForRelicOverlay());
+    relicOverlayEnabled = true;
+    await startRelicOverlayLoop();
+    sendRelicOverlayEvent('status', {
+      enabled: true,
+      message: 'Watching EE.log for Void Fissure rewards...'
+    });
+    return { ok: true, enabled: true };
+  } catch (err) {
+    relicOverlayEnabled = false;
+    await stopRelicOverlayLoop();
+    return {
+      ok: false,
+      enabled: false,
+      message: err && err.message ? err.message : 'Could not start relic reward overlay.'
+    };
+  }
+});
+
+ipcMain.handle('get-relic-overlay-status', () => {
+  return {
+    ok: true,
+    enabled: relicOverlayEnabled,
+    scanning: relicOverlayScanning,
+    lastCaptureAt: relicOverlayLastCaptureAt,
+    lastDetectionAt: relicOverlayLastDetectionAt,
+    logPath: relicOverlayLogPath,
+    burstActive: Date.now() < relicOverlayBurstUntil
+  };
+});
+
+ipcMain.handle('update-relic-overlay', async (_event, payload) => {
+  if (!relicOverlayEnabled) return { ok: false, visible: false, reason: 'disabled' };
+  try {
+    return await updateRelicOverlayWindow(payload || {});
+  } catch (err) {
+    return {
+      ok: false,
+      visible: false,
+      message: err && err.message ? err.message : 'Could not update relic overlay.'
+    };
+  }
+});
+
 ipcMain.handle('open-external-url', async (_event, url) => {
   var target = String(url || '').trim();
   if (!/^https?:\/\//i.test(target)) {
@@ -1226,6 +1823,15 @@ ipcMain.handle('scan-image-for-items', async (event, imageDataUrl) => {
 });
 
 app.on('before-quit', () => {
+  if (relicOverlayTimer) {
+    clearTimeout(relicOverlayTimer);
+    relicOverlayTimer = null;
+  }
+  stopRelicOverlayLogWatcher();
+  if (relicOverlayWindow && !relicOverlayWindow.isDestroyed()) {
+    relicOverlayWindow.close();
+    relicOverlayWindow = null;
+  }
   if (!ocrWorkerPromise) return;
   ocrWorkerPromise
     .then((worker) => worker && typeof worker.terminate === 'function' ? worker.terminate() : null)

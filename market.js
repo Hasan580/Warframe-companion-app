@@ -12,13 +12,18 @@
   const ORDERS_API_V1 = 'https://api.warframe.market/v1/items';
   const STATS_API_V1 = 'https://api.warframe.market/v1/items';
   const CDN_BASE = 'https://warframe.market/static/assets/';
+  const PLATINUM_ICON_PATH = 'assets/Platinum.png';
   const MARKET_CACHE_KEY = 'warframe_market_items_v3';
   const CONTRACTS_LOOKUP_CACHE_KEY = 'warframe_market_contract_lookups_v1';
   const MARKET_CACHE_TTL = 60 * 60 * 1000; // 1 hour
   const CONTRACTS_LOOKUP_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
   const ANALYTICS_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+  const ANALYTICS_ORDERS_CACHE_TTL = 90 * 1000; // 90 seconds
+  const OVERLAY_PRICE_CACHE_TTL = 20 * 60 * 1000; // 20 minutes
+  const OVERLAY_PRICE_REQUEST_TIMEOUT_MS = 2500;
   const CONTRACT_RESULTS_BATCH_SIZE = 60;
   const CONTRACT_ANY_EPHEMERA_VALUE = '__any_ephemera__';
+  const PRIME_SET_PART_LIMIT = 10;
   const ANALYTICS_DEFAULT_PICK_NAMES = [
     'Arcane Energize',
     'Arcane Grace',
@@ -37,6 +42,7 @@
   let currentOrdersSlug = null;
   let currentOrdersItemName = null;
   let currentOrdersWikiUrl = null;
+  let currentOrdersItemMeta = null;
   let ordersOnlineOnly = false;
   let ordersOnlineMode = 'all_online';
   let ordersRefreshInterval = null;
@@ -46,6 +52,9 @@
   let analyticsSelectedSlug = '';
   let analyticsCurrentItem = null;
   let analyticsStatsCache = Object.create(null);
+  let analyticsOrdersCache = Object.create(null);
+  let overlayPriceCache = Object.create(null);
+  let overlayPriceRequests = Object.create(null);
   let analyticsRequestToken = 0;
   let contractsLookupData = null;
   let contractsLookupPromise = null;
@@ -322,6 +331,24 @@
     return prefix + formatPlatValue(num).replace(/p$/, '') + 'p';
   }
 
+  function createPlatinumIcon(extraClass) {
+    var icon = document.createElement('img');
+    icon.className = 'platinum-icon' + (extraClass ? ' ' + extraClass : '');
+    icon.src = PLATINUM_ICON_PATH;
+    icon.alt = 'Platinum';
+    icon.decoding = 'async';
+    return icon;
+  }
+
+  function appendPlatinumAmount(parent, value, valueClass, iconClass) {
+    if (!parent) return;
+    var amount = document.createElement('span');
+    amount.className = valueClass || 'plat-value';
+    amount.textContent = String(value);
+    parent.appendChild(amount);
+    parent.appendChild(createPlatinumIcon(iconClass || ''));
+  }
+
   function formatMetricNumber(value) {
     var num = Number(value);
     if (!isFinite(num)) return '--';
@@ -371,6 +398,446 @@
       if (isFinite(value) && value > 0) return value;
     }
     return null;
+  }
+
+  function getNumberOrNull(value) {
+    var num = Number(value);
+    return isFinite(num) && num > 0 ? num : null;
+  }
+
+  function getOrderPlatinum(order) {
+    return getNumberOrNull(order && order.platinum);
+  }
+
+  function getBucketPriceLabel(bucket) {
+    if (!bucket) return '--';
+    return formatPlatValue(bucket.average) + ' avg / ' + formatMetricNumber(bucket.volume) + ' volume';
+  }
+
+  function getPrimeSetBaseName(item) {
+    var name = String(item && item.name ? item.name : '').trim();
+    return name.replace(/\s+set$/i, '').trim();
+  }
+
+  function isPrimeSetItem(item) {
+    if (!item) return false;
+    var tags = Array.isArray(item.tags) ? item.tags : [];
+    return item.category === 'prime_sets' || (tags.indexOf('prime') !== -1 && tags.indexOf('set') !== -1);
+  }
+
+  function findPrimeSetParts(setItem) {
+    var baseName = getPrimeSetBaseName(setItem);
+    var normalizedBase = normalizeMarketName(baseName);
+    if (!normalizedBase) return [];
+
+    var parts = [];
+    var seen = Object.create(null);
+    for (var i = 0; i < marketItems.length; i++) {
+      var item = marketItems[i];
+      if (!item || !item.slug || item.slug === setItem.slug || seen[item.slug]) continue;
+      if (item.category !== 'prime_parts') continue;
+
+      var normalizedName = normalizeMarketName(item.name);
+      if (normalizedName === normalizedBase) continue;
+      if (normalizedName.indexOf(normalizedBase + ' ') !== 0) continue;
+
+      seen[item.slug] = true;
+      parts.push(item);
+      if (parts.length >= PRIME_SET_PART_LIMIT) break;
+    }
+
+    return parts.sort(function(a, b) { return a.name.localeCompare(b.name); });
+  }
+
+  function getFairValue(model) {
+    if (!model) return null;
+    var values = [];
+    if (isFinite(Number(model.avg7)) && Number(model.avg7) > 0) values.push({ value: Number(model.avg7), weight: 4 });
+    if (isFinite(Number(model.avg30)) && Number(model.avg30) > 0) values.push({ value: Number(model.avg30), weight: 2 });
+    if (model.bestSell && getOrderPlatinum(model.bestSell)) values.push({ value: getOrderPlatinum(model.bestSell), weight: 2 });
+    if (model.bestBuy && getOrderPlatinum(model.bestBuy)) values.push({ value: getOrderPlatinum(model.bestBuy), weight: 1 });
+
+    var totalWeight = 0;
+    var totalValue = 0;
+    for (var i = 0; i < values.length; i++) {
+      totalWeight += values[i].weight;
+      totalValue += values[i].value * values[i].weight;
+    }
+
+    return totalWeight > 0 ? totalValue / totalWeight : null;
+  }
+
+  function getMarketConfidence(model, insights) {
+    if (!model) return 0;
+    var orderCount = model.visibleSellOrders.length + model.visibleBuyOrders.length;
+    var score = 20;
+    score += Math.min(35, Number(model.volume7 || 0));
+    score += Math.min(25, orderCount * 1.5);
+    if (model.avg7) score += 8;
+    if (model.avg30) score += 8;
+    if (insights && insights.spreadPercent !== null && insights.spreadPercent > 45) score -= 12;
+    if (model.visibleSellOrders.length === 0 || model.visibleBuyOrders.length === 0) score -= 10;
+    return clampNumber(score, 0, 100);
+  }
+
+  function stripRewardOcrNoise(name) {
+    return String(name || '')
+      .replace(/\bowned\b/ig, ' ')
+      .replace(/\bcrafted\b/ig, ' ')
+      .replace(/\bblueprlnt\b/ig, 'Blueprint')
+      .replace(/\bbiueprint\b/ig, 'Blueprint')
+      .replace(/\bblacle\b/ig, 'Blade')
+      .replace(/^\s*\d+\s+/, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isZeroValueRelicReward(name) {
+    var normalized = normalizeMarketName(stripRewardOcrNoise(name));
+    return normalized === 'forma blueprint';
+  }
+
+  async function ensureMarketItemsForOverlay() {
+    if (marketItems && marketItems.length > 0) return;
+    var cached = loadMarketCache();
+    if (cached && cached.length > 0) {
+      marketItems = cached;
+      return;
+    }
+
+    var resp = await fetch(MARKET_API, {
+      headers: { 'Accept': 'application/json' }
+    });
+    if (!resp.ok) throw new Error('Market catalog HTTP ' + resp.status);
+    var json = await resp.json();
+    var data = json.data || [];
+    marketItems = data.map(function (item) {
+      var en = item.i18n && item.i18n.en ? item.i18n.en : {};
+      var slug = item.slug || item.url_name || '';
+      return {
+        id: item.id,
+        slug: slug,
+        name: en.name || item.item_name || item.name || safeNameFromSlug(slug),
+        thumb: en.thumb || en.icon || item.thumb || item.icon || '',
+        icon: en.icon || item.icon || '',
+        subIcon: en.subIcon || en.sub_icon || item.subIcon || item.sub_icon || '',
+        tags: item.tags || [],
+        category: getMarketCategory(item.tags),
+      };
+    }).filter(function (item) { return !!item.slug; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
+    saveMarketCache(marketItems);
+  }
+
+  function findBestOverlayMarketItem(name) {
+    var cleaned = stripRewardOcrNoise(name);
+    var exact = findMarketItemByName(cleaned);
+    if (exact) return exact;
+
+    var normalized = normalizeMarketName(cleaned);
+    if (!normalized) return null;
+
+    var best = null;
+    var bestScore = 0;
+    var compact = normalized.replace(/\s+/g, '');
+
+    for (var i = 0; i < marketItems.length; i++) {
+      var item = marketItems[i];
+      var itemName = normalizeMarketName(item && item.name);
+      if (!itemName) continue;
+      var score = 0;
+      if (itemName === normalized) {
+        score = 100;
+      } else if (itemName.indexOf(normalized) !== -1 || normalized.indexOf(itemName) !== -1) {
+        score = 76;
+      } else if (itemName.replace(/\s+/g, '') === compact) {
+        score = 72;
+      }
+
+      if (score > bestScore) {
+        best = item;
+        bestScore = score;
+      }
+    }
+
+    return bestScore >= 70 ? best : null;
+  }
+
+  function getOverlayStatsPrice(statsPayload) {
+    var liveHistory = Array.isArray(statsPayload && statsPayload.statistics_live && statsPayload.statistics_live['48hours'])
+      ? statsPayload.statistics_live['48hours']
+      : [];
+    var closedHistory = Array.isArray(statsPayload && statsPayload.statistics_closed && statsPayload.statistics_closed['90days'])
+      ? statsPayload.statistics_closed['90days']
+      : [];
+
+    var latestLiveSell = getLatestEntryByType(liveHistory, 'sell');
+    var latestClosed = closedHistory.length > 0 ? closedHistory[closedHistory.length - 1] : null;
+    var price = getEntryPrice(latestLiveSell);
+    if (isFinite(price) && price > 0) return price;
+
+    price = getEntryPrice(latestClosed);
+    if (isFinite(price) && price > 0) return price;
+
+    return getWeightedAverage(closedHistory.slice(-7), 'wa_price');
+  }
+
+  function withOverlayPriceTimeout(promise) {
+    return new Promise(function(resolve, reject) {
+      var settled = false;
+      var timer = setTimeout(function() {
+        if (settled) return;
+        settled = true;
+        reject(new Error('Overlay price request timed out'));
+      }, OVERLAY_PRICE_REQUEST_TIMEOUT_MS);
+
+      promise.then(function(value) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      }).catch(function(err) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+  }
+
+  function getOrderPlatNumber(order) {
+    var price = Number(order && order.platinum);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  }
+
+  function isPcMarketOrder(order) {
+    var platform = String(order && (order.platform || (order.user && order.user.platform)) || '')
+      .toLowerCase()
+      .replace(/[\s_-]+/g, '');
+    return !platform || platform === 'pc';
+  }
+
+  function getStableOverlayOrderPrice(orders, orderType) {
+    var candidates = [];
+    var i;
+
+    for (i = 0; i < orders.length; i++) {
+      var order = orders[i];
+      var price = getOrderPlatNumber(order);
+      if (!price || !order || order.visible === false || order.order_type !== orderType || !isPcMarketOrder(order)) continue;
+      candidates.push(order);
+    }
+
+    var online = candidates.filter(isOnlineSeller);
+    var pool = online.length > 0 ? online : candidates;
+    if (pool.length === 0) return null;
+
+    pool.sort(function(a, b) {
+      var pa = getOrderPlatNumber(a) || 0;
+      var pb = getOrderPlatNumber(b) || 0;
+      if (pa !== pb) return orderType === 'sell' ? pa - pb : pb - pa;
+      return getStatusSortRank(a) - getStatusSortRank(b);
+    });
+
+    var prices = pool.map(getOrderPlatNumber).filter(function(price) {
+      return Number.isFinite(price) && price > 0;
+    });
+    if (prices.length === 0) return null;
+
+    var sampleSize = prices.length >= 5 ? 5 : (prices.length >= 3 ? 3 : 1);
+    var sample = prices.slice(0, sampleSize);
+
+    // Ignore one suspicious undercut/overbid when there are enough live orders.
+    if (sample.length >= 3) {
+      if (orderType === 'sell' && sample[0] < sample[1] * 0.65) {
+        sample = sample.slice(1);
+      } else if (orderType === 'buy' && sample[0] > sample[1] * 1.45) {
+        sample = sample.slice(1);
+      }
+    }
+
+    var sorted = sample.slice().sort(function(a, b) {
+      return a - b;
+    });
+    var price = sorted[Math.floor(sorted.length / 2)];
+    var matchedOrder = pool[0];
+    for (i = 0; i < pool.length; i++) {
+      if (getOrderPlatNumber(pool[i]) === price) {
+        matchedOrder = pool[i];
+        break;
+      }
+    }
+
+    return {
+      price: price,
+      order: matchedOrder,
+      orderCount: pool.length,
+      onlineCount: online.length
+    };
+  }
+
+  async function getOverlayLivePriceData(item) {
+    var orders = await fetchOrdersV2(item.slug);
+    var stableSell = getStableOverlayOrderPrice(orders, 'sell');
+    var stableBuy = getStableOverlayOrderPrice(orders, 'buy');
+    if (!stableSell || !Number.isFinite(Number(stableSell.price)) || Number(stableSell.price) <= 0) {
+      return null;
+    }
+
+    var status = stableSell.order && stableSell.order.user ? stableSell.order.user.status : '';
+    return {
+      ok: true,
+      name: item.name,
+      slug: item.slug,
+      price: Number(stableSell.price),
+      sell: Number(stableSell.price),
+      buy: stableBuy && Number.isFinite(Number(stableBuy.price)) ? Number(stableBuy.price) : null,
+      label: formatPlatValue(stableSell.price),
+      sellerStatus: status || 'online sellers',
+      source: stableSell.onlineCount > 0 ? 'stable online sell orders' : 'stable visible sell orders',
+      sampleCount: stableSell.orderCount
+    };
+  }
+
+  async function getOverlayStatsPriceData(item) {
+    var statsPayload = await fetchItemStatistics(item.slug, false);
+    var statsPrice = getOverlayStatsPrice(statsPayload);
+    if (!Number.isFinite(Number(statsPrice)) || Number(statsPrice) <= 0) return null;
+
+    return {
+      ok: true,
+      name: item.name,
+      slug: item.slug,
+      price: Number(statsPrice),
+      sell: Number(statsPrice),
+      buy: null,
+      label: formatPlatValue(statsPrice),
+      sellerStatus: 'market average',
+      source: 'market statistics'
+    };
+  }
+
+  function cacheOverlayPrice(cacheKey, data) {
+    overlayPriceCache[cacheKey] = {
+      timestamp: Date.now(),
+      data: data
+    };
+  }
+
+  async function getOverlayPriceForItemName(name) {
+    var cleaned = stripRewardOcrNoise(name);
+    if (isZeroValueRelicReward(cleaned)) {
+      return {
+        input: name,
+        ok: true,
+        name: 'Forma Blueprint',
+        slug: '',
+        price: 0,
+        sell: 0,
+        buy: null,
+        label: '0p',
+        message: 'Not tradable on Warframe Market.'
+      };
+    }
+
+    await ensureMarketItemsForOverlay();
+
+    var item = findBestOverlayMarketItem(cleaned);
+    if (!item || !item.slug) {
+      return {
+        input: name,
+        ok: false,
+        name: cleaned || name,
+        price: null,
+        message: 'No market listing matched.'
+      };
+    }
+
+    var cacheKey = item.slug;
+    var cached = overlayPriceCache[cacheKey];
+    if (cached && Date.now() - cached.timestamp < OVERLAY_PRICE_CACHE_TTL) {
+      return Object.assign({ input: name }, cached.data);
+    }
+
+    if (overlayPriceRequests[cacheKey]) {
+      return overlayPriceRequests[cacheKey].then(function(data) {
+        return Object.assign({ input: name }, data);
+      });
+    }
+
+    overlayPriceRequests[cacheKey] = (async function() {
+      var data = null;
+      var livePricePromise = getOverlayLivePriceData(item).catch(function() {
+        return null;
+      });
+      var statsPricePromise = getOverlayStatsPriceData(item).catch(function() {
+        return null;
+      });
+
+      try {
+        data = await withOverlayPriceTimeout(livePricePromise);
+      } catch (err) {
+        data = null;
+      }
+
+      if (!data) {
+        data = await statsPricePromise;
+      }
+
+      if (!data) {
+        data = {
+          ok: false,
+          name: item.name,
+          slug: item.slug,
+          price: null,
+          sell: null,
+          buy: null,
+          label: '--',
+          message: 'No usable market price found.'
+        };
+      }
+
+      cacheOverlayPrice(cacheKey, data);
+      return data;
+    })().finally(function() {
+      delete overlayPriceRequests[cacheKey];
+    });
+
+    return overlayPriceRequests[cacheKey].then(function(data) {
+      return Object.assign({ input: name }, data);
+    });
+  }
+
+  async function getRelicRewardOverlayPrices(names) {
+    var list = Array.isArray(names) ? names : [];
+    return Promise.all(list.map(async function(rawName) {
+      var name = String(rawName || '').trim();
+      if (!name) return null;
+      try {
+        return await getOverlayPriceForItemName(name);
+      } catch (err) {
+        return {
+          input: name,
+          ok: false,
+          name: name,
+          price: null,
+          message: err && err.message ? err.message : 'Price unavailable.'
+        };
+      }
+    })).then(function(results) {
+      return results.filter(Boolean);
+    });
+  }
+
+  async function warmRelicRewardOverlay() {
+    try {
+      await ensureMarketItemsForOverlay();
+      return { ok: true };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err && err.message ? err.message : 'Market catalog unavailable.'
+      };
+    }
   }
 
   function getPriceDeltaPercent(current, baseline) {
@@ -525,16 +992,38 @@
     var sellWall = countOrdersNearPrice(model.visibleSellOrders, 'sell', currentSell, 0.05);
     var buyWall = countOrdersNearPrice(model.visibleBuyOrders, 'buy', currentBuy, 0.05);
     var liquidity = getLiquidityProfile(model);
+    var fairValue = getFairValue(model);
+    var askVsFair = getPriceDeltaPercent(currentSell, fairValue);
+    var bidVsFair = getPriceDeltaPercent(currentBuy, fairValue);
+    var orderPressure = model.visibleBuyOrders.length - model.visibleSellOrders.length;
+    var demandRatio = model.visibleSellOrders.length > 0
+      ? model.visibleBuyOrders.length / model.visibleSellOrders.length
+      : (model.visibleBuyOrders.length > 0 ? 99 : 0);
+    var pressureLabel = 'Balanced market';
+    if (demandRatio >= 1.35 || orderPressure >= 8) {
+      pressureLabel = 'Buyer pressure';
+    } else if (demandRatio <= 0.65 || orderPressure <= -8) {
+      pressureLabel = 'Seller pressure';
+    }
+    var quickFlipMargin = currentBuy !== null && currentSell !== null ? currentBuy - currentSell : null;
+    var confidenceScore = getMarketConfidence(model, { spreadPercent: spreadPercent });
 
     return {
       buyScore: buyScore,
       sellScore: sellScore,
+      confidenceScore: confidenceScore,
       buyLabel: getSignalLabel(buyScore, 'Buy the dip', 'Watch for entry', 'Wait for cheaper'),
       sellLabel: getSignalLabel(sellScore, 'Sell into strength', 'List patiently', 'Hold or undercut'),
       discountVs30: discountVs30,
       buyOrderVs30: buyOrderVs30,
       trendPercent: trendPercent,
       spreadPercent: spreadPercent,
+      askVsFair: askVsFair,
+      bidVsFair: bidVsFair,
+      fairValue: fairValue,
+      pressureLabel: pressureLabel,
+      demandRatio: demandRatio,
+      quickFlipMargin: quickFlipMargin,
       bestBuyDay: bestBuyDay,
       bestSellDay: bestSellDay,
       bestBuyHour: bestBuyHour,
@@ -1403,13 +1892,7 @@
 
     var price = document.createElement('div');
     price.className = 'contracts-price';
-    var priceMain = document.createElement('span');
-    priceMain.textContent = String(auction.buyout_price || auction.starting_price || 0);
-    var priceSuffix = document.createElement('span');
-    priceSuffix.className = 'contracts-price-suffix';
-    priceSuffix.textContent = 'p';
-    price.appendChild(priceMain);
-    price.appendChild(priceSuffix);
+    appendPlatinumAmount(price, auction.buyout_price || auction.starting_price || 0, 'contracts-price-main', 'contracts-price-icon');
     side.appendChild(price);
 
     var seller = document.createElement('div');
@@ -1671,6 +2154,7 @@
     currentOrdersSlug = item.slug;
     currentOrdersItemName = item.name;
     currentOrdersWikiUrl = buildWikiUrl(item);
+    currentOrdersItemMeta = item;
     ordersOnlineOnly = false;
     ordersOnlineMode = 'all_online';
     await fetchAndRenderOrders(item.slug);
@@ -1689,6 +2173,7 @@
     currentOrdersSlug = null;
     currentOrdersItemName = null;
     currentOrdersWikiUrl = null;
+    currentOrdersItemMeta = null;
     ordersOnlineOnly = false;
     ordersOnlineMode = 'all_online';
   }
@@ -1735,6 +2220,36 @@
     return String(rep);
   }
 
+  function getOrderRankValue(order) {
+    if (!order) return null;
+    var raw = order.rank;
+    if (raw === null || typeof raw === 'undefined' || raw === '') raw = order.mod_rank;
+    if (raw === null || typeof raw === 'undefined' || raw === '') return null;
+    var numeric = Number(raw);
+    if (Number.isFinite(numeric)) return Math.max(0, Math.floor(numeric));
+    var clean = String(raw).trim();
+    return clean ? clean : null;
+  }
+
+  function formatOrderRank(order) {
+    var rank = getOrderRankValue(order);
+    if (rank === null || typeof rank === 'undefined' || rank === '') return '--';
+    return 'Rank ' + rank;
+  }
+
+  function itemSupportsOrderRank(itemMeta, sellOrders, buyOrders) {
+    var category = itemMeta && itemMeta.category ? String(itemMeta.category) : '';
+    var tags = Array.isArray(itemMeta && itemMeta.tags) ? itemMeta.tags : [];
+    if (category === 'mods' || category === 'arcanes') return true;
+    if (tags.indexOf('mod') !== -1 || tags.indexOf('stance') !== -1 || tags.indexOf('aura') !== -1) return true;
+    if (tags.indexOf('arcane_enhancement') !== -1 || tags.indexOf('arcane_helmet') !== -1) return true;
+
+    var allOrders = [].concat(sellOrders || [], buyOrders || []);
+    return allOrders.some(function(order) {
+      return getOrderRankValue(order) !== null;
+    });
+  }
+
   async function fetchAndRenderOrders(slug) {
     var ordersBody = $('#orders-body');
     if (!ordersBody) return;
@@ -1768,7 +2283,9 @@
 
       renderOrdersContent(ordersBody, sellOrders, buyOrders, {
         name: currentOrdersItemName || 'this item',
-        wikiUrl: currentOrdersWikiUrl || ''
+        wikiUrl: currentOrdersWikiUrl || '',
+        category: currentOrdersItemMeta && currentOrdersItemMeta.category,
+        tags: currentOrdersItemMeta && currentOrdersItemMeta.tags
       });
     } catch (err) {
       ordersBody.textContent = '';
@@ -1798,6 +2315,8 @@
         order_type: o.type,
         platinum: o.platinum,
         quantity: o.quantity,
+        rank: typeof o.rank !== 'undefined' ? o.rank : o.mod_rank,
+        mod_rank: typeof o.mod_rank !== 'undefined' ? o.mod_rank : o.rank,
         visible: o.visible,
         platform: o.user && o.user.platform,
         user: {
@@ -1816,6 +2335,23 @@
     if (!legacyResp.ok) throw new Error('HTTP ' + legacyResp.status);
     var legacyJson = await legacyResp.json();
     return legacyJson.payload && legacyJson.payload.orders ? legacyJson.payload.orders : [];
+  }
+
+  async function fetchOrdersForAnalytics(slug, forceRefresh) {
+    var key = String(slug || '').trim();
+    if (!key) return [];
+
+    var cached = analyticsOrdersCache[key];
+    if (!forceRefresh && cached && (Date.now() - cached.timestamp) < ANALYTICS_ORDERS_CACHE_TTL) {
+      return cached.data;
+    }
+
+    var data = await fetchOrdersV2(key);
+    analyticsOrdersCache[key] = {
+      timestamp: Date.now(),
+      data: Array.isArray(data) ? data : []
+    };
+    return analyticsOrdersCache[key].data;
   }
 
   async function fetchItemStatistics(slug, forceRefresh) {
@@ -1975,6 +2511,129 @@
     return model;
   }
 
+  function getSnapshotPrice(snapshot) {
+    if (!snapshot) return null;
+    var sellPrice = getOrderPlatinum(snapshot.bestSell);
+    if (sellPrice !== null) return { value: sellPrice, source: 'lowest sell' };
+    if (getNumberOrNull(snapshot.avg7) !== null) return { value: snapshot.avg7, source: '7D avg' };
+    if (getNumberOrNull(snapshot.avg30) !== null) return { value: snapshot.avg30, source: '30D avg' };
+    return { value: null, source: 'no price' };
+  }
+
+  function buildItemPriceSnapshot(item, statsPayload, orders) {
+    var closedHistory = Array.isArray(statsPayload && statsPayload.statistics_closed && statsPayload.statistics_closed['90days'])
+      ? statsPayload.statistics_closed['90days']
+      : [];
+    var closed7 = closedHistory.slice(-7);
+    var closed30 = closedHistory.slice(-30);
+    var visibleSellOrders = (Array.isArray(orders) ? orders : []).filter(function(order) {
+      return order && order.visible !== false && order.order_type === 'sell';
+    });
+    var visibleBuyOrders = (Array.isArray(orders) ? orders : []).filter(function(order) {
+      return order && order.visible !== false && order.order_type === 'buy';
+    });
+
+    var snapshot = {
+      item: item,
+      bestSell: getBestVisibleOrder(Array.isArray(orders) ? orders : [], 'sell'),
+      bestBuy: getBestVisibleOrder(Array.isArray(orders) ? orders : [], 'buy'),
+      avg7: getWeightedAverage(closed7, 'wa_price'),
+      avg30: getWeightedAverage(closed30, 'wa_price'),
+      volume7: getVolumeTotal(closed7),
+      volume30: getVolumeTotal(closed30),
+      visibleSellOrders: visibleSellOrders,
+      visibleBuyOrders: visibleBuyOrders,
+      error: ''
+    };
+    var price = getSnapshotPrice(snapshot);
+    snapshot.price = price.value;
+    snapshot.priceSource = price.source;
+    return snapshot;
+  }
+
+  async function buildPrimeSetPartSnapshot(part, forceRefresh) {
+    try {
+      var results = await Promise.all([
+        fetchItemStatistics(part.slug, !!forceRefresh).catch(function() { return null; }),
+        fetchOrdersForAnalytics(part.slug, !!forceRefresh).catch(function() { return []; })
+      ]);
+      return buildItemPriceSnapshot(part, results[0], results[1]);
+    } catch (err) {
+      return {
+        item: part,
+        bestSell: null,
+        bestBuy: null,
+        avg7: null,
+        avg30: null,
+        volume7: 0,
+        volume30: 0,
+        visibleSellOrders: [],
+        visibleBuyOrders: [],
+        price: null,
+        priceSource: 'failed',
+        error: err && err.message ? err.message : 'Could not price part'
+      };
+    }
+  }
+
+  async function buildPrimeSetProfitModel(setModel, forceRefresh) {
+    if (!setModel || !isPrimeSetItem(setModel.item)) return null;
+
+    var parts = findPrimeSetParts(setModel.item);
+    var setSnapshot = {
+      item: setModel.item,
+      bestSell: setModel.bestSell,
+      bestBuy: setModel.bestBuy,
+      avg7: setModel.avg7,
+      avg30: setModel.avg30,
+      volume7: setModel.volume7,
+      volume30: setModel.volume30,
+      visibleSellOrders: setModel.visibleSellOrders,
+      visibleBuyOrders: setModel.visibleBuyOrders
+    };
+    var setPrice = getSnapshotPrice(setSnapshot);
+
+    var snapshots = await Promise.all(parts.map(function(part) {
+      return buildPrimeSetPartSnapshot(part, !!forceRefresh);
+    }));
+
+    var pricedParts = snapshots.filter(function(snapshot) {
+      return getNumberOrNull(snapshot.price) !== null;
+    });
+    var partsTotal = pricedParts.reduce(function(total, snapshot) {
+      return total + Number(snapshot.price || 0);
+    }, 0);
+    var setValue = getNumberOrNull(setPrice.value);
+    var partsValue = pricedParts.length > 0 ? partsTotal : null;
+    var delta = setValue !== null && partsValue !== null ? partsValue - setValue : null;
+    var route = 'Need more prices';
+    if (delta !== null) {
+      if (Math.abs(delta) < 1) {
+        route = 'Either route is close';
+      } else {
+        route = delta > 0 ? 'Sell parts separately' : 'Sell the full set';
+      }
+    } else if (partsValue !== null) {
+      route = 'Parts have clearer pricing';
+    } else if (setValue !== null) {
+      route = 'Set has clearer pricing';
+    }
+
+    return {
+      setItem: setModel.item,
+      parts: snapshots,
+      pricedParts: pricedParts.length,
+      totalParts: snapshots.length,
+      setValue: setValue,
+      setSource: setPrice.source,
+      partsValue: partsValue,
+      delta: delta,
+      deltaPercent: delta !== null && setValue > 0 ? (delta / setValue) * 100 : null,
+      route: route,
+      allPartsPriced: snapshots.length > 0 && pricedParts.length === snapshots.length
+    };
+  }
+
   function renderTradeAnalyticsSearchResults() {
     var container = $('#trade-analytics-search-results');
     var summary = $('#trade-analytics-search-summary');
@@ -2090,6 +2749,153 @@
     return card;
   }
 
+  function setPrimeSetCalculatorVisibility(visible) {
+    var card = $('#trade-analytics-prime-set-card');
+    if (card) card.classList.toggle('hidden', !visible);
+  }
+
+  function renderPrimeSetProfitLoading(item) {
+    var container = $('#trade-analytics-prime-set');
+    if (!container) return;
+    if (!isPrimeSetItem(item)) {
+      setPrimeSetCalculatorVisibility(false);
+      container.textContent = '';
+      return;
+    }
+
+    setPrimeSetCalculatorVisibility(true);
+    container.textContent = '';
+    var loading = document.createElement('div');
+    loading.className = 'trade-analytics-empty-message';
+    loading.textContent = 'Calculating full set vs part prices from live market data...';
+    container.appendChild(loading);
+  }
+
+  function renderPrimeSetProfitError(message) {
+    var container = $('#trade-analytics-prime-set');
+    if (!container) return;
+    setPrimeSetCalculatorVisibility(true);
+    container.textContent = '';
+    var error = document.createElement('div');
+    error.className = 'trade-analytics-empty-message';
+    error.textContent = message || 'Could not calculate Prime set profit right now.';
+    container.appendChild(error);
+  }
+
+  function createPrimeProfitMetric(labelText, valueText, detailText, kind) {
+    var card = document.createElement('div');
+    card.className = 'prime-profit-metric' + (kind ? ' ' + kind : '');
+
+    var label = document.createElement('div');
+    label.className = 'prime-profit-label';
+    label.textContent = labelText;
+
+    var value = document.createElement('div');
+    value.className = 'prime-profit-value';
+    value.textContent = valueText;
+
+    var detail = document.createElement('div');
+    detail.className = 'prime-profit-detail';
+    detail.textContent = detailText;
+
+    card.appendChild(label);
+    card.appendChild(value);
+    card.appendChild(detail);
+    return card;
+  }
+
+  function renderPrimeSetProfit(model) {
+    var container = $('#trade-analytics-prime-set');
+    if (!container) return;
+
+    if (!model) {
+      setPrimeSetCalculatorVisibility(false);
+      container.textContent = '';
+      return;
+    }
+
+    setPrimeSetCalculatorVisibility(true);
+    container.textContent = '';
+
+    if (!model.parts.length) {
+      var empty = document.createElement('div');
+      empty.className = 'trade-analytics-empty-message';
+      empty.textContent = 'No matching Prime parts were found for this set in the market catalog.';
+      container.appendChild(empty);
+      return;
+    }
+
+    var summary = document.createElement('div');
+    summary.className = 'prime-profit-summary';
+
+    summary.appendChild(createPrimeProfitMetric(
+      'Full Set Value',
+      formatPlatValue(model.setValue),
+      'Source: ' + model.setSource,
+      'is-set'
+    ));
+
+    summary.appendChild(createPrimeProfitMetric(
+      'Parts Total',
+      formatPlatValue(model.partsValue),
+      model.pricedParts + '/' + model.totalParts + ' parts priced',
+      'is-parts'
+    ));
+
+    var deltaText = model.delta !== null ? formatSignedPlatValue(model.delta) : '--';
+    var deltaDetail = model.deltaPercent !== null
+      ? formatPercentValue(model.deltaPercent) + ' vs full set'
+      : 'Waiting for enough comparable prices';
+    summary.appendChild(createPrimeProfitMetric(
+      'Best Route',
+      model.route,
+      deltaText + ' | ' + deltaDetail,
+      model.delta > 0 ? 'is-positive' : (model.delta < 0 ? 'is-warning' : '')
+    ));
+
+    container.appendChild(summary);
+
+    var note = document.createElement('div');
+    note.className = 'prime-profit-note';
+    note.textContent = 'Calculator uses the lowest visible sell order first. If a listing is missing, it falls back to the recent 7D/30D weighted average so the comparison still works.';
+    container.appendChild(note);
+
+    var table = document.createElement('table');
+    table.className = 'prime-profit-table';
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    ['Part', 'Price', 'Source', '7D Avg', 'Live Orders'].forEach(function(labelText) {
+      var th = document.createElement('th');
+      th.textContent = labelText;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    for (var i = 0; i < model.parts.length; i++) {
+      var snapshot = model.parts[i];
+      var tr = document.createElement('tr');
+      var cells = [
+        { text: snapshot.item && snapshot.item.name ? snapshot.item.name : 'Unknown part', cls: 'is-strong' },
+        { text: formatPlatValue(snapshot.price), cls: getNumberOrNull(snapshot.price) !== null ? 'is-accent' : '' },
+        { text: snapshot.error ? snapshot.error : snapshot.priceSource },
+        { text: formatPlatValue(snapshot.avg7) },
+        { text: snapshot.visibleSellOrders.length + ' sell / ' + snapshot.visibleBuyOrders.length + ' buy' }
+      ];
+      for (var c = 0; c < cells.length; c++) {
+        var td = document.createElement('td');
+        td.textContent = cells[c].text;
+        if (cells[c].cls) td.classList.add(cells[c].cls);
+        tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+    container.appendChild(table);
+  }
+
   function renderTradeAnalyticsInsights(model, container) {
     if (!container) return;
     container.textContent = '';
@@ -2113,21 +2919,24 @@
     var trendText = insights.trendPercent !== null ? formatPercentValue(insights.trendPercent) : '--';
     var discountText = insights.discountVs30 !== null ? formatPercentValue(insights.discountVs30) : '--';
     var spreadText = insights.spreadPercent !== null ? formatPercentValue(insights.spreadPercent) : '--';
+    var fairText = formatPlatValue(insights.fairValue);
+    var askVsFairText = insights.askVsFair !== null ? formatPercentValue(insights.askVsFair) : '--';
+    var flipText = insights.quickFlipMargin !== null ? formatSignedPlatValue(insights.quickFlipMargin) : '--';
 
     container.appendChild(createInsightCard({
       kind: 'is-buy',
       kicker: 'Best Time To Buy',
       title: insights.buyLabel,
-      body: 'Observed cheaper day: ' + buyDay + '. Best 48h sell window: ' + buyHour + '. Current lowest sell is ' + currentSellText + ' and sits ' + discountText + ' versus the 30D average.',
-      tags: ['Buy ' + Math.round(insights.buyScore) + '/100', 'Trend ' + trendText]
+      body: 'Cheaper day: ' + buyDay + ' (' + getBucketPriceLabel(insights.bestBuyDay) + '). Best 48h sell window: ' + buyHour + ' (' + getBucketPriceLabel(insights.bestBuyHour) + '). Current lowest sell is ' + currentSellText + ', ' + discountText + ' versus the 30D average.',
+      tags: ['Buy ' + Math.round(insights.buyScore) + '/100', 'Ask vs fair ' + askVsFairText]
     }));
 
     container.appendChild(createInsightCard({
       kind: 'is-sell',
       kicker: 'Best Time To Sell',
       title: insights.sellLabel,
-      body: 'Observed stronger day: ' + sellDay + '. Best 48h buy window: ' + sellHour + '. Current highest buy is ' + currentBuyText + '; list higher when buy score is weak but sell score is strong.',
-      tags: ['Sell ' + Math.round(insights.sellScore) + '/100', 'Spread ' + spreadText]
+      body: 'Stronger day: ' + sellDay + ' (' + getBucketPriceLabel(insights.bestSellDay) + '). Best 48h buy window: ' + sellHour + ' (' + getBucketPriceLabel(insights.bestSellHour) + '). Current highest buy is ' + currentBuyText + '; list patiently when sell score beats buy score.',
+      tags: ['Sell ' + Math.round(insights.sellScore) + '/100', 'Trend ' + trendText]
     }));
 
     container.appendChild(createInsightCard({
@@ -2143,6 +2952,13 @@
       title: insights.sellWall.count + ' sellers / ' + insights.buyWall.count + ' buyers',
       body: insights.sellWall.quantity + ' sell quantity sits within 5% of the cheapest sell. ' + insights.buyWall.quantity + ' buy quantity sits within 5% of the best buy. Big walls usually slow price movement.',
       tags: ['Sell wall ' + insights.sellWall.quantity, 'Buy wall ' + insights.buyWall.quantity]
+    }));
+
+    container.appendChild(createInsightCard({
+      kicker: 'Pressure & Confidence',
+      title: insights.pressureLabel,
+      body: 'Fair value estimate is ' + fairText + '. The current instant flip margin is ' + flipText + ' before trading friction. Confidence is based on order depth, recent volume, spread, and history coverage.',
+      tags: ['Confidence ' + Math.round(insights.confidenceScore) + '/100', 'Spread ' + spreadText]
     }));
   }
 
@@ -2246,6 +3062,22 @@
         label: 'Market Risk',
         value: model.insights ? model.insights.liquidity.risk : '--',
         detail: model.insights ? model.insights.liquidity.label : 'Waiting for order depth'
+      },
+      {
+        label: 'Fair Value',
+        value: model.insights ? formatPlatValue(model.insights.fairValue) : '--',
+        detail: model.insights && model.insights.askVsFair !== null ? ('Lowest sell is ' + formatPercentValue(model.insights.askVsFair) + ' vs fair value') : 'Weighted from live orders and recent history'
+      },
+      {
+        label: 'Pressure',
+        value: model.insights ? model.insights.pressureLabel : '--',
+        detail: model.insights ? ('Buy/sell order ratio ' + (isFinite(model.insights.demandRatio) ? model.insights.demandRatio.toFixed(model.insights.demandRatio >= 10 ? 0 : 2) : '--')) : 'Waiting for live orders'
+      },
+      {
+        label: 'Confidence',
+        value: model.insights ? Math.round(model.insights.confidenceScore) + '/100' : '--',
+        detail: 'Higher means price and timing signals have better market coverage',
+        kind: model.insights && model.insights.confidenceScore >= 70 ? 'is-positive' : (model.insights && model.insights.confidenceScore < 40 ? 'is-negative' : '')
       }
     ];
 
@@ -2391,6 +3223,7 @@
 
   function setTradeAnalyticsLoadingState(item) {
     analyticsCurrentItem = item || analyticsCurrentItem;
+    renderPrimeSetProfitLoading(analyticsCurrentItem);
     renderTradeAnalyticsOverview({
       item: analyticsCurrentItem || { name: 'Loading...', category: 'market' },
       latestClosed: null,
@@ -2412,6 +3245,11 @@
   }
 
   function renderTradeAnalyticsError(item, message) {
+    if (isPrimeSetItem(item)) {
+      renderPrimeSetProfitError('Prime set calculator paused because analytics failed: ' + message);
+    } else {
+      renderPrimeSetProfit(null);
+    }
     renderTradeAnalyticsOverview(null);
     renderTradeAnalyticsTable('#trade-analytics-history', [], [], 'Failed to load analytics for ' + (item && item.name ? item.name : 'this item') + ': ' + message);
     renderTradeAnalyticsTable('#trade-analytics-live', [], [], 'Try refreshing this item in a moment.');
@@ -2429,7 +3267,7 @@
     try {
       var results = await Promise.all([
         fetchItemStatistics(item.slug, !!forceRefresh),
-        fetchOrdersV2(item.slug)
+        fetchOrdersForAnalytics(item.slug, !!forceRefresh)
       ]);
       if (token !== analyticsRequestToken) return;
 
@@ -2437,6 +3275,19 @@
       renderTradeAnalyticsOverview(model);
       renderTradeAnalyticsHistory(model);
       renderTradeAnalyticsLive(model);
+      if (isPrimeSetItem(item)) {
+        renderPrimeSetProfitLoading(item);
+        try {
+          var profitModel = await buildPrimeSetProfitModel(model, !!forceRefresh);
+          if (token !== analyticsRequestToken) return;
+          renderPrimeSetProfit(profitModel);
+        } catch (profitErr) {
+          if (token !== analyticsRequestToken) return;
+          renderPrimeSetProfitError(profitErr && profitErr.message ? profitErr.message : 'Could not calculate Prime set profit.');
+        }
+      } else {
+        renderPrimeSetProfit(null);
+      }
     } catch (err) {
       if (token !== analyticsRequestToken) return;
       renderTradeAnalyticsError(item, err && err.message ? err.message : 'Unknown error');
@@ -2454,6 +3305,7 @@
       renderTradeAnalyticsOverview(null);
       renderTradeAnalyticsHistory(null);
       renderTradeAnalyticsLive(null);
+      renderPrimeSetProfit(null);
       return;
     }
 
@@ -2469,6 +3321,7 @@
       renderTradeAnalyticsOverview(null);
       renderTradeAnalyticsHistory(null);
       renderTradeAnalyticsLive(null);
+      renderPrimeSetProfit(null);
     }
   }
 
@@ -2477,6 +3330,7 @@
 
     var itemName = itemMeta && itemMeta.name ? itemMeta.name : 'this item';
     var wikiUrl = itemMeta && itemMeta.wikiUrl ? itemMeta.wikiUrl : '';
+    var showRankColumn = itemSupportsOrderRank(itemMeta, sellOrders, buyOrders);
 
     var allOnlineSellOrders = sellOrders.filter(isOnlineSeller);
     var inGameSellOrders = sellOrders.filter(isInGameSeller);
@@ -2496,9 +3350,9 @@
       statsBar.className = 'orders-stats';
       statsBar.innerHTML = '';
       var statItems = [
-        { label: 'Lowest', value: min + 'p', cls: 'stat-low' },
-        { label: 'Average', value: avg + 'p', cls: 'stat-avg' },
-        { label: 'Highest', value: max + 'p', cls: 'stat-high' },
+        { label: 'Lowest', value: min, cls: 'stat-low', platinum: true },
+        { label: 'Average', value: avg, cls: 'stat-avg', platinum: true },
+        { label: 'Highest', value: max, cls: 'stat-high', platinum: true },
         { label: 'Sellers', value: String(filteredSellOrders.length), cls: '' },
         { label: 'Buyers', value: String(buyOrders.length), cls: '' },
       ];
@@ -2510,7 +3364,12 @@
         sl.textContent = statItems[s].label;
         var sv = document.createElement('span');
         sv.className = 'orders-stat-value';
-        sv.textContent = statItems[s].value;
+        if (statItems[s].platinum) {
+          sv.classList.add('has-platinum-icon');
+          appendPlatinumAmount(sv, statItems[s].value, 'orders-stat-plat-number', 'orders-stat-plat-icon');
+        } else {
+          sv.textContent = statItems[s].value;
+        }
         si.appendChild(sl);
         si.appendChild(sv);
         statsBar.appendChild(si);
@@ -2605,8 +3464,8 @@
     container.appendChild(tabsWrap);
 
     // Order lists
-    var sellList = createOrderList(filteredSellOrders, 'sell', itemName);
-    var buyList = createOrderList(buyOrders, 'buy', itemName);
+    var sellList = createOrderList(filteredSellOrders, 'sell', itemName, showRankColumn);
+    var buyList = createOrderList(buyOrders, 'buy', itemName, showRankColumn);
     buyList.classList.add('hidden');
     container.appendChild(sellList);
     container.appendChild(buyList);
@@ -2625,7 +3484,7 @@
     });
   }
 
-  function createOrderList(orders, type, itemName) {
+  function createOrderList(orders, type, itemName, showRankColumn) {
     var list = document.createElement('div');
     list.className = 'orders-list';
 
@@ -2639,8 +3498,10 @@
 
     // Header
     var header = document.createElement('div');
-    header.className = 'order-row order-header';
-    var cols = ['Status', 'Player', 'Rep', 'Price', 'Quantity', 'Action'];
+    header.className = 'order-row order-header' + (showRankColumn ? ' has-rank' : '');
+    var cols = showRankColumn
+      ? ['Status', 'Player', 'Rank', 'Rep', 'Price', 'Quantity', 'Action']
+      : ['Status', 'Player', 'Rep', 'Price', 'Quantity', 'Action'];
     for (var h = 0; h < cols.length; h++) {
       var hd = document.createElement('div');
       hd.className = 'order-col';
@@ -2652,7 +3513,7 @@
     for (var i = 0; i < orders.length; i++) {
       var o = orders[i];
       var row = document.createElement('div');
-      row.className = 'order-row';
+      row.className = 'order-row' + (showRankColumn ? ' has-rank' : '');
 
       // Status dot
       var statusCol = document.createElement('div');
@@ -2668,6 +3529,13 @@
       playerCol.className = 'order-col order-player';
       playerCol.textContent = o.user ? o.user.ingame_name : 'Unknown';
 
+      var rankCol = null;
+      if (showRankColumn) {
+        rankCol = document.createElement('div');
+        rankCol.className = 'order-col order-rank';
+        rankCol.textContent = formatOrderRank(o);
+      }
+
       // Reputation
       var repCol = document.createElement('div');
       repCol.className = 'order-col order-rep';
@@ -2676,14 +3544,7 @@
       // Price
       var priceCol = document.createElement('div');
       priceCol.className = 'order-col order-price';
-      var priceVal = document.createElement('span');
-      priceVal.className = 'plat-value';
-      priceVal.textContent = o.platinum;
-      var platIcon = document.createElement('span');
-      platIcon.className = 'plat-icon';
-      platIcon.textContent = 'p';
-      priceCol.appendChild(priceVal);
-      priceCol.appendChild(platIcon);
+      appendPlatinumAmount(priceCol, o.platinum, 'plat-value', 'plat-icon');
 
       // Quantity
       var qtyCol = document.createElement('div');
@@ -2706,6 +3567,7 @@
 
       row.appendChild(statusCol);
       row.appendChild(playerCol);
+      if (rankCol) row.appendChild(rankCol);
       row.appendChild(repCol);
       row.appendChild(priceCol);
       row.appendChild(qtyCol);
@@ -2720,10 +3582,12 @@
   function buildWhisperMessage(order, orderType, itemName) {
     var player = order && order.user ? order.user.ingame_name : 'Unknown';
     var price = order && typeof order.platinum !== 'undefined' ? String(order.platinum) : '?';
+    var rank = getOrderRankValue(order);
+    var rankedItemName = rank === null ? itemName : (itemName + ' rank ' + rank);
     if (orderType === 'sell') {
-      return '/w ' + player + ' Hi! I want to buy your ' + itemName + ' for ' + price + ' platinum. (warframe companion app)';
+      return '/w ' + player + ' Hi! I want to buy your ' + rankedItemName + ' for ' + price + ' platinum. (warframe companion app)';
     }
-    return '/w ' + player + ' Hi! I want to sell ' + itemName + ' for ' + price + ' platinum. (warframe companion app)';
+    return '/w ' + player + ' Hi! I want to sell ' + rankedItemName + ' for ' + price + ' platinum. (warframe companion app)';
   }
 
   async function copyWhisper(order, orderType, itemName) {
@@ -3027,6 +3891,8 @@
     loadAnalytics: loadTradeAnalytics,
     openItemByName: openItemByName,
     searchItemByName: searchItemByName,
+    getRelicRewardOverlayPrices: getRelicRewardOverlayPrices,
+    warmRelicRewardOverlay: warmRelicRewardOverlay,
     showContracts: function () {
       return setMarketViewMode('contracts');
     },

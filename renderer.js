@@ -6,7 +6,7 @@
   'use strict';
 
   // ---------- Constants ----------
-  const API_URL = 'https://api.warframestat.us/items/';
+  const API_URL = 'https://api.warframestat.us/items/?language=en';
   const MARKET_ITEMS_API_URL = 'https://api.warframe.market/v2/items';
   const CDN_URL = 'https://cdn.warframestat.us/img/';
   const MASTERED_STORAGE_KEY = 'warframe_mastered_items';
@@ -14,7 +14,7 @@
   const REMOVED_PROFILE_NAME_KEY = 'warframe_profile_name_v1';
   const REMOVED_AUTO_PROFILE_SYNC_KEY = 'warframe_auto_profile_sync_v1';
   const PROFILE_FETCH_LAST_RESULT_KEY = 'warframe_profile_fetch_last_result_v1';
-  const ITEMS_CACHE_KEY = 'warframe_items_cache_v22';
+  const ITEMS_CACHE_KEY = 'warframe_items_cache_v24';
   const MARKET_TRADABLE_CACHE_KEY = 'warframe_market_tradable_names_v2';
   const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
   const MARKET_TRADABLE_CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours
@@ -25,9 +25,8 @@
   const ALWAYS_ON_TOP_KEY = 'warframe_always_on_top_enabled';
   const AUTO_UPDATE_CHECK_KEY = 'warframe_auto_update_check_enabled';
   const APP_THEME_KEY = 'warframe_app_theme_v1';
-  const SIDEBAR_COLLAPSED_KEY = 'warframe_sidebar_collapsed_v1';
   const REPO_URL = 'https://github.com/Hasan580/Warframe-companion-app.git';
-  const TELEGRAM_CONTACT_URL = 'https://t.me/Hassan_F8';
+  const TELEGRAM_CONTACT_URL = 'https://t.me/Hassanf0';
   const UPDATE_REPO_API = 'https://api.github.com/repos/Hasan580/Warframe-companion-app';
   const UPDATE_RELEASE_API = UPDATE_REPO_API + '/releases/latest';
   const UPDATE_TAGS_API = UPDATE_REPO_API + '/tags?per_page=1';
@@ -123,6 +122,14 @@
   const ALL_ITEMS_RENDER_BATCH_SIZE = 120;
   const RESOURCE_FEATURED_LIMIT = 64;
   const RESOURCE_SEARCH_RESULT_LIMIT = 180;
+  const RELIC_TIER_ASSET_IMAGES = Object.freeze({
+    lith: 'assets/lithrelic.png',
+    meso: 'assets/meso.png',
+    neo: 'assets/NeoRelicIntact.png',
+    axi: 'assets/AxiRelicIntact.png',
+    requiem: 'assets/RequiemRelicIntact.png',
+    relic: 'assets/lithrelic.png'
+  });
   const WIKI_CACHE_TTL = 12 * 60 * 60 * 1000; // 12 hours
   const WIKI_ERROR_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
   const BUILD_SLOT_COUNT = 8;
@@ -147,10 +154,15 @@
     'mr calculator',
     'reset all'
   ]);
+  const RELIC_OVERLAY_PART_PATTERN = /\b(?:blueprint|chassis|neuroptics|systems|blade|barrel|receiver|stock|string|handle|hilt|grip|link|pouch|guard|gauntlet|cerebrum|carapace|wings|harness|fuselage|stars|disc|ornament|chain|head|boot|upper limb|lower limb)\b/i;
+  const RELIC_OVERLAY_REWARD_PATTERN = /([A-Z0-9][A-Za-z0-9' -]{1,54}?\s+Prime\s+(?:Blueprint|Chassis|Neuroptics|Systems|Blade|Barrel|Receiver|Stock|String|Handle|Hilt|Grip|Link|Pouch|Guard|Gauntlet|Cerebrum|Carapace|Wings|Harness|Fuselage|Stars|Disc|Ornament|Chain|Head|Boot|Upper Limb|Lower Limb))/gi;
+  const RELIC_OVERLAY_FIXED_REWARD_PATTERN = /\b(Forma\s+Blueprint)\b/gi;
+  const RELIC_OVERLAY_RENDER_HOLD_MS = 2600;
   const MOTE_PRISM_NAME_KEY = 'mote prism';
   const SIROCCO_NAME_KEY = 'sirocco';
   const FOLLIE_NAME_KEY = 'follie';
   const ENKAUS_RIFLE_NAME_KEY = 'enkaus';
+  const PLEXUS_IMAGE = 'assets/Plexus.png';
   const FOUNDER_ITEM_KEYS = Object.freeze({
     'excalibur prime': true,
     'lato prime': true,
@@ -238,7 +250,7 @@
       type: 'Plexus',
       masterable: true,
       tradable: false,
-      imageName: '',
+      imageName: PLEXUS_IMAGE,
       description: 'Railjack modding system shown in Warframe Equipment under Vehicles.',
       wikiaUrl: 'https://wiki.warframe.com/w/Plexus',
       wikiAvailable: true,
@@ -369,7 +381,6 @@
   let nightwaveArticlePromise = null;
   let nightwaveArticleFetchedAt = 0;
   let nightwavePanelError = '';
-  let sidebarCollapsed = false;
   let masteryExtras = getDefaultMasteryExtras();
   let currentThemeId = DEFAULT_APP_THEME;
   let ocrScanInProgress = false;
@@ -385,6 +396,11 @@
   let profileProcessWatchStartedAt = 0;
   let profileAutoSyncTimer = null;
   let profileAutoSyncInitialized = false;
+  let relicOverlayEnabled = false;
+  let relicOverlayPriceRequestId = 0;
+  let lastRelicOverlaySignature = '';
+  let lastRelicOverlayLabels = [];
+  let lastRelicOverlayDetectionAt = 0;
   let simarisFetchInProgress = false;
   let scanBatchContext = {
     index: 0,
@@ -456,6 +472,8 @@
     profileSyncPill: $('#profile-sync-pill'),
     profileSyncText: $('#profile-sync-text'),
     alwaysOnTopToggle: $('#setting-always-on-top'),
+    relicOverlayToggle: $('#setting-relic-overlay'),
+    relicOverlayStatus: $('#relic-overlay-status'),
     settingsThemeCurrent: $('#settings-theme-current'),
     themeOptions: $$('.settings-theme-option'),
     autoUpdateCheckToggle: $('#setting-auto-update-check'),
@@ -465,8 +483,6 @@
     updateStatusText: $('#update-status-text'),
     appContainer: $('.app-container'),
     sidebar: $('#sidebar'),
-    sidebarToggleBtn: $('#btn-sidebar-toggle'),
-    sidebarToggleIcon: $('#sidebar-toggle-icon'),
     newsBtn: $('#btn-news'),
     newsModal: $('#news-modal'),
     newsModalClose: $('#news-modal-close'),
@@ -497,6 +513,12 @@
     relicsResultsCount: $('#relics-results-count'),
     relicsSearchSummary: $('#relics-search-summary'),
     relicsGrid: $('#relics-grid'),
+    relicDetailModal: $('#relic-detail-modal'),
+    relicDetailClose: $('#relic-detail-close'),
+    relicDetailImg: $('#relic-detail-img'),
+    relicDetailName: $('#relic-detail-name'),
+    relicDetailSub: $('#relic-detail-sub'),
+    relicDetailDrops: $('#relic-detail-drops'),
     arcanesPanel: $('#arcanes-panel'),
     arcaneSearchInput: $('#arcane-search-input'),
     arcaneSearchClear: $('#arcane-search-clear'),
@@ -688,6 +710,57 @@
   bindWindowControl('#btn-minimize', 'minimize');
   bindWindowControl('#btn-maximize', 'maximize');
   bindWindowControl('#btn-close', 'close');
+
+  // ---------- Titlebar Easter Egg ----------
+  function initTitlebarEasterEgg() {
+    var logo = $('#titlebar-logo');
+    if (!logo) return;
+
+    var song = null;
+    var songPath = window.electronAPI && typeof window.electronAPI.resolveAssetUrl === 'function'
+      ? window.electronAPI.resolveAssetUrl('assets/easteregg song.mp3')
+      : 'assets/easteregg song.mp3';
+
+    function ensureSong() {
+      if (song) return song;
+      song = new Audio(songPath);
+      song.preload = 'auto';
+      song.volume = 0.7;
+      song.addEventListener('ended', function() {
+        logo.classList.remove('is-easter-playing');
+      });
+      song.addEventListener('pause', function() {
+        logo.classList.remove('is-easter-playing');
+      });
+      song.addEventListener('play', function() {
+        logo.classList.add('is-easter-playing');
+      });
+      return song;
+    }
+
+    logo.addEventListener('dblclick', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      var player = ensureSong();
+      if (!player.paused) {
+        player.pause();
+        player.currentTime = 0;
+        return;
+      }
+
+      player.currentTime = 0;
+      var playResult = player.play();
+      if (playResult && typeof playResult.catch === 'function') {
+        playResult.catch(function(err) {
+          console.warn('Easter egg song could not play:', err);
+          logo.classList.remove('is-easter-playing');
+        });
+      }
+    });
+  }
+
+  initTitlebarEasterEgg();
 
   // ---------- Helpers ----------
   var NECRAMECH_NAMES = {
@@ -1172,6 +1245,22 @@
     return category === 'mods' || type.indexOf(' mod') !== -1 || type === 'mod';
   }
 
+  function isRivenModItem(item) {
+    if (!item) return false;
+    var tags = Array.isArray(item.tags) ? item.tags.join(' ') : '';
+    return /\briven\b/i.test([
+      item.name || '',
+      item.type || '',
+      item.uniqueName || '',
+      item.productCategory || '',
+      tags
+    ].join(' '));
+  }
+
+  function shouldTreatAsTradableMod(item) {
+    return isModItem(item) || isRivenModItem(item);
+  }
+
   function isSentinelWeaponItem(item) {
     var type = String(item && item.type ? item.type : '').toLowerCase();
     var productCategory = String(item && item.productCategory ? item.productCategory : '').toLowerCase();
@@ -1217,6 +1306,42 @@
     return productCategory === 'operatoramps' ||
       uniqueName.indexOf('/weapons/operator/pistols/drifterpistol/') !== -1 ||
       (type === 'amp' && (name.indexOf('prism') !== -1 || uniqueName.indexOf('/barrel') !== -1));
+  }
+
+  function isLikelyMasterableEquipmentItem(item) {
+    if (!item || item.masterable === false) return false;
+
+    var category = normalizeCategory(item.category || item.type || '', item);
+    var uniqueName = String(item.uniqueName || item.unique_name || item.gameRef || item.game_ref || '').toLowerCase();
+    if (!uniqueName) return false;
+
+    if (category === 'Warframes') return uniqueName.indexOf('/powersuits/') !== -1;
+    if (category === 'Primary' || category === 'Secondary' || category === 'Melee' || category === 'Archgun' || category === 'Archmelee') {
+      return uniqueName.indexOf('/weapons/') !== -1;
+    }
+    if (category === 'Vehicles') {
+      return uniqueName.indexOf('/vehicles/') !== -1 ||
+        uniqueName.indexOf('/archwing/') !== -1 ||
+        uniqueName.indexOf('/hoverboard/') !== -1 ||
+        uniqueName.indexOf('/mechsuits/') !== -1 ||
+        uniqueName.indexOf('/necramech/') !== -1;
+    }
+    if (category === 'Robotic') {
+      return uniqueName.indexOf('/sentinel') !== -1 ||
+        uniqueName.indexOf('/moapets/') !== -1 ||
+        uniqueName.indexOf('/zanukapets/') !== -1 ||
+        isSentinelWeaponItem(item);
+    }
+    if (category === 'Companions') {
+      return uniqueName.indexOf('/pets/') !== -1 ||
+        uniqueName.indexOf('/kavat') !== -1 ||
+        uniqueName.indexOf('/kubrow') !== -1 ||
+        uniqueName.indexOf('/predasite') !== -1 ||
+        uniqueName.indexOf('/vulpaphyla') !== -1 ||
+        isVenariProfileItem(item);
+    }
+
+    return false;
   }
 
   function normalizeCategory(cat, item) {
@@ -1271,6 +1396,14 @@
     return 0;
   }
 
+  function getEnglishI18nValue(source, key) {
+    var i18n = source && source.i18n && typeof source.i18n === 'object' ? source.i18n : null;
+    if (!i18n) return '';
+    var english = i18n.en || i18n['en-US'] || i18n.en_US || null;
+    if (!english || typeof english !== 'object') return '';
+    return cleanDisplayText(english[key] || (key === 'name' ? english.itemName : '') || '');
+  }
+
   function toTitleCaseFromSlug(text) {
     if (!text) return 'Unknown Item';
     return text
@@ -1281,12 +1414,30 @@
       .join(' ');
   }
 
+  function isSiriusOrionWarframeItem(item, displayName) {
+    var uniqueName = String(item && (item.uniqueName || item.unique_name) ? (item.uniqueName || item.unique_name) : '').toLowerCase();
+    var nameKey = toLookupKey(displayName || (item && (item.name || item.itemName)) || '');
+    return uniqueName.indexOf('/powersuits/siriusorion/') !== -1 ||
+      nameKey === 'sirius orion' ||
+      nameKey === 'orion sirius';
+  }
+
   function normalizeItem(item) {
     var uniqueName = item.uniqueName || item.unique_name || item.slug || '';
     var imageName = item.imageName || item.image_name || '';
     var fallbackName = uniqueName ? uniqueName.split('/').pop() : '';
-    var name = cleanDisplayText(item.name || item.itemName || toTitleCaseFromSlug(fallbackName));
+    var name = cleanDisplayText(getEnglishI18nValue(item, 'name') || item.name || item.itemName || toTitleCaseFromSlug(fallbackName));
+
+    if (isSiriusOrionWarframeItem(item, name)) {
+      uniqueName = '/Lotus/Powersuits/SiriusOrion/SiriusOrionSuit';
+      imageName = 'SiriusOrion.png';
+      name = 'Sirius & Orion';
+    }
+
     var category = normalizeCategory(item.category || item.type || 'Misc', item);
+    var cleanCategory = cleanDisplayText(category);
+    var cleanType = cleanDisplayText(item.type || item.category || category);
+    var normalizedIsMod = cleanCategory === 'Mods' || /\bmod\b/i.test(cleanType);
     var hasVaultedStatus = Object.prototype.hasOwnProperty.call(item || {}, 'hasVaultedStatus')
       ? parseBooleanFlag(item.hasVaultedStatus)
       : (Object.prototype.hasOwnProperty.call(item || {}, 'vaulted') || Object.prototype.hasOwnProperty.call(item || {}, 'isVaulted'));
@@ -1297,10 +1448,10 @@
     return {
       uniqueName: uniqueName,
       name: name,
-      category: cleanDisplayText(category),
-      type: cleanDisplayText(item.type || item.category || category),
-      masterable: item.masterable === true || isMasterableAmpItem(item) || isProfileMasterableException(item),
-      tradable: parseBooleanFlag(item.tradable) || parseBooleanFlag(item.tradeable),
+      category: cleanCategory,
+      type: cleanType,
+      masterable: item.masterable === true || isMasterableAmpItem(item) || isProfileMasterableException(item) || isLikelyMasterableEquipmentItem(item),
+      tradable: normalizedIsMod || parseBooleanFlag(item.tradable) || parseBooleanFlag(item.tradeable),
       imageName: imageName,
       description: cleanDisplayText(item.description || ''),
       wikiaUrl: item.wikiaUrl || item.wikiUrl || '',
@@ -1351,13 +1502,16 @@
 
   function cloneNormalizedChecklistItem(item) {
     var source = item || {};
+    var cleanCategory = cleanDisplayText(source.category || 'Misc');
+    var cleanType = cleanDisplayText(source.type || source.category || 'Misc');
+    var clonedIsMod = cleanCategory === 'Mods' || /\bmod\b/i.test(cleanType);
     return {
       uniqueName: String(source.uniqueName || ''),
       name: cleanDisplayText(source.name || ''),
-      category: cleanDisplayText(source.category || 'Misc'),
-      type: cleanDisplayText(source.type || source.category || 'Misc'),
+      category: cleanCategory,
+      type: cleanType,
       masterable: source.masterable === true,
-      tradable: !!source.tradable,
+      tradable: clonedIsMod || !!source.tradable,
       imageName: String(source.imageName || ''),
       description: cleanDisplayText(source.description || ''),
       wikiaUrl: String(source.wikiaUrl || source.wikiUrl || ''),
@@ -1585,6 +1739,7 @@
       } else if (key === 'plexus') {
         item.category = 'Vehicles';
         item.type = 'Plexus';
+        item.imageName = PLEXUS_IMAGE;
         item.masterable = true;
         item.profileOnly = false;
         item.syncOptional = false;
@@ -1607,6 +1762,10 @@
         }
       }
 
+      if (shouldTreatAsTradableMod(item)) {
+        item.tradable = true;
+      }
+
       seenNames[toLookupKey(item.name)] = true;
     }
 
@@ -1617,6 +1776,8 @@
       patchedItems.push(manualItem);
       seenNames[manualKey] = true;
     }
+
+    patchedItems = mergeChecklistItems(patchedItems, []);
 
     patchedItems.sort(function(a, b) {
       return String(a && a.name ? a.name : '').localeCompare(String(b && b.name ? b.name : ''));
@@ -3899,7 +4060,7 @@
     }
 
     recipeIndexPromise = (async function() {
-      var resp = await fetch(API_URL);
+      var resp = await fetch(API_URL, { headers: WARFRAMESTAT_ENGLISH_HEADERS });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var data = await resp.json();
       var byName = Object.create(null);
@@ -4072,6 +4233,10 @@
 
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
+      if (shouldTreatAsTradableMod(item)) {
+        item.tradable = true;
+        continue;
+      }
       if (!item.tradable) {
         var candidates = getMarketTradeCandidates(item.name);
         for (var c = 0; c < candidates.length; c++) {
@@ -4384,7 +4549,7 @@
     relicLookupPromise = (async function() {
       var data;
       try {
-        var resp = await fetch(API_URL, { cache: 'no-store' });
+        var resp = await fetch(API_URL, { cache: 'no-store', headers: WARFRAMESTAT_ENGLISH_HEADERS });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         data = await resp.json();
       } catch (primaryErr) {
@@ -4436,6 +4601,12 @@
     return 99;
   }
 
+  function getRelicTierImageUrl(tier) {
+    var key = String(tier || 'relic').toLowerCase();
+    var asset = RELIC_TIER_ASSET_IMAGES[key] || RELIC_TIER_ASSET_IMAGES.relic;
+    return getChecklistImageUrl(asset);
+  }
+
   function extractRelicRewardsFromItem(item) {
     var rewards = Array.isArray(item && item.rewards) ? item.rewards : [];
     var normalized = [];
@@ -4470,6 +4641,7 @@
       var itemType = String(item.type || '').toLowerCase();
       var relicName = String(item.name || '').trim();
       if (itemType !== 'relic' || !relicName) continue;
+      if (!isIntactRelicName(relicName)) continue;
 
       var rewards = extractRelicRewardsFromItem(item);
       if (!Array.isArray(rewards) || rewards.length === 0) continue;
@@ -4511,6 +4683,17 @@
     return out;
   }
 
+  function isIntactRelicName(relicName) {
+    return /\bintact\b/i.test(String(relicName || ''));
+  }
+
+  function filterIntactRelicDirectory(entries) {
+    if (!Array.isArray(entries)) return [];
+    return entries.filter(function(relic) {
+      return relic && isIntactRelicName(relic.name || relic.displayName);
+    });
+  }
+
   function cacheRelicRewardsDirectory(entries) {
     if (!Array.isArray(entries)) return;
     for (var i = 0; i < entries.length; i++) {
@@ -4537,7 +4720,7 @@
       var parsed = JSON.parse(raw);
       if (!parsed || !Array.isArray(parsed.relics)) return null;
       if (Date.now() - parsed.timestamp > RELIC_DIRECTORY_CACHE_TTL) return null;
-      return parsed.relics;
+      return filterIntactRelicDirectory(parsed.relics);
     } catch (e) {
       return null;
     }
@@ -4567,7 +4750,7 @@
     relicDirectoryPromise = (async function() {
       var data;
       try {
-        var resp = await fetch(API_URL, { cache: 'no-store' });
+        var resp = await fetch(API_URL, { cache: 'no-store', headers: WARFRAMESTAT_ENGLISH_HEADERS });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         data = await resp.json();
       } catch (primaryErr) {
@@ -4757,7 +4940,7 @@
     arcaneDirectoryPromise = (async function() {
       var data;
       try {
-        var resp = await fetch(API_URL, { cache: 'no-store' });
+        var resp = await fetch(API_URL, { cache: 'no-store', headers: WARFRAMESTAT_ENGLISH_HEADERS });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         data = await resp.json();
       } catch (primaryErr) {
@@ -5324,7 +5507,7 @@
     if (primeRelicRewardsCache[key]) return primeRelicRewardsCache[key];
 
     try {
-      var resp = await fetch('https://api.warframestat.us/items/' + encodeURIComponent(key));
+      var resp = await fetch('https://api.warframestat.us/items/' + encodeURIComponent(key) + '?language=en', { headers: WARFRAMESTAT_ENGLISH_HEADERS });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var item = await resp.json();
       var normalized = extractRelicRewardsFromItem(item);
@@ -5517,9 +5700,6 @@
     if (relicRewardFilterMode === 'missing') {
       return stats.primeMissing > 0;
     }
-    if (relicRewardFilterMode === 'completed') {
-      return stats.primeCompleted > 0;
-    }
     return true;
   }
 
@@ -5594,6 +5774,144 @@
       fragment.appendChild(row);
     }
     hoverEl.appendChild(fragment);
+  }
+
+  function closeRelicDetailModal() {
+    if (!els.relicDetailModal) return;
+    els.relicDetailModal.classList.add('hidden');
+    if (els.relicDetailDrops) {
+      els.relicDetailDrops.textContent = '';
+    }
+  }
+
+  function getRelicDropImageUrl(rewardName, completion) {
+    var item = completion && (completion.item || completion.baseItem);
+    if (!item) item = findMasteryItemByName(rewardName, true) || findItemByLooseName(rewardName);
+    return item ? getItemImageUrl(item) : '';
+  }
+
+  async function openMarketForRelicDrop(rewardName) {
+    if (!rewardName) return;
+    await openMarketForChecklistItem({ name: rewardName });
+    closeRelicDetailModal();
+  }
+
+  function openRelicDetailModal(relic, matchedRewards) {
+    if (!els.relicDetailModal || !relic) return;
+
+    var rewards = Array.isArray(relic.rewards) ? relic.rewards : [];
+    var matchedLookup = Object.create(null);
+    if (Array.isArray(matchedRewards)) {
+      for (var i = 0; i < matchedRewards.length; i++) {
+        matchedLookup[toLookupKey(matchedRewards[i])] = true;
+      }
+    }
+
+    if (els.relicDetailImg) {
+      els.relicDetailImg.src = getRelicTierImageUrl(relic.tier);
+      els.relicDetailImg.alt = String(relic.tier || 'Relic') + ' relic';
+    }
+    if (els.relicDetailName) {
+      els.relicDetailName.textContent = relic.name || 'Relic';
+    }
+    if (els.relicDetailSub) {
+      var countLabel = rewards.length === 1 ? '1 reward' : rewards.length + ' rewards';
+      els.relicDetailSub.textContent = cleanDisplayText(relic.tier || 'Relic') + ' relic - ' + countLabel + ' with drop chances and market shortcuts.';
+    }
+    if (els.relicDetailDrops) {
+      els.relicDetailDrops.textContent = '';
+
+      if (!rewards.length) {
+        var empty = document.createElement('div');
+        empty.className = 'prime-empty';
+        empty.textContent = 'No drop table is available for this relic yet.';
+        els.relicDetailDrops.appendChild(empty);
+      } else {
+        var fragment = document.createDocumentFragment();
+        for (var r = 0; r < rewards.length; r++) {
+          var reward = rewards[r] || {};
+          var rewardName = cleanDisplayText(reward.name || 'Unknown reward');
+          var completion = getRelicRewardCompletion(rewardName);
+          var row = document.createElement('article');
+          row.className = 'relic-detail-drop is-' + completion.status;
+          if (matchedLookup[toLookupKey(rewardName)]) {
+            row.classList.add('is-match');
+          }
+
+          var media = document.createElement('div');
+          media.className = 'relic-detail-drop-media';
+          var imageUrl = getRelicDropImageUrl(rewardName, completion);
+          if (imageUrl) {
+            var img = document.createElement('img');
+            img.src = imageUrl;
+            img.alt = rewardName;
+            img.loading = 'lazy';
+            img.onerror = function() {
+              this.remove();
+            };
+            media.appendChild(img);
+          } else {
+            var placeholder = document.createElement('span');
+            placeholder.className = 'material-icons-round';
+            placeholder.textContent = 'inventory_2';
+            media.appendChild(placeholder);
+          }
+
+          var copy = document.createElement('div');
+          copy.className = 'relic-detail-drop-copy';
+
+          var nameRow = document.createElement('div');
+          nameRow.className = 'relic-detail-drop-name-row';
+
+          var name = document.createElement('h3');
+          name.className = 'relic-detail-drop-name';
+          name.textContent = rewardName;
+
+          var status = document.createElement('span');
+          status.className = 'relic-detail-drop-status is-' + completion.status;
+          status.title = completion.label || '';
+          status.setAttribute('aria-label', completion.label || 'Reward status');
+          if (completion.baseComplete) {
+            status.innerHTML = '<span class="material-icons-round">check</span>';
+          } else {
+            status.innerHTML = '<span class="material-icons-round">radio_button_unchecked</span>';
+          }
+
+          nameRow.appendChild(name);
+          nameRow.appendChild(status);
+
+          var meta = document.createElement('p');
+          meta.className = 'relic-detail-drop-meta';
+          var chance = formatRewardChance(reward.chance);
+          meta.textContent = cleanDisplayText(reward.rarity || 'Reward') + (chance ? ' - ' + chance : '');
+
+          copy.appendChild(nameRow);
+          copy.appendChild(meta);
+
+          var marketBtn = document.createElement('button');
+          marketBtn.className = 'relic-drop-market-btn item-card-market-btn';
+          marketBtn.type = 'button';
+          marketBtn.innerHTML = '<span class="material-icons-round">storefront</span><span>Market</span>';
+          marketBtn.addEventListener('click', function(nameForMarket) {
+            return function(event) {
+              event.preventDefault();
+              event.stopPropagation();
+              openMarketForRelicDrop(nameForMarket).catch(function(err) {
+                console.warn('Failed to open relic reward in market', err);
+              });
+            };
+          }(rewardName));
+
+          row.appendChild(media);
+          row.appendChild(copy);
+          row.appendChild(marketBtn);
+          fragment.appendChild(row);
+        }
+        els.relicDetailDrops.appendChild(fragment);
+      }
+    }
+
+    els.relicDetailModal.classList.remove('hidden');
   }
 
   function renderPrimeRelics(relics) {
@@ -5800,7 +6118,7 @@
     var hasQuery = !!normalizeSearchText(relicSearchQuery);
     var filterLabel = relicRewardFilterMode === 'missing'
       ? 'needed prime items'
-      : (relicRewardFilterMode === 'completed' ? 'mastered prime items' : 'all rewards');
+      : 'all rewards';
 
     if (els.relicsTotalCount) {
       els.relicsTotalCount.textContent = totalCount ? totalCount.toLocaleString() : '0';
@@ -5816,11 +6134,14 @@
     if (els.relicsSearchSummary) {
       els.relicsSearchSummary.textContent = hasQuery
         ? 'Matches by relic name and reward name'
-        : 'Reward markers use mastered item status. Prime part ownership is not tracked.';
+        : 'Click a relic card to inspect drops and market listings.';
     }
   }
 
   function syncRelicSearchControls() {
+    if (relicRewardFilterMode !== 'all' && relicRewardFilterMode !== 'missing') {
+      relicRewardFilterMode = 'all';
+    }
     if (els.relicSearchInput && els.relicSearchInput.value !== relicSearchQuery) {
       els.relicSearchInput.value = relicSearchQuery;
     }
@@ -5908,44 +6229,47 @@
       var result = visibleResults[i];
       var relic = result.relic;
 
+      var tierKey = String(relic.tier || 'relic').toLowerCase();
       var card = document.createElement('article');
-      card.className = 'prime-relic-card relic-directory-card';
+      card.className = 'prime-relic-card relic-directory-card relic-card-tier-' + tierKey;
       card.tabIndex = 0;
+      card.setAttribute('role', 'button');
+      card.setAttribute('aria-label', 'Open drops for ' + relic.name);
+
+      var media = document.createElement('div');
+      media.className = 'relic-card-media';
+
+      var img = document.createElement('img');
+      img.className = 'relic-card-image';
+      img.src = getRelicTierImageUrl(relic.tier);
+      img.alt = relic.tier + ' relic';
+      img.loading = 'lazy';
+      media.appendChild(img);
+
+      var body = document.createElement('div');
+      body.className = 'relic-card-body';
+
+      var footer = document.createElement('div');
+      footer.className = 'relic-card-footer';
 
       var title = document.createElement('h4');
-      title.className = 'prime-relic-name';
+      title.className = 'prime-relic-name relic-card-title';
       title.textContent = relic.name;
 
-      var meta = document.createElement('div');
-      meta.className = 'prime-relic-cost';
-      meta.textContent = relic.rareRewardName
-        ? 'Rare reward: ' + relic.rareRewardName
-        : relic.rewardCount + ' rewards available';
+      var openBtn = document.createElement('button');
+      openBtn.className = 'relic-card-open-btn item-card-market-btn';
+      openBtn.type = 'button';
+      openBtn.innerHTML = '<span class="material-icons-round">inventory_2</span><span>Drops</span>';
+      openBtn.addEventListener('click', function(relicForButton, matchesForButton) {
+        return function(event) {
+          event.preventDefault();
+          event.stopPropagation();
+          openRelicDetailModal(relicForButton, matchesForButton);
+        };
+      }(relic, result.matchedRewards));
 
-      var pillRow = document.createElement('div');
-      pillRow.className = 'relic-card-pill-row';
-
-      var tierPill = document.createElement('span');
-      tierPill.className = 'relic-card-pill';
-      tierPill.textContent = relic.tier;
-
-      var countPill = document.createElement('span');
-      countPill.className = 'relic-card-pill';
-      countPill.textContent = relic.rewardCount + ' rewards';
-
-      var progressPill = document.createElement('span');
-      var rewardStats = getRelicRewardStatsForRelic(relic);
-      progressPill.className = 'relic-card-pill relic-card-progress-pill';
-      if (rewardStats.primeTotal > 0 && rewardStats.primeCompleted >= rewardStats.primeTotal) {
-        progressPill.classList.add('is-complete');
-      } else if (rewardStats.primeCompleted > 0) {
-        progressPill.classList.add('is-partial');
-      }
-      progressPill.textContent = formatRelicRewardProgressFromStats(rewardStats);
-
-      pillRow.appendChild(tierPill);
-      pillRow.appendChild(countPill);
-      pillRow.appendChild(progressPill);
+      footer.appendChild(title);
+      footer.appendChild(openBtn);
 
       var detail = document.createElement('div');
       if (result.matchedRewards && result.matchedRewards.length > 0) {
@@ -5962,40 +6286,26 @@
         detail.appendChild(matchText);
       } else {
         detail.className = 'relic-card-preview';
-        detail.textContent = relic.rareRewardName
-          ? 'Hover to inspect all drops and drop chances.'
-          : 'Hover to inspect the full reward table.';
+        detail.textContent = cleanDisplayText(relic.tier || 'Relic') + ' - ' + (relic.rewardCount || 0) + ' rewards';
       }
 
-      var spacer = document.createElement('div');
-      spacer.className = 'relic-card-spacer';
+      body.appendChild(footer);
+      body.appendChild(detail);
 
-      var hint = document.createElement('div');
-      hint.className = 'prime-relic-hint';
-      hint.textContent = 'Hover to see drops';
-
-      var hover = document.createElement('div');
-      hover.className = 'prime-relic-hover';
-      hover.innerHTML = '<div class="prime-relic-loading">Drop table ready on hover</div>';
-
-      var renderRewardsOnce = function(targetHover, targetRewards) {
-        var rendered = false;
+      card.appendChild(media);
+      card.appendChild(body);
+      card.addEventListener('click', function(relicForClick, matchesForClick) {
         return function() {
-          if (rendered) return;
-          rendered = true;
-          renderRelicRewards(targetHover, targetRewards);
+          openRelicDetailModal(relicForClick, matchesForClick);
         };
-      }(hover, relic.rewards);
-      card.addEventListener('pointerenter', renderRewardsOnce, { once: true });
-      card.addEventListener('focus', renderRewardsOnce, { once: true });
-
-      card.appendChild(title);
-      card.appendChild(meta);
-      card.appendChild(pillRow);
-      card.appendChild(detail);
-      card.appendChild(spacer);
-      card.appendChild(hint);
-      card.appendChild(hover);
+      }(relic, result.matchedRewards));
+      card.addEventListener('keydown', function(relicForKey, matchesForKey) {
+        return function(event) {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          openRelicDetailModal(relicForKey, matchesForKey);
+        };
+      }(relic, result.matchedRewards));
       fragment.appendChild(card);
     }
 
@@ -6867,6 +7177,430 @@
     );
   }
 
+  function setRelicOverlayStatus(state, message) {
+    if (!els.relicOverlayStatus) return;
+    var icon = els.relicOverlayStatus.querySelector('.material-icons-round');
+    var text = els.relicOverlayStatus.querySelector('span:not(.material-icons-round)');
+    els.relicOverlayStatus.classList.remove('is-active', 'is-detected', 'is-error');
+    if (state) els.relicOverlayStatus.classList.add('is-' + state);
+    if (icon) {
+      icon.textContent = state === 'error'
+        ? 'warning'
+        : state === 'detected'
+          ? 'visibility'
+          : state === 'active'
+            ? 'radar'
+            : 'visibility_off';
+    }
+    if (text) {
+      text.textContent = message || 'Overlay disabled. Enable it before opening relics.';
+    }
+  }
+
+  function normalizeRelicOverlayRewardText(text) {
+    return String(text || '')
+      .replace(/\bowned\b/ig, ' ')
+      .replace(/\bcrafted\b/ig, ' ')
+      .replace(/\bvoid\s+fissure\s*\/?\s*rewards?\b/ig, ' ')
+      .replace(/\bendless\b.*$/ig, ' ')
+      .replace(/\bcredit\s+booster\b.*$/ig, ' ')
+      .replace(/[+][0-9]+.*$/g, ' ')
+      .replace(/blueprlnt|biueprint/ig, 'Blueprint')
+      .replace(/blacle|biade/ig, 'Blade')
+      .replace(/neuroptlcs/ig, 'Neuroptics')
+      .replace(/systems?/ig, function(match) { return /^system$/i.test(match) ? 'Systems' : match; })
+      .replace(/[|_[\]{}<>]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function titleCaseRelicRewardName(name) {
+    return String(name || '')
+      .replace(/^\s*\d+\s+/, '')
+      .split(/\s+/)
+      .filter(Boolean)
+      .map(function(part) {
+        if (/^[IVX]+$/i.test(part)) return part.toUpperCase();
+        return part.charAt(0).toUpperCase() + part.slice(1).toLowerCase();
+      })
+      .join(' ')
+      .replace(/\bPrime\b/g, 'Prime')
+      .replace(/\bBlueprint\b/g, 'Blueprint')
+      .replace(/\bNeuroptics\b/g, 'Neuroptics')
+      .replace(/\bSystems\b/g, 'Systems');
+  }
+
+  function cleanRelicOverlayRewardName(name) {
+    var cleaned = String(name || '')
+      .replace(/\b(?:owned|crafted)\b/ig, ' ')
+      .replace(/^\s*\d+\s+/, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    cleaned = cleaned.replace(/^.*\bForma\s+Blueprint\s+(?=[A-Za-z0-9' -]+\bPrime\b)/i, '');
+    if (/\bForma\s+Blueprint\b/i.test(cleaned) && !/\bPrime\b/i.test(cleaned)) return 'Forma Blueprint';
+    return titleCaseRelicRewardName(cleaned);
+  }
+
+  function isRelicOverlayRewardName(name) {
+    var value = String(name || '');
+    if (/\bForma\s+Blueprint\b/i.test(value)) return true;
+    return /\bprime\b/i.test(value) && RELIC_OVERLAY_PART_PATTERN.test(value);
+  }
+
+  function splitRelicOverlayLineMatches(lineText) {
+    var clean = normalizeRelicOverlayRewardText(lineText);
+    var matches = [];
+    var fixedMatch;
+    RELIC_OVERLAY_FIXED_REWARD_PATTERN.lastIndex = 0;
+    while ((fixedMatch = RELIC_OVERLAY_FIXED_REWARD_PATTERN.exec(clean)) !== null) {
+      matches.push({
+        index: fixedMatch.index,
+        name: cleanRelicOverlayRewardName(fixedMatch[1])
+      });
+    }
+
+    RELIC_OVERLAY_REWARD_PATTERN.lastIndex = 0;
+    var match;
+    while ((match = RELIC_OVERLAY_REWARD_PATTERN.exec(clean)) !== null) {
+      var name = cleanRelicOverlayRewardName(match[1]);
+      var localOffset = match[1].toLowerCase().lastIndexOf(name.toLowerCase());
+      matches.push({
+        index: match.index + (localOffset > 0 ? localOffset : 0),
+        name: name
+      });
+    }
+
+    if (matches.length > 0) {
+      return matches
+        .filter(function(item) { return item && isRelicOverlayRewardName(item.name); })
+        .sort(function(a, b) { return a.index - b.index; })
+        .map(function(item) { return item.name; });
+    }
+
+    if (/\bprime\b/i.test(clean) && RELIC_OVERLAY_PART_PATTERN.test(clean)) {
+      return [cleanRelicOverlayRewardName(clean.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, ''))];
+    }
+
+    return [];
+  }
+
+  function segmentRelicOverlayBbox(bbox, index, total) {
+    if (!bbox || total <= 1) return bbox || null;
+    var x0 = Number(bbox.x0);
+    var x1 = Number(bbox.x1);
+    if (!Number.isFinite(x0) || !Number.isFinite(x1) || x1 <= x0) return bbox;
+    var width = (x1 - x0) / total;
+    return {
+      x0: x0 + width * index,
+      y0: bbox.y0,
+      x1: x0 + width * (index + 1),
+      y1: bbox.y1
+    };
+  }
+
+  function createRelicOverlayCandidatesFromNames(names, sourceText) {
+    var output = [];
+    var list = Array.isArray(names) ? names : [];
+    for (var i = 0; i < list.length; i++) {
+      var name = list[i];
+      if (!name || !isRelicOverlayRewardName(name)) continue;
+      output.push({
+        name: name,
+        sourceText: sourceText || name,
+        confidence: 0,
+        bbox: null
+      });
+      if (output.length >= 4) break;
+    }
+    return output;
+  }
+
+  function extractRelicOverlayRewardCandidates(payload) {
+    var lines = Array.isArray(payload && payload.lines) ? payload.lines : [];
+    var candidates = [];
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i] || {};
+      var names = splitRelicOverlayLineMatches(line.text || '');
+      if (names.length === 0) continue;
+      for (var n = 0; n < names.length; n++) {
+        var name = names[n];
+        if (!name || !isRelicOverlayRewardName(name)) continue;
+        candidates.push({
+          name: name,
+          sourceText: line.text || name,
+          confidence: typeof line.confidence === 'number' ? line.confidence : 0,
+          bbox: segmentRelicOverlayBbox(line.bbox, n, names.length)
+        });
+      }
+    }
+
+    candidates.sort(function(a, b) {
+      var ay = a.bbox ? Number(a.bbox.y0) : 0;
+      var by = b.bbox ? Number(b.bbox.y0) : 0;
+      if (Math.abs(ay - by) > 24) return ay - by;
+      var ax = a.bbox ? Number(a.bbox.x0) : 0;
+      var bx = b.bbox ? Number(b.bbox.x0) : 0;
+      return ax - bx;
+    });
+
+    var deduped = [];
+    for (var c = 0; c < candidates.length; c++) {
+      var candidate = candidates[c];
+      var duplicate = false;
+      for (var d = 0; d < deduped.length; d++) {
+        var prev = deduped[d];
+        var sameName = normalizeSearchText(prev.name) === normalizeSearchText(candidate.name);
+        var prevX = prev.bbox ? Number(prev.bbox.x0) : -9999;
+        var nextX = candidate.bbox ? Number(candidate.bbox.x0) : 9999;
+        if (sameName && Math.abs(prevX - nextX) < 18) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (!duplicate) deduped.push(candidate);
+      if (deduped.length >= 4) break;
+    }
+
+    if (deduped.length < 4) {
+      var combinedText = lines.map(function(line) {
+        return line && line.text ? line.text : '';
+      }).join(' ') + ' ' + String(payload && payload.text ? payload.text : '');
+      var combinedNames = splitRelicOverlayLineMatches(combinedText);
+      if (combinedNames.length > deduped.length) {
+        return createRelicOverlayCandidatesFromNames(combinedNames.slice(0, 4), combinedText);
+      }
+    }
+
+    if (deduped.length === 0 && payload && payload.text) {
+      return createRelicOverlayCandidatesFromNames(splitRelicOverlayLineMatches(payload.text), payload.text);
+    }
+
+    return deduped;
+  }
+
+  function getRelicOverlaySlotCenters(payload, total) {
+    var bounds = payload && payload.displayBounds ? payload.displayBounds : {};
+    var width = Math.max(1, Number(bounds.width) || window.innerWidth || 1280);
+    var height = Math.max(1, Number(bounds.height) || window.innerHeight || 720);
+    var count = Math.max(1, Math.min(4, Number(total) || 4));
+    var fractions = count === 1
+      ? [0.5]
+      : count === 2
+        ? [0.438, 0.563]
+        : count === 3
+          ? [0.375, 0.5, 0.625]
+          : [0.31, 0.4375, 0.5625, 0.69];
+    return fractions.map(function(fraction, index) {
+      return {
+        index: index,
+        fraction: fraction,
+        x: width * fraction,
+        y: Math.max(160, height * 0.386)
+      };
+    });
+  }
+
+  function getRelicOverlayCandidateSlot(candidate, fallbackIndex, payload, usedSlots, total) {
+    var slots = getRelicOverlaySlotCenters(payload, total);
+    var preferredIndex = Math.min(slots.length - 1, Math.max(0, Number(fallbackIndex) || 0));
+
+    for (var offset = 0; offset < slots.length; offset++) {
+      var slotIndex = (preferredIndex + offset) % slots.length;
+      if (!usedSlots[slotIndex]) return slots[slotIndex];
+    }
+
+    return slots[preferredIndex];
+  }
+
+  function buildRelicOverlayLabels(candidates, prices, payload) {
+    var labels = [];
+    var total = Math.max(1, Math.min(4, Array.isArray(candidates) ? candidates.length : 4));
+    var usedSlots = Object.create(null);
+    for (var i = 0; i < candidates.length; i++) {
+      var candidate = candidates[i];
+      var price = prices && prices[i] ? prices[i] : null;
+      var anchor = getRelicOverlayCandidateSlot(candidate, i, payload, usedSlots, total);
+      usedSlots[anchor.index] = true;
+      labels.push({
+        x: Math.round(anchor.x),
+        y: Math.round(anchor.y),
+        slot: anchor.index,
+        sourceName: candidate.name,
+        name: price && price.name ? price.name : candidate.name,
+        price: price && Number.isFinite(Number(price.price)) ? Number(price.price) : null,
+        buy: price && Number.isFinite(Number(price.buy)) ? Number(price.buy) : null,
+        slug: price && price.slug ? price.slug : ''
+      });
+    }
+    return labels;
+  }
+
+  async function handleRelicOverlayScan(payload) {
+    if (!relicOverlayEnabled || !payload || payload.detected !== true) {
+      if (!relicOverlayEnabled || !lastRelicOverlayDetectionAt || Date.now() - lastRelicOverlayDetectionAt > RELIC_OVERLAY_RENDER_HOLD_MS) {
+        lastRelicOverlaySignature = '';
+        lastRelicOverlayLabels = [];
+      }
+      return;
+    }
+
+    var candidates = extractRelicOverlayRewardCandidates(payload);
+    if (candidates.length === 0) {
+      setRelicOverlayStatus('active', 'Void Fissure rewards detected, but OCR could not read reward names yet.');
+      if (lastRelicOverlayLabels.length > 0 && Date.now() - lastRelicOverlayDetectionAt < RELIC_OVERLAY_RENDER_HOLD_MS) {
+        if (window.electronAPI && window.electronAPI.updateRelicOverlay) {
+          await window.electronAPI.updateRelicOverlay({
+            detected: true,
+            labels: lastRelicOverlayLabels,
+            displayBounds: payload.displayBounds || null,
+            imageSize: payload.imageSize || null,
+            capturedAt: payload.capturedAt || Date.now()
+          });
+        }
+        return;
+      }
+      if (window.electronAPI && window.electronAPI.updateRelicOverlay) {
+        await window.electronAPI.updateRelicOverlay({ detected: false, labels: [] });
+      }
+      lastRelicOverlaySignature = '';
+      lastRelicOverlayLabels = [];
+      return;
+    }
+
+    var signature = candidates.map(function(candidate) {
+      return normalizeSearchText(candidate.name);
+    }).join('|');
+
+    if (signature && signature === lastRelicOverlaySignature && lastRelicOverlayLabels.length > 0) {
+      lastRelicOverlayDetectionAt = Date.now();
+      if (window.electronAPI && window.electronAPI.updateRelicOverlay) {
+        await window.electronAPI.updateRelicOverlay({
+          detected: true,
+          labels: lastRelicOverlayLabels,
+          displayBounds: payload.displayBounds || null,
+          imageSize: payload.imageSize || null,
+          capturedAt: payload.capturedAt || Date.now()
+        });
+      }
+      return;
+    }
+
+    lastRelicOverlaySignature = signature;
+    lastRelicOverlayLabels = [];
+    lastRelicOverlayDetectionAt = Date.now();
+
+    var requestId = ++relicOverlayPriceRequestId;
+    setRelicOverlayStatus('detected', 'Relic rewards detected. Checking platinum prices...');
+
+    var pendingLabels = buildRelicOverlayLabels(candidates, [], payload);
+    if (window.electronAPI && window.electronAPI.updateRelicOverlay) {
+      await window.electronAPI.updateRelicOverlay({
+        detected: true,
+        labels: pendingLabels,
+        displayBounds: payload.displayBounds || null,
+        imageSize: payload.imageSize || null,
+        capturedAt: payload.capturedAt || Date.now()
+      });
+    }
+
+    var prices = [];
+    if (window.warframeMarket && typeof window.warframeMarket.getRelicRewardOverlayPrices === 'function') {
+      prices = await window.warframeMarket.getRelicRewardOverlayPrices(candidates.map(function(candidate) {
+        return candidate.name;
+      }));
+    }
+
+    if (requestId !== relicOverlayPriceRequestId || !relicOverlayEnabled || signature !== lastRelicOverlaySignature) return;
+
+    var labels = buildRelicOverlayLabels(candidates, prices, payload);
+    lastRelicOverlayLabels = labels;
+    if (window.electronAPI && window.electronAPI.updateRelicOverlay) {
+      await window.electronAPI.updateRelicOverlay({
+        detected: true,
+        labels: labels,
+        displayBounds: payload.displayBounds || null,
+        imageSize: payload.imageSize || null,
+        capturedAt: payload.capturedAt || Date.now()
+      });
+    }
+
+    var pricedCount = labels.filter(function(label) {
+      return Number.isFinite(Number(label.price));
+    }).length;
+    setRelicOverlayStatus('detected', 'Overlay active: ' + pricedCount + '/' + labels.length + ' reward prices shown.');
+  }
+
+  async function setRelicOverlayEnabled(enabled) {
+    var next = !!enabled;
+    if (!window.electronAPI || !window.electronAPI.setRelicOverlayEnabled) {
+      if (els.relicOverlayToggle) els.relicOverlayToggle.checked = false;
+      setRelicOverlayStatus('error', 'Relic overlay is unavailable in this build.');
+      return;
+    }
+
+    try {
+      relicOverlayEnabled = next;
+      if (els.relicOverlayToggle) els.relicOverlayToggle.disabled = true;
+      setRelicOverlayStatus(next ? 'active' : '', next ? 'Starting relic reward overlay...' : 'Overlay disabled. Enable it before opening relics.');
+      var result = await window.electronAPI.setRelicOverlayEnabled(next);
+      relicOverlayEnabled = !!(result && result.enabled);
+      if (!relicOverlayEnabled) {
+        lastRelicOverlaySignature = '';
+        lastRelicOverlayLabels = [];
+        lastRelicOverlayDetectionAt = 0;
+        relicOverlayPriceRequestId++;
+      }
+      if (els.relicOverlayToggle) els.relicOverlayToggle.checked = relicOverlayEnabled;
+      setRelicOverlayStatus(
+        relicOverlayEnabled ? 'active' : '',
+        relicOverlayEnabled
+          ? 'Watching EE.log for Void Fissure rewards. Keep Warframe in borderless/windowed mode for best results.'
+          : 'Overlay disabled. Enable it before opening relics.'
+      );
+      if (relicOverlayEnabled && window.warframeMarket && typeof window.warframeMarket.warmRelicRewardOverlay === 'function') {
+        window.warframeMarket.warmRelicRewardOverlay().catch(function(err) {
+          console.warn('Failed to warm relic overlay market data:', err);
+        });
+      }
+      if (!result || !result.ok) {
+        setRelicOverlayStatus('error', result && result.message ? result.message : 'Could not start relic reward overlay.');
+      }
+    } catch (err) {
+      relicOverlayEnabled = false;
+      lastRelicOverlaySignature = '';
+      lastRelicOverlayLabels = [];
+      lastRelicOverlayDetectionAt = 0;
+      relicOverlayPriceRequestId++;
+      if (els.relicOverlayToggle) els.relicOverlayToggle.checked = false;
+      setRelicOverlayStatus('error', err && err.message ? err.message : 'Could not start relic reward overlay.');
+    } finally {
+      if (els.relicOverlayToggle) els.relicOverlayToggle.disabled = false;
+    }
+  }
+
+  function handleRelicOverlayEvent(payload) {
+    var type = payload && payload.type ? payload.type : '';
+    if (type === 'scan') {
+      if (!payload.detected) {
+        if (!lastRelicOverlayDetectionAt || Date.now() - lastRelicOverlayDetectionAt > RELIC_OVERLAY_RENDER_HOLD_MS) {
+          setRelicOverlayStatus('active', 'Watching EE.log for Void Fissure rewards...');
+        }
+      }
+      handleRelicOverlayScan(payload).catch(function(err) {
+        setRelicOverlayStatus('error', err && err.message ? err.message : 'Relic overlay price check failed.');
+      });
+      return;
+    }
+    if (type === 'error') {
+      setRelicOverlayStatus('error', payload && payload.message ? payload.message : 'Relic overlay scan failed.');
+      return;
+    }
+    if (type === 'status') {
+      setRelicOverlayStatus(payload && payload.enabled ? 'active' : '', payload && payload.message ? payload.message : '');
+    }
+  }
+
   function readFileAsDataUrl(file) {
     return new Promise(function(resolve, reject) {
       var reader = new FileReader();
@@ -7220,7 +7954,7 @@
     updateItemInfoPrimeStatus(item);
 
     if (els.itemInfoMarketBtn) {
-      var canOpenMarket = tradeModeEnabled && !!item.tradable;
+      var canOpenMarket = shouldTreatAsTradableMod(item) || (tradeModeEnabled && !!item.tradable);
       els.itemInfoMarketBtn.classList.toggle('hidden', !canOpenMarket);
       els.itemInfoMarketBtn.disabled = !canOpenMarket;
     }
@@ -11110,16 +11844,26 @@
   }
 
   function normalizeApiItems(data) {
-    return applyChecklistItemPatches(
+    var normalizedItems =
       data
-        .filter(function(item) { return item.masterable === true || item.category === 'Mods' || isMasterableAmpItem(item) || isProfileMasterableException(item); })
+        .filter(function(item) {
+          return item.masterable === true ||
+            item.category === 'Mods' ||
+            isMasterableAmpItem(item) ||
+            isProfileMasterableException(item) ||
+            isLikelyMasterableEquipmentItem(item);
+        })
         .map(normalizeItem)
-        .filter(function(item) { return !!item.uniqueName && !!item.name; })
-    );
+        .filter(function(item) { return !!item.uniqueName && !!item.name; });
+
+    return applyChecklistItemPatches(mergeChecklistItems(normalizedItems, []));
   }
 
   async function fetchMarketChecklistSupplements() {
-    var response = await fetch(MARKET_ITEMS_API_URL);
+    var response = await fetch(MARKET_ITEMS_API_URL, {
+      cache: 'no-store',
+      headers: { Accept: 'application/json' }
+    });
     if (!response.ok) throw new Error('HTTP ' + response.status);
 
     var json = await response.json();
@@ -11149,6 +11893,7 @@
 
   // Fallback raw URLs from wfcd/warframe-items GitHub repo (used when warframestat API is down)
   const WFCD_RAW_BASE = 'https://raw.githubusercontent.com/WFCD/warframe-items/master/data/json/';
+  const WARFRAMESTAT_ENGLISH_HEADERS = Object.freeze({ 'Accept-Language': 'en' });
   const WFCD_FALLBACK_FILES = [
     'Warframes.json',
     'Primary.json',
@@ -11169,12 +11914,27 @@
     'Quests.json'
   ];
 
-  async function fetchItemsFromWfcdFallback() {
+  const WFCD_CHECKLIST_SUPPLEMENT_FILES = [
+    'Warframes.json',
+    'Primary.json',
+    'Secondary.json',
+    'Melee.json',
+    'Arch-Gun.json',
+    'Arch-Melee.json',
+    'Archwing.json',
+    'Sentinels.json',
+    'SentinelWeapons.json',
+    'Pets.json',
+    'Gear.json',
+    'Misc.json'
+  ];
+
+  async function fetchItemsFromWfcdFiles(files) {
     var aggregated = [];
     var anySucceeded = false;
-    for (var i = 0; i < WFCD_FALLBACK_FILES.length; i++) {
+    for (var i = 0; i < files.length; i++) {
       try {
-        var resp = await fetch(WFCD_RAW_BASE + WFCD_FALLBACK_FILES[i]);
+        var resp = await fetch(WFCD_RAW_BASE + files[i], { cache: 'no-store' });
         if (!resp.ok) continue;
         var part = await resp.json();
         if (Array.isArray(part)) {
@@ -11187,6 +11947,15 @@
     }
     if (!anySucceeded) throw new Error('WFCD fallback also failed');
     return aggregated;
+  }
+
+  async function fetchItemsFromWfcdFallback() {
+    return fetchItemsFromWfcdFiles(WFCD_FALLBACK_FILES);
+  }
+
+  async function fetchWfcdChecklistSupplements() {
+    var data = await fetchItemsFromWfcdFiles(WFCD_CHECKLIST_SUPPLEMENT_FILES);
+    return normalizeApiItems(data);
   }
 
   // Cached single-file fetchers from WFCD - used by relic/arcane/prime loaders
@@ -11205,7 +11974,7 @@
   // Fetch all items: tries warframestat /items first, falls back to WFCD aggregate
   async function fetchAllItemsResilient() {
     try {
-      var resp = await fetch(API_URL, { cache: 'no-store' });
+      var resp = await fetch(API_URL, { cache: 'no-store', headers: WARFRAMESTAT_ENGLISH_HEADERS });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       return await resp.json();
     } catch (primaryErr) {
@@ -11215,16 +11984,38 @@
   }
 
   async function fetchLatestItemsFromApi() {
+    var primaryItems = [];
+    var primaryFailed = false;
+
     try {
-      const response = await fetch(API_URL);
+      const response = await fetch(API_URL, { cache: 'no-store', headers: WARFRAMESTAT_ENGLISH_HEADERS });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const data = await response.json();
-      return normalizeApiItems(data);
+      primaryItems = normalizeApiItems(data);
     } catch (primaryErr) {
+      primaryFailed = true;
       console.warn('Primary API failed, trying WFCD GitHub fallback:', primaryErr.message);
       const fallbackData = await fetchItemsFromWfcdFallback();
-      return normalizeApiItems(fallbackData);
+      primaryItems = normalizeApiItems(fallbackData);
     }
+
+    var supplementalItems = [];
+
+    if (!primaryFailed) {
+      try {
+        supplementalItems = supplementalItems.concat(await fetchWfcdChecklistSupplements());
+      } catch (wfcdErr) {
+        console.warn('WFCD checklist supplement failed:', wfcdErr.message);
+      }
+    }
+
+    try {
+      supplementalItems = supplementalItems.concat(await fetchMarketChecklistSupplements());
+    } catch (marketErr) {
+      console.warn('Warframe Market checklist supplement failed:', marketErr.message);
+    }
+
+    return applyChecklistItemPatches(mergeChecklistItems(primaryItems, supplementalItems));
   }
 
   function areItemsEquivalent(left, right) {
@@ -12349,10 +13140,21 @@
     return levelDiv;
   }
 
+  async function openMarketForChecklistItem(item) {
+    if (!item || !item.name) return;
+    await showPanel('market');
+    if (window.warframeMarket && window.warframeMarket.searchItemByName) {
+      await window.warframeMarket.searchItemByName(item.name);
+    } else if (window.warframeMarket && window.warframeMarket.openItemByName) {
+      await window.warframeMarket.openItemByName(item.name);
+    }
+  }
+
   function createItemCard(item, index) {
     var card = document.createElement('div');
     var itemIsUnobtainable = isUnobtainableItem(item);
     card.className = 'item-card' + (isItemFullyRanked(item) ? ' mastered' : '') + (itemIsUnobtainable ? ' unobtainable' : '');
+    if (shouldTreatAsTradableMod(item)) card.classList.add('has-market-button');
     if (item.category === 'Mods') card.setAttribute('data-mastery-label', 'OWNED');
     if (itemIsUnobtainable) {
       card.setAttribute('data-unobtainable-label', 'FOUNDER');
@@ -12383,7 +13185,7 @@
     }
 
     var tradeBadge = null;
-    if (tradeModeEnabled) {
+    if (tradeModeEnabled && !shouldTreatAsTradableMod(item)) {
       tradeBadge = document.createElement('span');
       tradeBadge.className = 'item-card-trade-badge ' + (item.tradable ? 'tradable' : 'not-tradable');
       tradeBadge.textContent = item.tradable ? 'Tradeable' : 'Not Tradeable';
@@ -12410,6 +13212,31 @@
     nameDiv.className = 'item-card-name';
     nameDiv.title = item.name;
     nameDiv.textContent = getItemTileNameLabel(item);
+
+    var marketButton = null;
+    if (shouldTreatAsTradableMod(item)) {
+      marketButton = document.createElement('button');
+      marketButton.type = 'button';
+      marketButton.className = 'item-card-market-btn';
+      marketButton.title = 'See this mod in Warframe Market';
+      marketButton.setAttribute('aria-label', 'See ' + (item.name || 'mod') + ' in Warframe Market');
+
+      var marketIcon = document.createElement('span');
+      marketIcon.className = 'material-icons-round';
+      marketIcon.textContent = 'storefront';
+      marketButton.appendChild(marketIcon);
+
+      var marketText = document.createElement('span');
+      marketText.textContent = 'Market';
+      marketButton.appendChild(marketText);
+
+      marketButton.addEventListener('click', function(e) {
+        e.stopPropagation();
+        openMarketForChecklistItem(item).catch(function(err) {
+          console.error('Failed to open mod in market:', err);
+        });
+      });
+    }
 
     var typeDiv = document.createElement('div');
     typeDiv.className = 'item-card-type';
@@ -12438,6 +13265,7 @@
     checkDiv.appendChild(checkIcon);
 
     bodyDiv.appendChild(nameDiv);
+    if (marketButton) bodyDiv.appendChild(marketButton);
     if (tradeBadge) bodyDiv.appendChild(tradeBadge);
     if (unobtainableBadge) bodyDiv.appendChild(unobtainableBadge);
     bodyDiv.appendChild(typeDiv);
@@ -14246,37 +15074,17 @@
     applyFilters();
   }
 
-  function syncSidebarToggleUi() {
+  function initSidebarAutoHide() {
     if (!els.appContainer) return;
-
-    els.appContainer.classList.toggle('sidebar-collapsed', sidebarCollapsed);
-
-    var label = sidebarCollapsed ? 'Show left panel' : 'Hide left panel';
-    if (els.sidebarToggleBtn) {
-      els.sidebarToggleBtn.setAttribute('aria-label', label);
-      els.sidebarToggleBtn.setAttribute('title', label);
-      els.sidebarToggleBtn.setAttribute('aria-pressed', sidebarCollapsed ? 'true' : 'false');
-    }
-
-    if (els.sidebarToggleIcon) {
-      els.sidebarToggleIcon.textContent = sidebarCollapsed ? 'chevron_right' : 'chevron_left';
-    }
+    els.appContainer.classList.add('sidebar-collapsed', 'sidebar-auto-hide');
   }
 
-  function setSidebarCollapsed(nextCollapsed) {
-    sidebarCollapsed = !!nextCollapsed;
-    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed ? '1' : '0');
-    syncSidebarToggleUi();
-  }
-
-  function initSidebarToggle() {
-    sidebarCollapsed = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
-    syncSidebarToggleUi();
-
-    if (els.sidebarToggleBtn) {
-      els.sidebarToggleBtn.addEventListener('click', function() {
-        setSidebarCollapsed(!sidebarCollapsed);
-      });
+  /** Remove focus from the sidebar so CSS :not(:focus-within) collapses it back to rail. */
+  function collapseSidebar() {
+    var sidebarEl = document.getElementById('sidebar');
+    if (!sidebarEl) return;
+    if (sidebarEl.contains(document.activeElement)) {
+      document.activeElement.blur();
     }
   }
 
@@ -14289,6 +15097,7 @@
       btn.classList.add('active');
       currentCategory = btn.dataset.category;
       applyFilters();
+      collapseSidebar();
     });
   });
 
@@ -14499,6 +15308,7 @@
   if (els.tradeModeBtn) {
     els.tradeModeBtn.addEventListener('click', function() {
       toggleTradeMode();
+      collapseSidebar();
     });
     updateTradeModeUI();
   }
@@ -14507,6 +15317,17 @@
     els.alwaysOnTopToggle.addEventListener('change', function() {
       setAlwaysOnTopEnabled(!!els.alwaysOnTopToggle.checked);
     });
+  }
+
+  if (els.relicOverlayToggle) {
+    els.relicOverlayToggle.addEventListener('change', function() {
+      setRelicOverlayEnabled(!!els.relicOverlayToggle.checked);
+    });
+    setRelicOverlayStatus('', 'Overlay disabled. Enable it before opening relics.');
+  }
+
+  if (window.electronAPI && window.electronAPI.onRelicOverlayEvent) {
+    window.electronAPI.onRelicOverlayEvent(handleRelicOverlayEvent);
   }
 
   if (els.themeOptions && els.themeOptions.length) {
@@ -14730,6 +15551,7 @@
       els.calculatorModal.classList.add('hidden');
       els.resetModal.classList.add('hidden');
       closeNewsModal();
+      closeRelicDetailModal();
       closeItemInfoModal();
       closeScanModal(false);
       toggleSquadCreateShell(false);
@@ -14742,6 +15564,14 @@
 
   if (els.itemInfoClose) {
     els.itemInfoClose.addEventListener('click', closeItemInfoModal);
+  }
+  if (els.relicDetailClose) {
+    els.relicDetailClose.addEventListener('click', closeRelicDetailModal);
+  }
+  if (els.relicDetailModal) {
+    els.relicDetailModal.addEventListener('click', function(e) {
+      if (e.target === els.relicDetailModal) closeRelicDetailModal();
+    });
   }
   if (els.itemInfoModal) {
     els.itemInfoModal.addEventListener('click', function(e) {
@@ -14762,13 +15592,8 @@
   }
   if (els.itemInfoMarketBtn) {
     els.itemInfoMarketBtn.addEventListener('click', async function() {
-      if (!tradeModeEnabled || !currentItemInfo || !currentItemInfo.tradable) return;
-      await showPanel('market');
-      if (window.warframeMarket && window.warframeMarket.searchItemByName) {
-        await window.warframeMarket.searchItemByName(currentItemInfo.name);
-      } else if (window.warframeMarket && window.warframeMarket.openItemByName) {
-        await window.warframeMarket.openItemByName(currentItemInfo.name);
-      }
+      if (!currentItemInfo || (!shouldTreatAsTradableMod(currentItemInfo) && (!tradeModeEnabled || !currentItemInfo.tradable))) return;
+      await openMarketForChecklistItem(currentItemInfo);
       closeItemInfoModal();
     });
   }
@@ -15180,12 +16005,14 @@
   // Market nav button
   $('#nav-market').addEventListener('click', function() {
     showPanel('market');
+    collapseSidebar();
   });
 
   var navTradeAnalytics = $('#nav-trade-analytics');
   if (navTradeAnalytics) {
     navTradeAnalytics.addEventListener('click', function() {
       showPanel('analytics', true);
+      collapseSidebar();
       if (typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(function() {
           var analyticsSearchInput = $('#trade-analytics-search-input');
@@ -15199,6 +16026,7 @@
   if (navPrimeResurgence) {
     navPrimeResurgence.addEventListener('click', function() {
       showPanel('prime', true);
+      collapseSidebar();
     });
   }
 
@@ -15206,6 +16034,7 @@
   if (navRelics) {
     navRelics.addEventListener('click', function() {
       showPanel('relics', true);
+      collapseSidebar();
       if (typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(function() {
           if (els.relicSearchInput) els.relicSearchInput.focus();
@@ -15218,6 +16047,7 @@
   if (navArcanes) {
     navArcanes.addEventListener('click', function() {
       showPanel('arcanes', true);
+      collapseSidebar();
       if (typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(function() {
           if (els.arcaneSearchInput) els.arcaneSearchInput.focus();
@@ -15230,6 +16060,7 @@
   if (navCycles) {
     navCycles.addEventListener('click', function() {
       showPanel('cycles', true);
+      collapseSidebar();
     });
   }
 
@@ -15237,6 +16068,7 @@
   if (navStarchartEl) {
     navStarchartEl.addEventListener('click', function() {
       showPanel('starchart', true);
+      collapseSidebar();
     });
   }
 
@@ -15244,6 +16076,7 @@
   if (navSquadFinder) {
     navSquadFinder.addEventListener('click', function() {
       showPanel('squad', true);
+      collapseSidebar();
     });
   }
 
@@ -15251,6 +16084,7 @@
   if (navCompareEl) {
     navCompareEl.addEventListener('click', function() {
       showPanel('compare', true);
+      collapseSidebar();
     });
   }
 
@@ -15258,6 +16092,7 @@
   if (navRecommendationsEl) {
     navRecommendationsEl.addEventListener('click', function() {
       showPanel('recommendations', true);
+      collapseSidebar();
       if (typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(function() {
           if (els.recommendationSearchInput) els.recommendationSearchInput.focus();
@@ -15270,6 +16105,7 @@
   if (navResourceSearchEl) {
     navResourceSearchEl.addEventListener('click', function() {
       showPanel('resources', true);
+      collapseSidebar();
       if (typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(function() {
           if (els.resourceSearchInput) els.resourceSearchInput.focus();
@@ -15533,6 +16369,7 @@
   $$('.nav-item[data-category]').forEach(function(btn) {
     btn.addEventListener('click', function() {
       showPanel('checklist');
+      collapseSidebar();
     });
   });
 
@@ -15543,7 +16380,7 @@
   initAlwaysOnTopSetting();
   initAutoUpdateSetting();
   initProfileFetchSetting();
-  initSidebarToggle();
+  initSidebarAutoHide();
   initRemovedProfileStorageMigration();
   // ---------- Frame Comparison ----------
   var compareInitialized = false;
@@ -15906,7 +16743,7 @@
     // Fall back to the warframestat API
     try {
       var searchName = frame.name.toLowerCase().replace(/\s+/g, '-');
-      var resp = await fetch('https://api.warframestat.us/items/' + encodeURIComponent(searchName));
+      var resp = await fetch('https://api.warframestat.us/items/' + encodeURIComponent(searchName) + '?language=en', { headers: WARFRAMESTAT_ENGLISH_HEADERS });
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       var data = await resp.json();
       compareFrameDetailCache[key] = data;
@@ -16029,6 +16866,269 @@
     if (passiveRight) passiveRight.textContent = cleanDisplayText(rightPassive);
   }
 
+  function slugifyCompareMediaName(value) {
+    return cleanDisplayText(value || '')
+      .toLowerCase()
+      .replace(/[’'`]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  function resolveCompareAssetPath(relativePath) {
+    var normalized = String(relativePath || '').replace(/^[/\\]+/, '').replace(/\\/g, '/');
+    if (!normalized) return '';
+    if (window.electronAPI && typeof window.electronAPI.resolveAssetUrl === 'function') {
+      return window.electronAPI.resolveAssetUrl(normalized);
+    }
+    return normalized;
+  }
+
+  function getCompareAbilityIconUrl(ability) {
+    var source = String((ability && (ability.icon || ability.image || ability.imageName)) || '').trim();
+    if (!source) return '';
+    if (/^https?:\/\//i.test(source) || source.indexOf('data:') === 0 || source.indexOf('assets/') === 0) {
+      return source;
+    }
+    return CDN_URL + encodeURI(source.replace(/^\/+/, ''));
+  }
+
+  function addCompareAbilityVideoSource(sources, source) {
+    var value = String(source || '').trim();
+    if (!value) return;
+    if (!/\.(mp4|webm|ogg)(\?|#|$)/i.test(value) && !/^https?:\/\//i.test(value) && value.indexOf('assets/') !== 0) return;
+    var normalized = /^https?:\/\//i.test(value) ? value : resolveCompareAssetPath(value);
+    if (normalized && sources.indexOf(normalized) === -1) {
+      sources.push(normalized);
+    }
+  }
+
+  function getCompareAbilityVideoSources(frame, ability) {
+    var sources = [];
+    var directKeys = [
+      'videoUrl',
+      'previewVideoUrl',
+      'previewVideo',
+      'preview',
+      'video',
+      'animationUrl',
+      'mediaUrl'
+    ];
+
+    directKeys.forEach(function (key) {
+      if (ability && ability[key]) {
+        addCompareAbilityVideoSource(sources, ability[key]);
+      }
+    });
+
+    var frameSlug = slugifyCompareMediaName(frame && frame.name);
+    var abilitySlug = slugifyCompareMediaName(ability && ability.name);
+    if (frameSlug && abilitySlug) {
+      addCompareAbilityVideoSource(sources, 'assets/ability-previews/' + frameSlug + '/' + abilitySlug + '.webm');
+      addCompareAbilityVideoSource(sources, 'assets/ability-previews/' + frameSlug + '/' + abilitySlug + '.mp4');
+      addCompareAbilityVideoSource(sources, 'assets/ability-previews/' + frameSlug + '-' + abilitySlug + '.webm');
+      addCompareAbilityVideoSource(sources, 'assets/ability-previews/' + frameSlug + '-' + abilitySlug + '.mp4');
+    }
+
+    return sources;
+  }
+
+  function attachComparePreviewVideo(video, fallback, sources) {
+    var index = 0;
+
+    function loadNextSource() {
+      if (!sources || index >= sources.length) {
+        video.removeEventListener('error', loadNextSource);
+        video.removeAttribute('src');
+        video.dataset.previewStarted = 'failed';
+        video.classList.remove('is-ready');
+        if (fallback) fallback.classList.remove('is-hidden');
+        return;
+      }
+
+      video.src = sources[index];
+      index += 1;
+      video.load();
+    }
+
+    video.addEventListener('loadeddata', function () {
+      video.dataset.previewStarted = 'ready';
+      video.classList.add('is-ready');
+      if (fallback) fallback.classList.add('is-hidden');
+    });
+
+    video.addEventListener('error', loadNextSource);
+    video._loadComparePreviewSource = loadNextSource;
+  }
+
+  function startCompareAbilityPreview(button) {
+    var video = button && button.querySelector('[data-ability-preview-video="true"]');
+    if (!video) return;
+
+    if (!video.dataset.previewStarted) {
+      video.dataset.previewStarted = 'loading';
+      if (typeof video._loadComparePreviewSource === 'function') {
+        video._loadComparePreviewSource();
+      }
+    }
+
+    if (!video.classList.contains('is-ready')) return;
+
+    try {
+      video.currentTime = 0;
+    } catch (err) {
+      // Some video containers reject seeking before metadata is fully available.
+    }
+
+    var playResult = video.play();
+    if (playResult && typeof playResult.catch === 'function') {
+      playResult.catch(function () {});
+    }
+  }
+
+  function stopCompareAbilityPreview(button) {
+    var video = button && button.querySelector('[data-ability-preview-video="true"]');
+    if (!video) return;
+    video.pause();
+  }
+
+  function buildCompareAbilityPreview(frame, ability, index) {
+    var preview = document.createElement('div');
+    preview.className = 'compare-ability-preview';
+    preview.setAttribute('aria-hidden', 'true');
+
+    var mediaWrap = document.createElement('div');
+    mediaWrap.className = 'compare-ability-preview-media';
+
+    var fallback = document.createElement('div');
+    fallback.className = 'compare-ability-preview-fallback';
+
+    var fallbackIconUrl = getCompareAbilityIconUrl(ability);
+    if (fallbackIconUrl) {
+      var fallbackIcon = document.createElement('img');
+      fallbackIcon.src = fallbackIconUrl;
+      fallbackIcon.alt = '';
+      fallbackIcon.className = 'compare-ability-preview-fallback-icon';
+      fallback.appendChild(fallbackIcon);
+    }
+
+    var fallbackPulse = document.createElement('div');
+    fallbackPulse.className = 'compare-ability-preview-pulse';
+    fallback.appendChild(fallbackPulse);
+
+    var sources = getCompareAbilityVideoSources(frame, ability);
+    if (sources.length) {
+      var video = document.createElement('video');
+      video.className = 'compare-ability-preview-video';
+      video.setAttribute('data-ability-preview-video', 'true');
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.preload = 'metadata';
+      attachComparePreviewVideo(video, fallback, sources);
+      mediaWrap.appendChild(video);
+    }
+
+    mediaWrap.appendChild(fallback);
+    preview.appendChild(mediaWrap);
+
+    var meta = document.createElement('div');
+    meta.className = 'compare-ability-preview-meta';
+
+    var kicker = document.createElement('div');
+    kicker.className = 'compare-ability-preview-kicker';
+    kicker.textContent = 'Arsenal Preview';
+    meta.appendChild(kicker);
+
+    var title = document.createElement('div');
+    title.className = 'compare-ability-preview-title';
+    title.textContent = cleanDisplayText((ability && ability.name) || ('Ability ' + (index + 1)));
+    meta.appendChild(title);
+
+    var desc = document.createElement('div');
+    desc.className = 'compare-ability-preview-desc';
+    desc.textContent = cleanDisplayText((ability && ability.description) || 'No preview data available yet.');
+    meta.appendChild(desc);
+
+    preview.appendChild(meta);
+    return preview;
+  }
+
+  function buildCompareAbilityIcon(frame, ability, index, side) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'compare-ability-icon-btn ' + side;
+    button.setAttribute('aria-label', 'Preview ' + cleanDisplayText((ability && ability.name) || ('ability ' + (index + 1))));
+
+    var frameEl = document.createElement('span');
+    frameEl.className = 'compare-ability-icon-frame';
+
+    var iconUrl = getCompareAbilityIconUrl(ability);
+    if (iconUrl) {
+      var img = document.createElement('img');
+      img.className = 'compare-ability-icon';
+      img.src = iconUrl;
+      img.alt = '';
+      img.onerror = function () {
+        img.classList.add('hidden');
+        frameEl.classList.add('has-fallback');
+      };
+      frameEl.appendChild(img);
+    } else {
+      frameEl.classList.add('has-fallback');
+    }
+
+    var fallback = document.createElement('span');
+    fallback.className = 'compare-ability-icon-fallback';
+    fallback.textContent = String(index + 1);
+    frameEl.appendChild(fallback);
+    button.appendChild(frameEl);
+    button.appendChild(buildCompareAbilityPreview(frame, ability || {}, index));
+
+    button.addEventListener('mouseenter', function () {
+      startCompareAbilityPreview(button);
+    });
+    button.addEventListener('mouseleave', function () {
+      stopCompareAbilityPreview(button);
+    });
+    button.addEventListener('focusin', function () {
+      startCompareAbilityPreview(button);
+    });
+    button.addEventListener('focusout', function () {
+      stopCompareAbilityPreview(button);
+    });
+
+    return button;
+  }
+
+  function buildCompareAbilityCard(frame, ability, index, side) {
+    var card = document.createElement('div');
+    card.className = 'compare-ability-card ' + side;
+
+    var copy = document.createElement('div');
+    copy.className = 'compare-ability-copy';
+
+    var name = document.createElement('div');
+    name.className = 'compare-ability-name';
+    name.textContent = cleanDisplayText((ability && ability.name) || '-');
+    copy.appendChild(name);
+
+    var desc = document.createElement('div');
+    desc.className = 'compare-ability-desc';
+    desc.textContent = cleanDisplayText((ability && ability.description) || '');
+    copy.appendChild(desc);
+
+    var icon = buildCompareAbilityIcon(frame, ability || {}, index, side);
+    if (side === 'left') {
+      card.appendChild(copy);
+      card.appendChild(icon);
+    } else {
+      card.appendChild(icon);
+      card.appendChild(copy);
+    }
+
+    return card;
+  }
+
   function renderCompareAbilities(left, right) {
     var grid = $('#compare-abilities-grid');
     if (!grid) return;
@@ -16045,44 +17145,14 @@
       var row = document.createElement('div');
       row.className = 'compare-ability-row';
 
-      // Left ability
-      var leftCard = document.createElement('div');
-      leftCard.className = 'compare-ability-card left';
-
-      var leftName = document.createElement('div');
-      leftName.className = 'compare-ability-name';
-      leftName.textContent = la.name || '-';
-
-      var leftDesc = document.createElement('div');
-      leftDesc.className = 'compare-ability-desc';
-      leftDesc.textContent = cleanDisplayText(la.description || '');
-
-      leftCard.appendChild(leftName);
-      leftCard.appendChild(leftDesc);
-
       // Number badge
       var numBadge = document.createElement('div');
       numBadge.className = 'compare-ability-number';
       numBadge.textContent = (i + 1);
 
-      // Right ability
-      var rightCard = document.createElement('div');
-      rightCard.className = 'compare-ability-card right';
-
-      var rightName = document.createElement('div');
-      rightName.className = 'compare-ability-name';
-      rightName.textContent = ra.name || '-';
-
-      var rightDesc = document.createElement('div');
-      rightDesc.className = 'compare-ability-desc';
-      rightDesc.textContent = cleanDisplayText(ra.description || '');
-
-      rightCard.appendChild(rightName);
-      rightCard.appendChild(rightDesc);
-
-      row.appendChild(leftCard);
+      row.appendChild(buildCompareAbilityCard(left, la, i, 'left'));
       row.appendChild(numBadge);
-      row.appendChild(rightCard);
+      row.appendChild(buildCompareAbilityCard(right, ra, i, 'right'));
       grid.appendChild(row);
     }
   }

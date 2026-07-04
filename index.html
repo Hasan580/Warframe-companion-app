@@ -17,7 +17,7 @@
   <!-- Custom Titlebar -->
   <div class="titlebar" id="titlebar">
     <div class="titlebar-drag">
-      <div class="titlebar-logo">
+      <div class="titlebar-logo" id="titlebar-logo" title="Double-click for a secret">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
           <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
         </svg>
@@ -38,7 +38,7 @@
   </div>
 
   <!-- Main App Container -->
-  <div class="app-container">
+  <div class="app-container sidebar-collapsed sidebar-auto-hide">
 
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
@@ -61,32 +61,32 @@
       <nav class="sidebar-nav">
         <div class="nav-section-label">EQUIPMENT</div>
         <button class="nav-item active" data-category="all" id="nav-all">
-          <span class="material-icons-round">apps</span>
+          <img class="nav-asset-icon" src="assets/allitems.png" alt="" aria-hidden="true">
           <span class="nav-text">All Items</span>
           <span class="nav-count" id="count-all">0</span>
         </button>
         <button class="nav-item" data-category="Warframes" id="nav-warframes">
-          <span class="material-icons-round">person</span>
+          <img class="nav-asset-icon" src="assets/IconCategoryWarframe(xWhite).png" alt="" aria-hidden="true">
           <span class="nav-text">Warframe</span>
           <span class="nav-count" id="count-warframes">0</span>
         </button>
         <button class="nav-item" data-category="Primary" id="nav-primary">
-          <span class="material-icons-round">gps_fixed</span>
+          <img class="nav-asset-icon" src="assets/primary.png" alt="" aria-hidden="true">
           <span class="nav-text">Primary</span>
           <span class="nav-count" id="count-primary">0</span>
         </button>
         <button class="nav-item" data-category="Secondary" id="nav-secondary">
-          <span class="material-icons-round">radio_button_checked</span>
+          <img class="nav-asset-icon" src="assets/secondry.png" alt="" aria-hidden="true">
           <span class="nav-text">Secondary</span>
           <span class="nav-count" id="count-secondary">0</span>
         </button>
         <button class="nav-item" data-category="Melee" id="nav-melee">
-          <span class="material-icons-round">sports_kabaddi</span>
+          <img class="nav-asset-icon" src="assets/melee.png" alt="" aria-hidden="true">
           <span class="nav-text">Melee</span>
           <span class="nav-count" id="count-melee">0</span>
         </button>
         <button class="nav-item" data-category="Robotic" id="nav-robotic">
-          <span class="material-icons-round">smart_toy</span>
+          <img class="nav-asset-icon" src="assets/robotics icon.png" alt="" aria-hidden="true">
           <span class="nav-text">Robotic</span>
           <span class="nav-count" id="count-robotic">0</span>
         </button>
@@ -96,12 +96,12 @@
           <span class="nav-count" id="count-companions">0</span>
         </button>
         <button class="nav-item" data-category="Vehicles" id="nav-vehicles">
-          <span class="material-icons-round">flight</span>
+          <img class="nav-asset-icon" src="assets/vhicels icon.png" alt="" aria-hidden="true">
           <span class="nav-text">Vehicles</span>
           <span class="nav-count" id="count-vehicles">0</span>
         </button>
         <button class="nav-item" data-category="Archgun" id="nav-archgun">
-          <span class="material-icons-round">rocket_launch</span>
+          <img class="nav-asset-icon" src="assets/archgun.png" alt="" aria-hidden="true">
           <span class="nav-text">Archgun</span>
           <span class="nav-count" id="count-archgun">0</span>
         </button>
@@ -111,7 +111,7 @@
           <span class="nav-count" id="count-archmelee">0</span>
         </button>
         <button class="nav-item" data-category="Amps" id="nav-amps">
-          <span class="material-icons-round">flash_on</span>
+          <img class="nav-asset-icon" src="assets/amp.png" alt="" aria-hidden="true">
           <span class="nav-text">Amps</span>
           <span class="nav-count" id="count-amps">0</span>
         </button>
@@ -130,7 +130,6 @@
           <span class="material-icons-round">travel_explore</span>
           <span class="nav-text">Resources</span>
         </button>
-
         <div class="nav-section-label" style="margin-top: 16px;">TRADING</div>
         <button class="nav-item" id="nav-market" data-panel="market">
           <span class="material-icons-round">storefront</span>
@@ -145,11 +144,11 @@
           <span class="nav-text">Prime Resurgence</span>
         </button>
         <button class="nav-item" id="nav-relics" data-panel="relics">
-          <span class="material-icons-round">auto_awesome_motion</span>
+          <img class="nav-asset-icon" src="assets/relic.png" alt="" aria-hidden="true">
           <span class="nav-text">Relics</span>
         </button>
         <button class="nav-item" id="nav-arcanes" data-panel="arcanes">
-          <span class="material-icons-round">diamond</span>
+          <img class="nav-asset-icon" src="assets/arcanes.png" alt="" aria-hidden="true">
           <span class="nav-text">Arcanes</span>
         </button>
         <button class="nav-item" id="nav-cycles" data-panel="cycles">
@@ -204,11 +203,6 @@
         <span class="progress-text" id="progress-percent">0% Complete</span>
       </div>
     </aside>
-
-    <button class="sidebar-toggle-btn" id="btn-sidebar-toggle" type="button" aria-label="Hide left panel"
-      title="Hide left panel" aria-pressed="false">
-      <span class="material-icons-round" id="sidebar-toggle-icon">chevron_left</span>
-    </button>
 
     <!-- Main Content -->
     <main class="content" id="content">
@@ -425,6 +419,16 @@
             </div>
           </section>
 
+          <section class="trade-analytics-card trade-analytics-prime-set-card hidden" id="trade-analytics-prime-set-card">
+            <div class="trade-analytics-card-head">
+              <h3 class="trade-analytics-card-title">Prime Set Profit Calculator</h3>
+              <span class="trade-analytics-card-sub">Compare selling the full set against selling every part separately</span>
+            </div>
+            <div class="trade-analytics-prime-set" id="trade-analytics-prime-set">
+              <div class="trade-analytics-empty-message">Choose a Prime set to calculate set vs part profit.</div>
+            </div>
+          </section>
+
           <section class="trade-analytics-card">
             <div class="trade-analytics-card-head">
               <h3 class="trade-analytics-card-title">Recent Closed History</h3>
@@ -543,7 +547,6 @@
         <div class="relic-reward-filter-group" aria-label="Relic reward filters">
           <button class="relic-reward-filter-btn is-active" data-relic-reward-filter="all" type="button">All</button>
           <button class="relic-reward-filter-btn" data-relic-reward-filter="missing" type="button">Needed Items</button>
-          <button class="relic-reward-filter-btn" data-relic-reward-filter="completed" type="button">Mastered Items</button>
         </div>
       </div>
 
@@ -551,7 +554,7 @@
         <section class="prime-relics-section">
           <div class="prime-section-head">
             <h3 class="prime-section-title">Relic Results</h3>
-            <span class="prime-section-sub" id="relics-search-summary">Hover a relic to see rewards</span>
+            <span class="prime-section-sub" id="relics-search-summary">Click a relic to inspect drops and market listings</span>
           </div>
           <div class="prime-relics-grid relics-grid" id="relics-grid">
             <div class="prime-loading">Loading relic catalog...</div>
@@ -1149,6 +1152,30 @@
           </label>
         </div>
 
+        <div class="settings-card relic-overlay-settings-card">
+          <h2 class="settings-card-title settings-card-title-with-badge">
+            <span>Game Overlay</span>
+            <span class="settings-beta-badge">Beta</span>
+          </h2>
+          <label class="settings-toggle-row" for="setting-relic-overlay">
+            <div>
+              <div class="settings-toggle-title">Relic Reward Platinum Overlay (Beta)</div>
+              <div class="settings-toggle-subtitle">
+                Watches EE.log for the Void Fissure reward screen, then overlays live warframe.market platinum prices above each reward.
+                Uses slower screen fallback if the log is missing. Works best with Warframe in borderless or windowed mode.
+              </div>
+            </div>
+            <input type="checkbox" id="setting-relic-overlay" class="settings-toggle-input">
+            <span class="settings-toggle-switch" aria-hidden="true">
+              <span class="settings-toggle-knob"></span>
+            </span>
+          </label>
+          <div class="relic-overlay-status" id="relic-overlay-status">
+            <span class="material-icons-round">visibility_off</span>
+            <span>Overlay disabled. Enable it before opening relics.</span>
+          </div>
+        </div>
+
         <div class="settings-card profile-sync-settings-card">
           <h2 class="settings-card-title">Profile Sync</h2>
           <div class="profile-sync-action-row">
@@ -1293,6 +1320,30 @@
         <div class="news-list" id="news-list">
           <div class="news-loading">Loading latest news...</div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Relic Drops Modal -->
+  <div class="modal-overlay hidden" id="relic-detail-modal">
+    <div class="modal relic-detail-modal">
+      <div class="modal-header relic-detail-header">
+        <div class="relic-detail-header-wrap">
+          <div class="relic-detail-header-media">
+            <img id="relic-detail-img" src="" alt="" class="relic-detail-main-img">
+          </div>
+          <div class="relic-detail-header-copy">
+            <span class="relic-detail-kicker">Relic Drops</span>
+            <h2 class="modal-title" id="relic-detail-name">Relic</h2>
+            <p class="relic-detail-subtitle" id="relic-detail-sub">Inspect rewards and open market listings.</p>
+          </div>
+        </div>
+        <button class="modal-close" id="relic-detail-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body relic-detail-body">
+        <div class="relic-detail-drops" id="relic-detail-drops"></div>
       </div>
     </div>
   </div>

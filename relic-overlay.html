@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Relic Reward Overlay</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: transparent;
+      pointer-events: none;
+      user-select: none;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    #overlay-root {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .price-pill {
+      position: absolute;
+      min-width: 54px;
+      transform: translate(-50%, -100%);
+      padding: 6px 10px 7px;
+      border: 1px solid rgba(130, 230, 255, 0.75);
+      border-radius: 7px;
+      background:
+        linear-gradient(180deg, rgba(8, 31, 47, 0.94), rgba(3, 12, 21, 0.9)),
+        rgba(0, 0, 0, 0.82);
+      box-shadow:
+        0 0 18px rgba(0, 195, 255, 0.34),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      color: #eaffff;
+      text-align: center;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.75);
+    }
+
+    .price-pill::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -7px;
+      width: 11px;
+      height: 11px;
+      transform: translateX(-50%) rotate(45deg);
+      border-right: 1px solid rgba(130, 230, 255, 0.62);
+      border-bottom: 1px solid rgba(130, 230, 255, 0.62);
+      background: rgba(3, 12, 21, 0.9);
+    }
+
+    .price-main {
+      display: flex;
+      align-items: baseline;
+      justify-content: center;
+      gap: 3px;
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      line-height: 1;
+    }
+
+    .price-value {
+      color: #ffe66d;
+      font-size: 25px;
+    }
+
+    .price-unit {
+      color: #9cecff;
+      font-size: 13px;
+      text-transform: uppercase;
+    }
+
+    .price-pill.is-missing {
+      border-color: rgba(255, 211, 95, 0.62);
+      box-shadow: 0 0 18px rgba(255, 211, 95, 0.22);
+    }
+
+    .price-pill.is-missing .price-value {
+      color: #cfd8dc;
+      font-size: 17px;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="overlay-root" aria-hidden="true"></div>
+  <script>
+    (function () {
+      'use strict';
+
+      var root = document.getElementById('overlay-root');
+
+      function clamp(value, min, max) {
+        var number = Number(value);
+        if (!Number.isFinite(number)) return min;
+        return Math.max(min, Math.min(max, number));
+      }
+
+      window.renderRelicOverlay = function renderRelicOverlay(payload) {
+        var labels = payload && Array.isArray(payload.labels) ? payload.labels : [];
+        root.textContent = '';
+
+        for (var i = 0; i < labels.length; i++) {
+          var label = labels[i] || {};
+          var price = Number(label.price);
+          var missing = !Number.isFinite(price);
+
+          var pill = document.createElement('div');
+          pill.className = 'price-pill' + (missing ? ' is-missing' : '');
+          pill.title = String(label.name || label.sourceName || 'Reward');
+          pill.style.left = clamp(label.x, 20, window.innerWidth - 20) + 'px';
+          pill.style.top = clamp(label.y, 42, window.innerHeight - 12) + 'px';
+
+          var main = document.createElement('div');
+          main.className = 'price-main';
+
+          var value = document.createElement('span');
+          value.className = 'price-value';
+          value.textContent = missing ? '?' : String(Math.max(0, Math.round(price)));
+          main.appendChild(value);
+
+          var unit = document.createElement('span');
+          unit.className = 'price-unit';
+          unit.textContent = 'p';
+          main.appendChild(unit);
+
+          pill.appendChild(main);
+          root.appendChild(pill);
+        }
+      };
+    })();
+  </script>
+</body>
+
+</html>
