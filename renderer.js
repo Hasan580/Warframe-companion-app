@@ -469,6 +469,11 @@
     profileLogActivePath: $('#profile-log-active-path'),
     selectEeLogBtn: $('#btn-select-ee-log'),
     resetEeLogBtn: $('#btn-reset-ee-log'),
+    profileManualAccountId: $('#profile-manual-account-id'),
+    saveManualAccountIdBtn: $('#btn-save-manual-account-id'),
+    clearManualAccountIdBtn: $('#btn-clear-manual-account-id'),
+    openWarframeUserDataBtn: $('#btn-open-warframe-user-data'),
+    profileManualAccountIdStatus: $('#profile-manual-id-status'),
     profileSyncPill: $('#profile-sync-pill'),
     profileSyncText: $('#profile-sync-text'),
     alwaysOnTopToggle: $('#setting-always-on-top'),
@@ -13627,6 +13632,16 @@
       els.profileLogActivePath.textContent = modeLabel + ' (' + statusLabel + '): ' + pathLabel;
       els.profileLogActivePath.classList.toggle('is-missing', !info.exists);
     }
+    if (els.profileManualAccountId) {
+      els.profileManualAccountId.value = info.manualAccountId || '';
+    }
+    if (els.profileManualAccountIdStatus) {
+      var usesManualId = !!info.usingManualAccountId;
+      els.profileManualAccountIdStatus.textContent = usesManualId
+        ? 'Manual account ID saved. Profile sync will use it instead of EE.log.'
+        : 'Using EE.log to find your account ID.';
+      els.profileManualAccountIdStatus.classList.toggle('is-active', usesManualId);
+    }
   }
 
   async function refreshProfileLogPathUI() {
@@ -13679,6 +13694,48 @@
       return;
     }
     renderProfileLogPathState(result || {});
+  }
+
+  async function saveManualProfileAccountId() {
+    if (!window.electronAPI || !window.electronAPI.setManualProfileAccountId || !els.profileManualAccountId) return;
+    var result = await window.electronAPI.setManualProfileAccountId(els.profileManualAccountId.value);
+    if (result && result.ok === false) {
+      setProfileFetchStatus(
+        'error',
+        'Could not save account ID',
+        result.message || 'Enter a valid Warframe account ID and try again.',
+        ''
+      );
+      return;
+    }
+    renderProfileLogPathState(result || {});
+    setProfileFetchStatus(
+      'success',
+      'Manual account ID saved',
+      'Profile sync will use the saved account ID instead of reading EE.log.',
+      ''
+    );
+  }
+
+  async function clearManualProfileAccountId() {
+    if (!window.electronAPI || !window.electronAPI.clearManualProfileAccountId) return;
+    var result = await window.electronAPI.clearManualProfileAccountId();
+    if (result && result.ok === false) {
+      setProfileFetchStatus(
+        'error',
+        'Could not clear account ID',
+        result.message || 'The saved account ID could not be cleared.',
+        ''
+      );
+      return;
+    }
+    renderProfileLogPathState(result || {});
+    setProfileFetchStatus(
+      'idle',
+      'Using EE.log',
+      'Profile sync will find your account ID from EE.log again.',
+      ''
+    );
   }
 
   function initProfileFetchSetting() {
@@ -14146,6 +14203,9 @@
     }
     if (profileResponse && profileResponse.logUpdatedAt) {
       parts.push('EE.log ' + formatProfileFetchDate(profileResponse.logUpdatedAt));
+    }
+    if (profileResponse && profileResponse.accountIdSource === 'manual') {
+      parts.push('manual account ID');
     }
     return parts.join(' - ');
   }
@@ -15375,6 +15435,24 @@
   if (els.resetEeLogBtn) {
     els.resetEeLogBtn.addEventListener('click', function() {
       resetProfileLogPath();
+    });
+  }
+
+  if (els.saveManualAccountIdBtn) {
+    els.saveManualAccountIdBtn.addEventListener('click', function() {
+      saveManualProfileAccountId();
+    });
+  }
+
+  if (els.clearManualAccountIdBtn) {
+    els.clearManualAccountIdBtn.addEventListener('click', function() {
+      clearManualProfileAccountId();
+    });
+  }
+
+  if (els.openWarframeUserDataBtn) {
+    els.openWarframeUserDataBtn.addEventListener('click', function() {
+      openExternalUrl('https://www.warframe.com/api/user-data');
     });
   }
 
