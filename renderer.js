@@ -4394,6 +4394,28 @@
     }
   };
 
+  // The market panel uses this small, read-only bridge to price the player's
+  // current mastery backlog without owning a second copy of checklist state.
+  window.warframeChecklist = {
+    getUnmasteredItems: function() {
+      return allItems
+        .filter(function(item) {
+          return isMasteryRelevantItem(item) && !isItemFullyRanked(item);
+        })
+        .map(function(item) {
+          return {
+            uniqueName: item.uniqueName,
+            name: item.name,
+            category: item.category,
+            type: item.type,
+            marketCost: Number(item.marketCost) || 0,
+            components: Array.isArray(item.components) ? item.components.slice() : [],
+            imageName: item.imageName || ''
+          };
+        });
+    }
+  };
+
   function getNewsImageUrl(imagePath) {
     if (!imagePath) return '';
     if (/^https?:\/\//i.test(imagePath)) return imagePath;
@@ -12051,6 +12073,7 @@
     tradabilityEnriched = false;
     resourceIndexCache = null;
     allItems = items;
+    window.dispatchEvent(new Event('warframe-checklist-items-updated'));
     invalidateMasteryDerivedData(true);
     saveToCache(allItems);
     if (!initialLoad) {
@@ -13799,6 +13822,13 @@
   }
 
   function getProfileLookupAliases(item) {
+    if (toLookupKey(item && item.name) === 'sirius orion') {
+      return [
+        '/Lotus/Powersuits/SiriusOrion/OrionSuit',
+        '/Lotus/Powersuits/SiriusOrion/SiriusSuit'
+      ];
+    }
+
     if (toLookupKey(item && item.name) !== 'plexus') return [];
     return [
       'Plexus',
