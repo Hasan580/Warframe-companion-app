@@ -20,6 +20,8 @@
   const ANALYTICS_STATS_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
   const ANALYTICS_ORDERS_CACHE_TTL = 90 * 1000; // 90 seconds
   const OVERLAY_PRICE_CACHE_TTL = 20 * 60 * 1000; // 20 minutes
+  const PLATINUM_COST_PRICE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+  const PLATINUM_COST_PRICE_CONCURRENCY = 4;
   const OVERLAY_PRICE_REQUEST_TIMEOUT_MS = 2500;
   const CONTRACT_RESULTS_BATCH_SIZE = 60;
   const CONTRACT_ANY_EPHEMERA_VALUE = '__any_ephemera__';
@@ -48,6 +50,14 @@
   let ordersRefreshInterval = null;
   let marketInitialized = false;
   let marketViewMode = 'items';
+  let platinumCostItems = [];
+  let platinumCostCategory = 'all';
+  let platinumCostStrategy = 'best';
+  let platinumCostExpandedItem = '';
+  let platinumCostLoading = false;
+  let platinumCostProgress = { completed: 0, total: 0 };
+  let platinumCostRequestToken = 0;
+  let platinumCostPriceCache = Object.create(null);
   let analyticsSearchQuery = '';
   let analyticsSelectedSlug = '';
   let analyticsCurrentItem = null;
@@ -101,7 +111,8 @@
       title: $('#market-panel-title'),
       count: $('#market-item-count'),
       grid: $('#market-grid'),
-      contractsView: $('#contracts-view')
+      contractsView: $('#contracts-view'),
+      platinumCostView: $('#platinum-cost-view')
     };
   }
 
@@ -126,25 +137,46 @@
       return;
     }
 
+    if (marketViewMode === 'platinum-cost') {
+      refs.title.textContent = 'Platinum Cost';
+      if (platinumCostLoading) {
+        refs.count.textContent = platinumCostProgress.completed + ' / ' + platinumCostProgress.total + ' market prices checked';
+      } else {
+        refs.count.textContent = platinumCostItems.length + ' unmastered items';
+      }
+      return;
+    }
+
     refs.title.textContent = 'Warframe Market';
     refs.count.textContent = filteredMarketItems.length + ' items';
   }
 
   function renderMarketViewState() {
     var refs = getMarketPanelRefs();
-    if (refs.topbar) refs.topbar.classList.toggle('hidden', marketViewMode === 'contracts');
+    if (refs.topbar) refs.topbar.classList.toggle('hidden', marketViewMode !== 'items');
     if (refs.categoriesList) refs.categoriesList.classList.toggle('hidden', marketViewMode === 'contracts');
-    if (refs.grid) refs.grid.classList.toggle('hidden', marketViewMode === 'contracts');
+    if (refs.grid) refs.grid.classList.toggle('hidden', marketViewMode !== 'items');
     if (refs.contractsView) refs.contractsView.classList.toggle('hidden', marketViewMode !== 'contracts');
+    if (refs.platinumCostView) refs.platinumCostView.classList.toggle('hidden', marketViewMode !== 'platinum-cost');
 
     if (refs.contractsBtn) refs.contractsBtn.classList.toggle('active', marketViewMode === 'contracts');
     if (refs.contractsBtnLabel) refs.contractsBtnLabel.textContent = marketViewMode === 'contracts' ? 'Back To Market' : 'Contracts';
+
+    document.querySelectorAll('.market-cat-btn').forEach(function(button) {
+      if (marketViewMode === 'platinum-cost') {
+        button.classList.toggle('active', button.dataset.marketCat === 'platinum-cost');
+      } else if (marketViewMode === 'items') {
+        button.classList.toggle('active', button.dataset.marketCat === marketCategory);
+      } else {
+        button.classList.remove('active');
+      }
+    });
 
     updateMarketPanelHeader();
   }
 
   async function setMarketViewMode(mode) {
-    marketViewMode = mode === 'contracts' ? 'contracts' : 'items';
+    marketViewMode = mode === 'contracts' ? 'contracts' : (mode === 'platinum-cost' ? 'platinum-cost' : 'items');
     renderMarketViewState();
 
     if (marketViewMode === 'contracts') {
@@ -157,7 +189,440 @@
       return;
     }
 
+    if (marketViewMode === 'platinum-cost') {
+      if (!marketItems || marketItems.length === 0) await loadMarketItems();
+      await loadPlatinumCostData(false);
+      return;
+    }
+
     applyMarketFilters();
+  }
+
+  function getPlatinumCostChecklistItems() {
+    if (!window.warframeChecklist || typeof window.warframeChecklist.getUnmasteredItems !== 'function') return [];
+    var items = window.warframeChecklist.getUnmasteredItems();
+    return Array.isArray(items) ? items : [];
+  }
+
+  function findMarketItemByCandidates(candidates) {
+    for (var i = 0; i < candidates.length; i++) {
+      var match = findMarketItemByName(candidates[i]);
+      if (match) return match;
+    }
+    return null;
+  }
+
+  function getPlatinumCostMarketCandidate(item) {
+    var name = String(item && item.name || '').trim();
+    if (!name) return null;
+    return findMarketItemByCandidates([name, name + ' Set', name + ' Blueprint']);
+  }
+
+  function getPlatinumCostContractTarget(item) {
+    var name = String(item && item.name || '').trim();
+    if (/^kuva\s+/i.test(name)) return { type: 'lich', name: name };
+    if (/^tenet\s+/i.test(name)) return { type: 'sister', name: name };
+    return null;
+  }
+
+  async function resolvePlatinumCostContractWeapon(target) {
+    if (!target) return '';
+    var data = await ensureContractsLookupData();
+    var options = target.type === 'lich' ? data.lichWeapons : data.sisterWeapons;
+    var targetName = normalizeMarketName(target.name);
+    var match = options.find(function(weapon) {
+      return normalizeMarketName(weapon.name) === targetName;
+    });
+    return match ? match.urlName : String(target.name || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  function getPlatinumCostPartCandidate(item, component) {
+    var partName = String(component && component.name || '').trim();
+    if (!partName) return null;
+    var itemName = String(item && item.name || '').trim();
+    var candidates = [partName];
+    if (itemName && partName.toLowerCase().indexOf(itemName.toLowerCase()) !== 0) {
+      candidates.push(itemName + ' ' + partName);
+    }
+    return findMarketItemByCandidates(candidates);
+  }
+
+  function getPlatinumCostCacheEntry(slug) {
+    var cached = platinumCostPriceCache[String(slug || '')];
+    if (!cached || Date.now() - cached.timestamp > PLATINUM_COST_PRICE_CACHE_TTL) return null;
+    return cached.data;
+  }
+
+  async function getPlatinumCostMarketPrice(marketItem, force) {
+    if (!marketItem || !marketItem.slug) return null;
+    var key = String(marketItem.slug);
+    if (!force) {
+      var cached = getPlatinumCostCacheEntry(key);
+      if (cached !== null) return cached;
+    }
+
+    try {
+      var orders = await fetchOrdersV2(key);
+      var stableSell = getStableOverlayOrderPrice(orders, 'sell');
+      var data = stableSell ? {
+        price: Number(stableSell.price),
+        source: stableSell.onlineCount > 0 ? 'online sellers' : 'visible sellers',
+        samples: stableSell.orderCount
+      } : null;
+      platinumCostPriceCache[key] = { timestamp: Date.now(), data: data };
+      return data;
+    } catch (err) {
+      platinumCostPriceCache[key] = { timestamp: Date.now(), data: null };
+      return null;
+    }
+  }
+
+  function getStableContractBuyNowPrice(auctions) {
+    var prices = (Array.isArray(auctions) ? auctions : [])
+      .filter(function(auction) {
+        if (!auction || auction.visible === false || auction.closed === true) return false;
+        var platform = String(auction.platform || (auction.owner && auction.owner.platform) || '').toLowerCase();
+        return !platform || platform === 'pc';
+      })
+      .map(function(auction) { return Number(auction.buyout_price); })
+      .filter(function(price) { return Number.isFinite(price) && price > 0; })
+      .sort(function(a, b) { return a - b; });
+    if (!prices.length) return null;
+
+    // Match the normal market estimator's resistant-to-one-undercut approach,
+    // but deliberately never fall back to an auction starting price.
+    var sample = prices.slice(0, prices.length >= 5 ? 5 : (prices.length >= 3 ? 3 : 1));
+    if (sample.length >= 3 && sample[0] < sample[1] * 0.65) sample = sample.slice(1);
+    return sample.slice().sort(function(a, b) { return a - b; })[Math.floor(sample.length / 2)];
+  }
+
+  async function getPlatinumCostContractPrice(target, force) {
+    var weaponUrlName = await resolvePlatinumCostContractWeapon(target);
+    if (!weaponUrlName) return null;
+    var key = 'contract:' + target.type + ':' + weaponUrlName;
+    if (!force) {
+      var cached = getPlatinumCostCacheEntry(key);
+      if (cached !== null) return cached;
+    }
+
+    try {
+      var params = new URLSearchParams();
+      params.set('type', target.type);
+      params.set('weapon_url_name', weaponUrlName);
+      params.set('sort_by', 'price_asc');
+      var response = await fetch(AUCTIONS_SEARCH_API + '?' + params.toString(), {
+        headers: { Platform: 'pc', Language: 'en' }
+      });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      var json = await response.json();
+      var auctions = json && json.payload && Array.isArray(json.payload.auctions) ? json.payload.auctions : [];
+      var price = getStableContractBuyNowPrice(auctions);
+      var data = price ? { price: price, source: 'contracts buy now', samples: auctions.length, label: 'Contracts Buy Now' } : null;
+      platinumCostPriceCache[key] = { timestamp: Date.now(), data: data };
+      return data;
+    } catch (err) {
+      platinumCostPriceCache[key] = { timestamp: Date.now(), data: null };
+      return null;
+    }
+  }
+
+  function getPlatinumCostTradePrice(item, force) {
+    if (item && item.contractTarget) return getPlatinumCostContractPrice(item.contractTarget, force);
+    return getPlatinumCostMarketPrice(item && item.marketItem, force);
+  }
+
+  function getPlatinumCostOption(item, strategy) {
+    var game = Number(item && item.inGamePrice) || 0;
+    var trade = item && item.marketPrice && Number(item.marketPrice.price) || 0;
+    if (strategy === 'game') return game ? { price: game, source: 'In-game Market' } : null;
+    var tradeSource = item && item.marketPrice && item.marketPrice.label || 'warframe.market';
+    if (strategy === 'market') return trade ? { price: trade, source: tradeSource } : null;
+    if (game && (!trade || game <= trade)) return { price: game, source: 'In-game Market' };
+    if (trade) return { price: trade, source: tradeSource };
+    return null;
+  }
+
+  function getPlatinumCostSummary(items, strategy) {
+    var total = 0;
+    var priced = 0;
+    for (var i = 0; i < items.length; i++) {
+      var option = getPlatinumCostOption(items[i], strategy);
+      if (!option) continue;
+      total += option.price;
+      priced++;
+    }
+    return { total: total, priced: priced, unpriced: Math.max(0, items.length - priced) };
+  }
+
+  function formatPlatinumCost(value) {
+    return (Number(value) || 0).toLocaleString() + ' P';
+  }
+
+  function createPlatinumText(tag, className, value) {
+    var el = document.createElement(tag);
+    if (className) el.className = className;
+    el.textContent = value;
+    return el;
+  }
+
+  function getPlatinumCostCategories() {
+    var map = Object.create(null);
+    for (var i = 0; i < platinumCostItems.length; i++) {
+      var category = platinumCostItems[i].category || 'Misc';
+      if (!map[category]) map[category] = [];
+      map[category].push(platinumCostItems[i]);
+    }
+    return Object.keys(map).sort().map(function(category) {
+      return { name: category, items: map[category] };
+    });
+  }
+
+  function createPlatinumCostBreakdown(categories) {
+    var wrap = document.createElement('div');
+    wrap.className = 'platinum-cost-breakdown';
+    for (var i = 0; i < categories.length; i++) {
+      var category = categories[i];
+      var summary = getPlatinumCostSummary(category.items, platinumCostStrategy);
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'platinum-category-chip' + (platinumCostCategory === category.name ? ' active' : '');
+      button.dataset.platinumCategory = category.name;
+      button.appendChild(createPlatinumText('span', 'platinum-category-name', category.name));
+      button.appendChild(createPlatinumText('span', 'platinum-category-total', formatPlatinumCost(summary.total)));
+      button.appendChild(createPlatinumText('span', 'platinum-category-meta', summary.priced + '/' + category.items.length));
+      wrap.appendChild(button);
+    }
+    return wrap;
+  }
+
+  function createPlatinumCostDetails(item) {
+    var details = document.createElement('div');
+    details.className = 'platinum-item-details';
+    var purchaseOptions = document.createElement('div');
+    purchaseOptions.className = 'platinum-purchase-options';
+    purchaseOptions.appendChild(createPlatinumText('span', 'platinum-purchase-option', item.inGamePrice ? 'In-game Market: ' + formatPlatinumCost(item.inGamePrice) : 'In-game Market: unavailable'));
+    var tradeLabel = item.contractTarget ? 'Contracts Buy Now' : 'warframe.market';
+    purchaseOptions.appendChild(createPlatinumText('span', 'platinum-purchase-option', item.marketPrice && item.marketPrice.price ? tradeLabel + ': ' + formatPlatinumCost(item.marketPrice.price) : ((item.marketItem || item.contractTarget) ? tradeLabel + ': checking live price…' : tradeLabel + ': no listing')));
+    details.appendChild(purchaseOptions);
+    var parts = Array.isArray(item.components) ? item.components : [];
+    var heading = createPlatinumText('div', 'platinum-parts-heading', 'Component pricing');
+    details.appendChild(heading);
+    if (!parts.length) {
+      details.appendChild(createPlatinumText('p', 'platinum-parts-empty', 'No build components are available for this item.'));
+      return details;
+    }
+
+    var partsList = document.createElement('div');
+    partsList.className = 'platinum-parts-list';
+    var partRequests = [];
+    for (var i = 0; i < parts.length; i++) {
+      var component = parts[i] || {};
+      var partName = String(component.name || '').trim();
+      if (!partName) continue;
+      var candidate = getPlatinumCostPartCandidate(item, component);
+      var partRow = document.createElement('div');
+      partRow.className = 'platinum-part-row';
+      var quantity = Number(component.itemCount || component.quantity || 1) || 1;
+      partRow.appendChild(createPlatinumText('span', 'platinum-part-name', partName + (quantity > 1 ? ' x' + quantity : '')));
+      if (!candidate) {
+        partRow.appendChild(createPlatinumText('span', 'platinum-part-price muted', 'Not tradable / no listing'));
+      } else {
+        var price = getPlatinumCostCacheEntry(candidate.slug);
+        if (price && price.price) {
+          partRow.appendChild(createPlatinumText('span', 'platinum-part-price', formatPlatinumCost(price.price * quantity)));
+        } else {
+          partRow.appendChild(createPlatinumText('span', 'platinum-part-price muted', 'Checking live price…'));
+          partRequests.push(candidate);
+        }
+      }
+      partsList.appendChild(partRow);
+    }
+    details.appendChild(partsList);
+    if (partRequests.length) {
+      Promise.all(partRequests.map(function(candidate) { return getPlatinumCostMarketPrice(candidate, false); })).then(function() {
+        if (marketViewMode === 'platinum-cost' && platinumCostExpandedItem === item.uniqueName) renderPlatinumCostView();
+      });
+    }
+    return details;
+  }
+
+  function createPlatinumCostItem(item) {
+    var option = getPlatinumCostOption(item, platinumCostStrategy);
+    var row = document.createElement('article');
+    row.className = 'platinum-cost-item' + (platinumCostExpandedItem === item.uniqueName ? ' expanded' : '');
+    row.dataset.platinumItem = item.uniqueName;
+
+    var main = document.createElement('button');
+    main.type = 'button';
+    main.className = 'platinum-cost-item-main';
+    main.dataset.platinumItem = item.uniqueName;
+    var image = document.createElement('img');
+    image.className = 'platinum-cost-item-image';
+    image.alt = '';
+    image.src = window.warframeItemImageBridge && window.warframeItemImageBridge.getImageUrlByName
+      ? window.warframeItemImageBridge.getImageUrlByName(item.name) : 'assets/icon.png';
+    image.addEventListener('error', function() { image.src = 'assets/icon.png'; });
+    main.appendChild(image);
+    var info = document.createElement('span');
+    info.className = 'platinum-cost-item-info';
+    info.appendChild(createPlatinumText('span', 'platinum-cost-item-name', item.name));
+    info.appendChild(createPlatinumText('span', 'platinum-cost-item-type', item.category + (item.type ? ' · ' + item.type : '')));
+    main.appendChild(info);
+    var prices = document.createElement('span');
+    prices.className = 'platinum-cost-item-prices';
+    prices.appendChild(createPlatinumText('span', 'platinum-cost-item-total' + (option ? '' : ' muted'), option ? formatPlatinumCost(option.price) : 'No price'));
+    prices.appendChild(createPlatinumText('span', 'platinum-cost-item-source', option ? option.source : 'Unavailable'));
+    main.appendChild(prices);
+    var chevron = createPlatinumText('span', 'material-icons-round platinum-cost-chevron', platinumCostExpandedItem === item.uniqueName ? 'expand_less' : 'expand_more');
+    main.appendChild(chevron);
+    row.appendChild(main);
+    if (platinumCostExpandedItem === item.uniqueName) row.appendChild(createPlatinumCostDetails(item));
+    return row;
+  }
+
+  function renderPlatinumCostView() {
+    var refs = getMarketPanelRefs();
+    if (!refs.platinumCostView) return;
+    refs.platinumCostView.textContent = '';
+    updateMarketPanelHeader();
+
+    var allSummary = getPlatinumCostSummary(platinumCostItems, platinumCostStrategy);
+    var hero = document.createElement('section');
+    hero.className = 'platinum-cost-hero';
+    var heroCopy = document.createElement('div');
+    heroCopy.appendChild(createPlatinumText('div', 'platinum-cost-eyebrow', 'Mastery backlog estimator'));
+    heroCopy.appendChild(createPlatinumText('h2', 'platinum-cost-title', 'Price your unmastered items'));
+    heroCopy.appendChild(createPlatinumText('p', 'platinum-cost-subtitle', 'Compare in-game Market prices with live PC warframe.market sell orders. Kuva and Tenet weapons use contract Buy Now values. Best mix picks the lower option per item.'));
+    hero.appendChild(heroCopy);
+    var total = document.createElement('div');
+    total.className = 'platinum-cost-total';
+    total.appendChild(createPlatinumText('span', 'platinum-cost-total-label', platinumCostStrategy === 'best' ? 'Best mix total' : (platinumCostStrategy === 'game' ? 'In-game total' : 'warframe.market total')));
+    total.appendChild(createPlatinumText('strong', 'platinum-cost-total-value', formatPlatinumCost(allSummary.total)));
+    total.appendChild(createPlatinumText('span', 'platinum-cost-total-meta', allSummary.priced + ' priced · ' + allSummary.unpriced + ' unavailable'));
+    hero.appendChild(total);
+    refs.platinumCostView.appendChild(hero);
+
+    var controls = document.createElement('div');
+    controls.className = 'platinum-cost-controls';
+    [['best', 'Best mix'], ['game', 'In-game Market'], ['market', 'warframe.market']].forEach(function(entry) {
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'platinum-strategy-btn' + (platinumCostStrategy === entry[0] ? ' active' : '');
+      button.dataset.platinumStrategy = entry[0];
+      button.textContent = entry[1];
+      controls.appendChild(button);
+    });
+    var refresh = document.createElement('button');
+    refresh.type = 'button';
+    refresh.className = 'btn btn-secondary platinum-refresh-btn';
+    refresh.dataset.platinumRefresh = 'true';
+    refresh.disabled = platinumCostLoading;
+    refresh.innerHTML = '<span class="material-icons-round">refresh</span>' + (platinumCostLoading ? 'Checking ' + platinumCostProgress.completed + '/' + platinumCostProgress.total : 'Refresh live prices');
+    controls.appendChild(refresh);
+    refs.platinumCostView.appendChild(controls);
+
+    var categories = getPlatinumCostCategories();
+    var allButton = document.createElement('button');
+    allButton.type = 'button';
+    allButton.className = 'platinum-category-chip' + (platinumCostCategory === 'all' ? ' active' : '');
+    allButton.dataset.platinumCategory = 'all';
+    allButton.appendChild(createPlatinumText('span', 'platinum-category-name', 'All categories'));
+    allButton.appendChild(createPlatinumText('span', 'platinum-category-total', formatPlatinumCost(allSummary.total)));
+    allButton.appendChild(createPlatinumText('span', 'platinum-category-meta', allSummary.priced + '/' + platinumCostItems.length));
+    var categoriesWrap = document.createElement('div');
+    categoriesWrap.className = 'platinum-cost-breakdown';
+    categoriesWrap.appendChild(allButton);
+    var breakdown = createPlatinumCostBreakdown(categories);
+    while (breakdown.firstChild) categoriesWrap.appendChild(breakdown.firstChild);
+    refs.platinumCostView.appendChild(categoriesWrap);
+
+    var visible = platinumCostCategory === 'all' ? platinumCostItems : platinumCostItems.filter(function(item) { return item.category === platinumCostCategory; });
+    var list = document.createElement('div');
+    list.className = 'platinum-cost-list';
+    if (!visible.length) {
+      list.appendChild(createPlatinumText('div', 'platinum-cost-empty', platinumCostItems.length ? 'No unmastered items in this category.' : 'Your checklist is still loading, or everything is mastered.'));
+    } else {
+      visible.sort(function(a, b) { return a.name.localeCompare(b.name); }).forEach(function(item) { list.appendChild(createPlatinumCostItem(item)); });
+    }
+    refs.platinumCostView.appendChild(list);
+  }
+
+  async function loadPlatinumCostData(force) {
+    var checklistItems = getPlatinumCostChecklistItems();
+    var existing = Object.create(null);
+    platinumCostItems.forEach(function(item) { existing[item.uniqueName] = item; });
+    platinumCostItems = checklistItems.map(function(item) {
+      var old = existing[item.uniqueName];
+      return {
+        uniqueName: item.uniqueName,
+        name: item.name,
+        category: item.category || 'Misc',
+        type: item.type || '',
+        inGamePrice: Number(item.marketCost) || 0,
+        components: Array.isArray(item.components) ? item.components : [],
+        contractTarget: getPlatinumCostContractTarget(item),
+        marketItem: getPlatinumCostContractTarget(item) ? null : getPlatinumCostMarketCandidate(item),
+        marketPrice: old && old.marketPrice ? old.marketPrice : null
+      };
+    });
+    renderPlatinumCostView();
+    await loadPlatinumCostLivePrices(force === true);
+  }
+
+  async function loadPlatinumCostLivePrices(force) {
+    if (platinumCostLoading) return;
+    var rows = platinumCostItems.filter(function(item) { return (item.marketItem || item.contractTarget) && (force || !item.marketPrice); });
+    platinumCostProgress = { completed: 0, total: rows.length };
+    if (!rows.length) {
+      renderPlatinumCostView();
+      return;
+    }
+    platinumCostLoading = true;
+    var token = ++platinumCostRequestToken;
+    renderPlatinumCostView();
+    var next = 0;
+    async function worker() {
+      while (next < rows.length && token === platinumCostRequestToken) {
+        var row = rows[next++];
+        row.marketPrice = await getPlatinumCostTradePrice(row, force);
+        platinumCostProgress.completed++;
+        if (platinumCostProgress.completed === rows.length || platinumCostProgress.completed % 8 === 0) renderPlatinumCostView();
+      }
+    }
+    var workers = [];
+    for (var i = 0; i < Math.min(PLATINUM_COST_PRICE_CONCURRENCY, rows.length); i++) workers.push(worker());
+    await Promise.all(workers);
+    if (token === platinumCostRequestToken) {
+      platinumCostLoading = false;
+      renderPlatinumCostView();
+    }
+  }
+
+  function handlePlatinumCostClick(event) {
+    var strategy = event.target.closest('[data-platinum-strategy]');
+    if (strategy) {
+      platinumCostStrategy = strategy.dataset.platinumStrategy || 'best';
+      renderPlatinumCostView();
+      return;
+    }
+    var category = event.target.closest('[data-platinum-category]');
+    if (category) {
+      platinumCostCategory = category.dataset.platinumCategory || 'all';
+      renderPlatinumCostView();
+      return;
+    }
+    if (event.target.closest('[data-platinum-refresh]')) {
+      loadPlatinumCostData(true);
+      return;
+    }
+    var item = event.target.closest('[data-platinum-item]');
+    if (item) {
+      platinumCostExpandedItem = platinumCostExpandedItem === item.dataset.platinumItem ? '' : item.dataset.platinumItem;
+      renderPlatinumCostView();
+    }
   }
 
   function safeNameFromSlug(slug) {
@@ -3829,9 +4294,16 @@
     // Category buttons
     document.querySelectorAll('.market-cat-btn').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        if (btn.dataset.marketCat === 'platinum-cost') {
+          document.querySelectorAll('.market-cat-btn').forEach(function (b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          setMarketViewMode('platinum-cost');
+          return;
+        }
         document.querySelectorAll('.market-cat-btn').forEach(function (b) { b.classList.remove('active'); });
         btn.classList.add('active');
         marketCategory = btn.dataset.marketCat;
+        if (marketViewMode !== 'items') setMarketViewMode('items');
         applyMarketFilters();
       });
     });
@@ -3865,6 +4337,13 @@
       contractsView.addEventListener('change', handleContractsViewChange);
       contractsView.addEventListener('input', handleContractsViewInput);
     }
+
+    var platinumCostView = $('#platinum-cost-view');
+    if (platinumCostView) platinumCostView.addEventListener('click', handlePlatinumCostClick);
+
+    window.addEventListener('warframe-checklist-items-updated', function() {
+      if (marketViewMode === 'platinum-cost' && !platinumCostLoading) loadPlatinumCostData(false);
+    });
 
     // Close modal
     var closeBtn = $('#orders-modal-close');
