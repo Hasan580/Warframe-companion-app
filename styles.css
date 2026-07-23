@@ -14621,6 +14621,95 @@ select:focus {
   white-space: nowrap;
 }
 
+.profile-manual-id-box {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.profile-manual-id-input {
+  width: 100%;
+  min-height: 42px;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--wfui-text, #fff);
+  font: inherit;
+}
+
+.profile-manual-id-input:focus {
+  outline: none;
+  border-color: rgba(var(--wfui-accent-rgb), 0.85);
+  box-shadow: 0 0 0 3px rgba(var(--wfui-accent-rgb), 0.16);
+}
+
+.profile-manual-id-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.profile-manual-id-actions .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.profile-manual-id-help {
+  color: var(--wfui-text-muted, rgba(255, 255, 255, 0.68));
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.profile-manual-id-help code {
+  color: var(--wfui-text, #fff);
+}
+
+.profile-manual-id-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgb(var(--wfui-accent-rgb));
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.profile-manual-id-link .material-icons-round {
+  font-size: 0.95rem;
+}
+
+.profile-manual-id-link:hover,
+.profile-manual-id-link:focus-visible {
+  text-decoration: underline;
+}
+
+.profile-manual-id-status {
+  color: var(--wfui-text-muted, rgba(255, 255, 255, 0.68));
+  font-size: 0.82rem;
+}
+
+.profile-manual-id-status.is-active {
+  color: rgb(var(--wfui-accent-rgb));
+}
+
 .settings-footer {
   width: min(100%, var(--settings-column-width));
 }
@@ -14642,7 +14731,8 @@ select:focus {
   .settings-update-row,
   .settings-action-row,
   .profile-sync-action-row,
-  .profile-log-path-actions {
+  .profile-log-path-actions,
+  .profile-manual-id-actions {
     grid-template-columns: 1fr;
   }
 
@@ -15014,4 +15104,3 @@ select:focus {
     flex: 1 1 0;
   }
 }
-

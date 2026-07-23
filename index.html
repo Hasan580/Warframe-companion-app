@@ -1224,6 +1224,35 @@
               </div>
             </div>
           </div>
+
+          <div class="profile-log-section">
+            <h3 class="profile-sync-section-title">Warframe Account ID</h3>
+            <div class="profile-manual-id-box">
+              <div>
+                <div class="settings-toggle-title">Manual Account ID (Optional)</div>
+                <div class="settings-toggle-subtitle">
+                  Enter an account ID to sync without reading EE.log. When saved, it takes priority over EE.log and is stored only on this device.
+                </div>
+              </div>
+              <label class="sr-only" for="profile-manual-account-id">Warframe account ID</label>
+              <input id="profile-manual-account-id" class="profile-manual-id-input" type="text" autocomplete="off" spellcheck="false" placeholder="Enter account ID">
+              <div class="profile-manual-id-help">
+                Log in to Warframe.com, then open your account data to copy the <code>user_id</code> value.
+                <button class="profile-manual-id-link" id="btn-open-warframe-user-data" type="button">Get my ID <span class="material-icons-round" aria-hidden="true">open_in_new</span></button>
+              </div>
+              <div class="profile-manual-id-actions">
+                <button class="btn btn-primary" id="btn-save-manual-account-id" type="button">
+                  <span class="material-icons-round">save</span>
+                  Save ID
+                </button>
+                <button class="btn btn-secondary" id="btn-clear-manual-account-id" type="button">
+                  <span class="material-icons-round">restart_alt</span>
+                  Use EE.log
+                </button>
+              </div>
+              <div class="profile-manual-id-status" id="profile-manual-id-status">Using EE.log to find your account ID.</div>
+            </div>
+          </div>
         </div>
 
         <div class="settings-card">
