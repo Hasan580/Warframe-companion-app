@@ -5,16 +5,22 @@
   "main": "main.js",
   "scripts": {
     "dev": "electron .",
+    "dev:ow": "ow-electron .",
+    "dev:ow:qa": "ow-electron . --owepm-packages-url=https://electronapi-qa.overwolf.com/v2/packages",
     "build": "electron-builder",
+    "build:ow": "ow-electron-builder --win --publish never",
     "build:win": "electron-builder --win",
     "build:linux": "electron-builder --linux AppImage",
     "build:mac": "electron-builder --mac dmg zip",
-    "package": "electron-builder --win --dir"
+    "package": "electron-builder --win --dir",
+    "test": "node --test"
   },
   "author": "Hassan",
   "license": "SEE LICENSE IN LICENSE",
   "type": "commonjs",
   "devDependencies": {
+    "@overwolf/ow-electron": "^39.8.12",
+    "@overwolf/ow-electron-builder": "^26.9.0",
     "electron": "^41.0.3",
     "electron-builder": "^26.8.1"
   },
@@ -59,6 +65,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "overwolf-inventory.js",
       "relic-overlay.html",
       "index.html",
       "styles.css",

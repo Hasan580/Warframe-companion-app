@@ -1,10 +1,12 @@
 const { app, BrowserWindow, ipcMain, shell, dialog, desktopCapturer, screen } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const fs = require('fs/promises');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { createWorker, PSM } = require('tesseract.js');
+const { createOverwolfInventoryAdapter } = require('./overwolf-inventory');
 
 let mainWindow;
 let relicOverlayWindow;
@@ -49,6 +51,12 @@ const JUNCTION_MASTERY_XP = 1000;
 let regionMasteryCache = null;
 let regionMasteryCacheFetchedAt = 0;
 const REGION_MASTERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const MAIN_WINDOW_URL = pathToFileURL(path.join(__dirname, 'index.html')).toString();
+const overwolfInventory = createOverwolfInventoryAdapter({
+  app: app,
+  onStatus: (status) => sendOverwolfInventoryEvent('overwolf-inventory-status', status),
+  onSnapshot: (snapshot) => sendOverwolfInventoryEvent('overwolf-inventory-snapshot', snapshot)
+});
 
 function sendUpdaterEvent(type, payload) {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -67,6 +75,26 @@ function sendOcrProgress(payload) {
 function sendRelicOverlayEvent(type, payload) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('relic-overlay-event', Object.assign({ type }, payload || {}));
+}
+
+function sendOverwolfInventoryEvent(channel, payload) {
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed() ||
+    mainWindow.webContents.getURL() !== MAIN_WINDOW_URL
+  ) return;
+  mainWindow.webContents.send(channel, payload);
+}
+
+function isTrustedMainWindowSender(event) {
+  return !!(
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    event &&
+    event.sender === mainWindow.webContents &&
+    event.senderFrame &&
+    event.senderFrame.url === MAIN_WINDOW_URL
+  );
 }
 
 function sanitizeForInlineScript(payload) {
@@ -1580,6 +1608,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  overwolfInventory.initialize();
   createWindow();
   setupAutoUpdater();
 });
@@ -1718,6 +1747,25 @@ ipcMain.handle('get-app-version', () => {
   } catch (err) {
     return '';
   }
+});
+
+ipcMain.handle('overwolf-inventory-get-status', (event) => {
+  if (!isTrustedMainWindowSender(event)) {
+    return {
+      runtime: 'electron',
+      gepAvailable: false,
+      state: 'unavailable',
+      gameId: null,
+      message: 'Inventory status is unavailable to this window.',
+      error: ''
+    };
+  }
+  return overwolfInventory.getStatus();
+});
+
+ipcMain.handle('overwolf-inventory-get-snapshot', (event) => {
+  if (!isTrustedMainWindowSender(event)) return null;
+  return overwolfInventory.getSnapshot();
 });
 
 ipcMain.handle('check-for-app-update', async () => {
@@ -1879,6 +1927,7 @@ ipcMain.handle('scan-image-for-items', async (event, imageDataUrl) => {
 });
 
 app.on('before-quit', () => {
+  overwolfInventory.stop();
   if (relicOverlayTimer) {
     clearTimeout(relicOverlayTimer);
     relicOverlayTimer = null;

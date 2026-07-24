@@ -91,6 +91,17 @@ npm run build
 npm run package
 ```
 
+### Optional Overwolf Electron / GEP build
+
+The Windows-only ow-electron runtime and Warframe inventory GEP integration are
+opt-in. Registration, development credentials, production signing, and DevRel
+approval are required before GEP can be used outside the harmless
+normal-Electron fallback.
+
+See [Optional Overwolf Electron / GEP setup](./docs/overwolf-electron.md) for
+the build commands, environment variables, registration process, and
+Windows-only validation steps.
+
 ## Project Structure
 
 ```text
@@ -101,6 +112,7 @@ renderer.js                 UI logic and data integration
 market.js                   Market panel behavior
 main.js                     Electron main process
 preload.js                  Electron preload bridge
+overwolf-inventory.js       Optional Overwolf GEP inventory adapter
 ```
 
 ## Contributing
