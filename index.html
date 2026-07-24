@@ -130,6 +130,10 @@
           <span class="material-icons-round">travel_explore</span>
           <span class="nav-text">Resources</span>
         </button>
+        <button class="nav-item" id="nav-inventory" data-panel="inventory">
+          <span class="material-icons-round">inventory_2</span>
+          <span class="nav-text">Inventory</span>
+        </button>
         <div class="nav-section-label" style="margin-top: 16px;">TRADING</div>
         <button class="nav-item" id="nav-market" data-panel="market">
           <span class="material-icons-round">storefront</span>
@@ -1132,6 +1136,118 @@
       </div>
     </div>
 
+    <!-- Inventory Panel (hidden by default) -->
+    <div class="inventory-panel hidden" id="inventory-panel">
+      <div class="content-topbar inventory-topbar">
+        <div class="prime-topbar-title-wrap">
+          <h1 class="category-title">Inventory</h1>
+          <span class="category-count" id="inventory-summary-text">0 tracked entries, stored locally</span>
+        </div>
+        <div class="recommendation-score-strip">
+          <article class="recommendation-score-card">
+            <span class="material-icons-round">science</span>
+            <div>
+              <div class="recommendation-score-value" id="inventory-stat-resources">0</div>
+              <div class="recommendation-score-label">Resource units</div>
+            </div>
+          </article>
+          <article class="recommendation-score-card">
+            <img class="nav-asset-icon" src="assets/relic.png" alt="" aria-hidden="true">
+            <div>
+              <div class="recommendation-score-value" id="inventory-stat-relics">0</div>
+              <div class="recommendation-score-label">Relics held</div>
+            </div>
+          </article>
+          <article class="recommendation-score-card">
+            <span class="material-icons-round">workspace_premium</span>
+            <div>
+              <div class="recommendation-score-value" id="inventory-stat-prime-parts">0</div>
+              <div class="recommendation-score-label">Prime parts</div>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div class="inventory-content" id="inventory-content">
+        <section class="inventory-hero">
+          <div>
+            <span class="recommendation-kicker">Local Vault</span>
+            <h2>Track what you actually own.</h2>
+            <p>
+              Log resources, relics, and Prime parts by hand. Everything stays on this device, survives restarts,
+              and can be backed up or restored with a JSON file.
+            </p>
+          </div>
+          <div class="inventory-sync-card" id="inventory-sync-card">
+            <div class="inventory-sync-head">
+              <span class="material-icons-round">sync_disabled</span>
+              <div>
+                <div class="inventory-sync-title">Automatic sync</div>
+                <div class="inventory-sync-badge">Coming soon - manual entry only</div>
+              </div>
+            </div>
+            <p class="inventory-sync-detail" id="inventory-sync-detail">
+              Automatic sync is not available yet. Every count below is entered by you and stored only on this device.
+            </p>
+            <div class="inventory-sync-updated" id="inventory-sync-updated">Last local change: Never</div>
+          </div>
+        </section>
+
+        <div class="inventory-controls">
+          <div class="inventory-tab-group" role="tablist" aria-label="Inventory categories">
+            <button class="inventory-tab-btn is-active" data-inventory-kind="resources" type="button" role="tab"
+              aria-selected="true">Resources</button>
+            <button class="inventory-tab-btn" data-inventory-kind="relics" type="button" role="tab"
+              aria-selected="false">Relics</button>
+            <button class="inventory-tab-btn" data-inventory-kind="primeParts" type="button" role="tab"
+              aria-selected="false">Prime Parts</button>
+          </div>
+          <div class="search-container inventory-search-box">
+            <span class="material-icons-round search-icon">search</span>
+            <input type="text" class="search-input" id="inventory-search-input"
+              placeholder="Search your inventory..." autocomplete="off">
+            <button class="search-clear hidden" id="inventory-search-clear" type="button"
+              aria-label="Clear inventory search">
+              <span class="material-icons-round">close</span>
+            </button>
+          </div>
+          <div class="inventory-action-group">
+            <select class="calc-input inventory-sort-select" id="inventory-sort-select" aria-label="Sort inventory">
+              <option value="name-asc">Name A-Z</option>
+              <option value="name-desc">Name Z-A</option>
+              <option value="qty-desc">Quantity high to low</option>
+              <option value="qty-asc">Quantity low to high</option>
+            </select>
+            <button class="btn btn-secondary inventory-tool-btn" id="inventory-import-btn" type="button">
+              <span class="material-icons-round">file_upload</span>
+              <span>Import</span>
+            </button>
+            <button class="btn btn-secondary inventory-tool-btn" id="inventory-export-btn" type="button">
+              <span class="material-icons-round">file_download</span>
+              <span>Export</span>
+            </button>
+            <button class="btn btn-primary inventory-tool-btn" id="inventory-add-btn" type="button">
+              <span class="material-icons-round">add</span>
+              <span class="inventory-add-label">Add Resource</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="inventory-status hidden" id="inventory-status" role="status" aria-live="polite"></div>
+
+        <div class="inventory-grid" id="inventory-grid"></div>
+        <div class="inventory-empty hidden" id="inventory-empty">
+          <span class="material-icons-round">inventory_2</span>
+          <h3 id="inventory-empty-title">Nothing tracked yet</h3>
+          <p id="inventory-empty-text">Use Add Entry to start tracking your resources.</p>
+        </div>
+      </div>
+
+      <input type="file" id="inventory-file-input" class="hidden" accept="application/json,.json">
+      <datalist id="inventory-name-suggestions"></datalist>
+      <datalist id="inventory-part-suggestions"></datalist>
+    </div>
+
     <!-- Settings Page -->
     <div class="settings-page hidden" id="settings-page">
       <div class="content-topbar settings-topbar">
@@ -1669,8 +1785,104 @@
     </div>
   </div>
 
+  <!-- Inventory Entry Modal -->
+  <div class="modal-overlay hidden" id="inventory-entry-modal">
+    <div class="modal inventory-entry-modal">
+      <div class="modal-header">
+        <h2 class="modal-title" id="inventory-entry-title">Add Resource</h2>
+        <button class="modal-close" id="inventory-entry-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <form class="inventory-form" id="inventory-entry-form" autocomplete="off">
+          <div class="inventory-form-row">
+            <label class="calc-label" for="inventory-field-name">Name</label>
+            <input type="text" class="calc-input" id="inventory-field-name" list="inventory-name-suggestions"
+              placeholder="Orokin Cell" maxlength="80" required>
+          </div>
+          <div class="inventory-form-grid">
+            <div class="inventory-form-row hidden" id="inventory-field-era-row">
+              <label class="calc-label" for="inventory-field-era">Era</label>
+              <select class="calc-input" id="inventory-field-era">
+                <option value="Lith">Lith</option>
+                <option value="Meso">Meso</option>
+                <option value="Neo">Neo</option>
+                <option value="Axi">Axi</option>
+                <option value="Requiem">Requiem</option>
+              </select>
+            </div>
+            <div class="inventory-form-row hidden" id="inventory-field-refinement-row">
+              <label class="calc-label" for="inventory-field-refinement">Refinement</label>
+              <select class="calc-input" id="inventory-field-refinement">
+                <option value="Intact">Intact</option>
+                <option value="Exceptional">Exceptional</option>
+                <option value="Flawless">Flawless</option>
+                <option value="Radiant">Radiant</option>
+              </select>
+            </div>
+            <div class="inventory-form-row hidden" id="inventory-field-part-row">
+              <label class="calc-label" for="inventory-field-part">Part</label>
+              <input type="text" class="calc-input" id="inventory-field-part" list="inventory-part-suggestions"
+                placeholder="Blueprint" maxlength="80">
+            </div>
+            <div class="inventory-form-row">
+              <label class="calc-label" for="inventory-field-quantity">Quantity</label>
+              <input type="number" class="calc-input" id="inventory-field-quantity" min="0" max="999999" step="1"
+                value="1">
+            </div>
+          </div>
+          <div class="inventory-form-row">
+            <label class="calc-label" for="inventory-field-note">Note (optional)</label>
+            <input type="text" class="calc-input" id="inventory-field-note" placeholder="Saving for Ivara Prime"
+              maxlength="180">
+          </div>
+          <p class="inventory-form-error hidden" id="inventory-entry-error"></p>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" id="inventory-entry-cancel" type="button">Cancel</button>
+            <button class="btn btn-primary" id="inventory-entry-save" type="submit">Save Entry</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inventory Import Modal -->
+  <div class="modal-overlay hidden" id="inventory-import-modal">
+    <div class="modal small inventory-import-modal">
+      <div class="modal-header">
+        <h2 class="modal-title">Import Inventory JSON</h2>
+        <button class="modal-close" id="inventory-import-close">
+          <span class="material-icons-round">close</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p class="inventory-import-intro">
+          Pick how a backup should be applied, then choose the JSON file exported from this app.
+        </p>
+        <div class="inventory-import-options">
+          <button class="inventory-import-option is-active" data-import-mode="merge" type="button" aria-pressed="true">
+            <span class="material-icons-round">merge_type</span>
+            <span class="inventory-import-option-title">Merge</span>
+            <span class="inventory-import-option-text">Keeps the higher quantity for entries that already exist.</span>
+          </button>
+          <button class="inventory-import-option" data-import-mode="replace" type="button" aria-pressed="false">
+            <span class="material-icons-round">swap_horiz</span>
+            <span class="inventory-import-option-title">Replace</span>
+            <span class="inventory-import-option-text">Discards the current vault and uses the file as-is.</span>
+          </button>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="inventory-import-cancel" type="button">Cancel</button>
+          <button class="btn btn-primary" id="inventory-import-choose" type="button">Choose JSON File</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="starchart.js"></script>
   <script src="market.js"></script>
+  <script src="inventory.js"></script>
   <script src="renderer.js"></script>
 </body>
 

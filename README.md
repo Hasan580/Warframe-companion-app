@@ -40,6 +40,7 @@ Warframe Companion App is an Electron desktop utility focused on quality-of-life
 - Item detail modal with acquisition and crafting context
 - Market view with whisper copy actions
 - Prime Resurgence and Worldstate panels
+- Local inventory tracker for resources, relics, and Prime parts (manual entry, JSON import/export)
 - Native Electron window controls and update checks
 
 ## Application Preview
@@ -110,10 +111,20 @@ index.html                  Main UI markup
 styles.css                  Application styling
 renderer.js                 UI logic and data integration
 market.js                   Market panel behavior
+inventory.js                Local inventory panel and storage helpers
 main.js                     Electron main process
 preload.js                  Electron preload bridge
 overwolf-inventory.js       Optional Overwolf GEP inventory adapter
+tests/                      Node-only unit tests (npm test)
 ```
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs the dependency-free unit tests for the inventory helpers (normalization, merge, import/export).
 
 ## Contributing
 

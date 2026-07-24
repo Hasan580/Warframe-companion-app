@@ -15733,6 +15733,7 @@
       compare: $('#compare-panel'),
       recommendations: $('#recommendations-panel'),
       resources: $('#resource-search-panel'),
+      inventory: $('#inventory-panel'),
       settings: $('#settings-page')
     };
   }
@@ -15740,6 +15741,7 @@
   function getCurrentPanelName() {
     var refs = getPanelRefs();
     if (refs.settings && !refs.settings.classList.contains('hidden')) return 'settings';
+    if (refs.inventory && !refs.inventory.classList.contains('hidden')) return 'inventory';
     if (refs.resources && !refs.resources.classList.contains('hidden')) return 'resources';
     if (refs.recommendations && !refs.recommendations.classList.contains('hidden')) return 'recommendations';
     if (refs.compare && !refs.compare.classList.contains('hidden')) return 'compare';
@@ -15767,6 +15769,7 @@
     var comparePanel = refs.compare;
     var recommendationsPanel = refs.recommendations;
     var resourceSearchPanel = refs.resources;
+    var inventoryPanel = refs.inventory;
     var settingsPage = refs.settings;
 
     var navMarket = $('#nav-market');
@@ -15780,6 +15783,7 @@
     var navCompare = $('#nav-compare');
     var navRecommendations = $('#nav-mastery-recommendations');
     var navResourceSearch = $('#nav-resource-search');
+    var navInventory = $('#nav-inventory');
 
     if (squadPanel) squadPanel.classList.add('hidden');
     if (navSquad) navSquad.classList.remove('active');
@@ -15789,6 +15793,8 @@
     if (navRecommendations) navRecommendations.classList.remove('active');
     if (resourceSearchPanel) resourceSearchPanel.classList.add('hidden');
     if (navResourceSearch) navResourceSearch.classList.remove('active');
+    if (inventoryPanel) inventoryPanel.classList.add('hidden');
+    if (navInventory) navInventory.classList.remove('active');
 
     // Stop starchart animation when leaving that panel
     if (panel !== 'starchart' && window.warframeStarchart) {
@@ -16032,6 +16038,29 @@
       stopPrimeCountdown();
       stopCycleCountdown();
       scheduleResourceSearchRender(0);
+    } else if (panel === 'inventory') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
+      if (inventoryPanel) inventoryPanel.classList.remove('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
+      if (navInventory) navInventory.classList.add('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      if (window.warframeInventory) window.warframeInventory.init();
     } else if (panel === 'settings') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
@@ -16217,6 +16246,20 @@
       if (typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(function() {
           if (els.resourceSearchInput) els.resourceSearchInput.focus();
+        });
+      }
+    });
+  }
+
+  var navInventoryEl = $('#nav-inventory');
+  if (navInventoryEl) {
+    navInventoryEl.addEventListener('click', function() {
+      showPanel('inventory', true);
+      collapseSidebar();
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          var inventorySearchInput = $('#inventory-search-input');
+          if (inventorySearchInput) inventorySearchInput.focus();
         });
       }
     });
