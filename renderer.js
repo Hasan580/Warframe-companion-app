@@ -469,6 +469,11 @@
     profileLogActivePath: $('#profile-log-active-path'),
     selectEeLogBtn: $('#btn-select-ee-log'),
     resetEeLogBtn: $('#btn-reset-ee-log'),
+    profileManualAccountId: $('#profile-manual-account-id'),
+    saveManualAccountIdBtn: $('#btn-save-manual-account-id'),
+    clearManualAccountIdBtn: $('#btn-clear-manual-account-id'),
+    openWarframeUserDataBtn: $('#btn-open-warframe-user-data'),
+    profileManualAccountIdStatus: $('#profile-manual-id-status'),
     profileSyncPill: $('#profile-sync-pill'),
     profileSyncText: $('#profile-sync-text'),
     alwaysOnTopToggle: $('#setting-always-on-top'),
@@ -4391,6 +4396,28 @@
     getImageUrlByName: function(rawName) {
       var item = findItemByLooseName(rawName);
       return getItemImageUrl(item);
+    }
+  };
+
+  // The market panel uses this small, read-only bridge to price the player's
+  // current mastery backlog without owning a second copy of checklist state.
+  window.warframeChecklist = {
+    getUnmasteredItems: function() {
+      return allItems
+        .filter(function(item) {
+          return isMasteryRelevantItem(item) && !isItemFullyRanked(item);
+        })
+        .map(function(item) {
+          return {
+            uniqueName: item.uniqueName,
+            name: item.name,
+            category: item.category,
+            type: item.type,
+            marketCost: Number(item.marketCost) || 0,
+            components: Array.isArray(item.components) ? item.components.slice() : [],
+            imageName: item.imageName || ''
+          };
+        });
     }
   };
 
@@ -12051,6 +12078,7 @@
     tradabilityEnriched = false;
     resourceIndexCache = null;
     allItems = items;
+    window.dispatchEvent(new Event('warframe-checklist-items-updated'));
     invalidateMasteryDerivedData(true);
     saveToCache(allItems);
     if (!initialLoad) {
@@ -13627,6 +13655,16 @@
       els.profileLogActivePath.textContent = modeLabel + ' (' + statusLabel + '): ' + pathLabel;
       els.profileLogActivePath.classList.toggle('is-missing', !info.exists);
     }
+    if (els.profileManualAccountId) {
+      els.profileManualAccountId.value = info.manualAccountId || '';
+    }
+    if (els.profileManualAccountIdStatus) {
+      var usesManualId = !!info.usingManualAccountId;
+      els.profileManualAccountIdStatus.textContent = usesManualId
+        ? 'Manual account ID saved. Profile sync will use it instead of EE.log.'
+        : 'Using EE.log to find your account ID.';
+      els.profileManualAccountIdStatus.classList.toggle('is-active', usesManualId);
+    }
   }
 
   async function refreshProfileLogPathUI() {
@@ -13679,6 +13717,48 @@
       return;
     }
     renderProfileLogPathState(result || {});
+  }
+
+  async function saveManualProfileAccountId() {
+    if (!window.electronAPI || !window.electronAPI.setManualProfileAccountId || !els.profileManualAccountId) return;
+    var result = await window.electronAPI.setManualProfileAccountId(els.profileManualAccountId.value);
+    if (result && result.ok === false) {
+      setProfileFetchStatus(
+        'error',
+        'Could not save account ID',
+        result.message || 'Enter a valid Warframe account ID and try again.',
+        ''
+      );
+      return;
+    }
+    renderProfileLogPathState(result || {});
+    setProfileFetchStatus(
+      'success',
+      'Manual account ID saved',
+      'Profile sync will use the saved account ID instead of reading EE.log.',
+      ''
+    );
+  }
+
+  async function clearManualProfileAccountId() {
+    if (!window.electronAPI || !window.electronAPI.clearManualProfileAccountId) return;
+    var result = await window.electronAPI.clearManualProfileAccountId();
+    if (result && result.ok === false) {
+      setProfileFetchStatus(
+        'error',
+        'Could not clear account ID',
+        result.message || 'The saved account ID could not be cleared.',
+        ''
+      );
+      return;
+    }
+    renderProfileLogPathState(result || {});
+    setProfileFetchStatus(
+      'idle',
+      'Using EE.log',
+      'Profile sync will find your account ID from EE.log again.',
+      ''
+    );
   }
 
   function initProfileFetchSetting() {
@@ -13799,6 +13879,13 @@
   }
 
   function getProfileLookupAliases(item) {
+    if (toLookupKey(item && item.name) === 'sirius orion') {
+      return [
+        '/Lotus/Powersuits/SiriusOrion/OrionSuit',
+        '/Lotus/Powersuits/SiriusOrion/SiriusSuit'
+      ];
+    }
+
     if (toLookupKey(item && item.name) !== 'plexus') return [];
     return [
       'Plexus',
@@ -14146,6 +14233,9 @@
     }
     if (profileResponse && profileResponse.logUpdatedAt) {
       parts.push('EE.log ' + formatProfileFetchDate(profileResponse.logUpdatedAt));
+    }
+    if (profileResponse && profileResponse.accountIdSource === 'manual') {
+      parts.push('manual account ID');
     }
     return parts.join(' - ');
   }
@@ -15378,6 +15468,24 @@
     });
   }
 
+  if (els.saveManualAccountIdBtn) {
+    els.saveManualAccountIdBtn.addEventListener('click', function() {
+      saveManualProfileAccountId();
+    });
+  }
+
+  if (els.clearManualAccountIdBtn) {
+    els.clearManualAccountIdBtn.addEventListener('click', function() {
+      clearManualProfileAccountId();
+    });
+  }
+
+  if (els.openWarframeUserDataBtn) {
+    els.openWarframeUserDataBtn.addEventListener('click', function() {
+      openExternalUrl('https://www.warframe.com/api/user-data');
+    });
+  }
+
   if (els.profileSyncPill) {
     els.profileSyncPill.addEventListener('click', function() {
       showPanel('settings', true);
@@ -15625,6 +15733,7 @@
       compare: $('#compare-panel'),
       recommendations: $('#recommendations-panel'),
       resources: $('#resource-search-panel'),
+      inventory: $('#inventory-panel'),
       settings: $('#settings-page')
     };
   }
@@ -15632,6 +15741,7 @@
   function getCurrentPanelName() {
     var refs = getPanelRefs();
     if (refs.settings && !refs.settings.classList.contains('hidden')) return 'settings';
+    if (refs.inventory && !refs.inventory.classList.contains('hidden')) return 'inventory';
     if (refs.resources && !refs.resources.classList.contains('hidden')) return 'resources';
     if (refs.recommendations && !refs.recommendations.classList.contains('hidden')) return 'recommendations';
     if (refs.compare && !refs.compare.classList.contains('hidden')) return 'compare';
@@ -15659,6 +15769,7 @@
     var comparePanel = refs.compare;
     var recommendationsPanel = refs.recommendations;
     var resourceSearchPanel = refs.resources;
+    var inventoryPanel = refs.inventory;
     var settingsPage = refs.settings;
 
     var navMarket = $('#nav-market');
@@ -15672,6 +15783,7 @@
     var navCompare = $('#nav-compare');
     var navRecommendations = $('#nav-mastery-recommendations');
     var navResourceSearch = $('#nav-resource-search');
+    var navInventory = $('#nav-inventory');
 
     if (squadPanel) squadPanel.classList.add('hidden');
     if (navSquad) navSquad.classList.remove('active');
@@ -15681,6 +15793,8 @@
     if (navRecommendations) navRecommendations.classList.remove('active');
     if (resourceSearchPanel) resourceSearchPanel.classList.add('hidden');
     if (navResourceSearch) navResourceSearch.classList.remove('active');
+    if (inventoryPanel) inventoryPanel.classList.add('hidden');
+    if (navInventory) navInventory.classList.remove('active');
 
     // Stop starchart animation when leaving that panel
     if (panel !== 'starchart' && window.warframeStarchart) {
@@ -15924,6 +16038,29 @@
       stopPrimeCountdown();
       stopCycleCountdown();
       scheduleResourceSearchRender(0);
+    } else if (panel === 'inventory') {
+      contentEl.classList.add('hidden');
+      marketPanel.classList.add('hidden');
+      if (analyticsPanel) analyticsPanel.classList.add('hidden');
+      if (primePanel) primePanel.classList.add('hidden');
+      if (relicsPanel) relicsPanel.classList.add('hidden');
+      if (arcanesPanel) arcanesPanel.classList.add('hidden');
+      if (cyclesPanel) cyclesPanel.classList.add('hidden');
+      if (starchartPanel) starchartPanel.classList.add('hidden');
+      if (inventoryPanel) inventoryPanel.classList.remove('hidden');
+      settingsPage.classList.add('hidden');
+      $$('.nav-item[data-category]').forEach(function(b) { b.classList.remove('active'); });
+      if (navMarket) navMarket.classList.remove('active');
+      if (navAnalytics) navAnalytics.classList.remove('active');
+      if (navPrime) navPrime.classList.remove('active');
+      if (navRelics) navRelics.classList.remove('active');
+      if (navArcanes) navArcanes.classList.remove('active');
+      if (navCycles) navCycles.classList.remove('active');
+      if (navStarchart) navStarchart.classList.remove('active');
+      if (navInventory) navInventory.classList.add('active');
+      stopPrimeCountdown();
+      stopCycleCountdown();
+      if (window.warframeInventory) window.warframeInventory.init();
     } else if (panel === 'settings') {
       contentEl.classList.add('hidden');
       marketPanel.classList.add('hidden');
@@ -16109,6 +16246,20 @@
       if (typeof window.requestAnimationFrame === 'function') {
         window.requestAnimationFrame(function() {
           if (els.resourceSearchInput) els.resourceSearchInput.focus();
+        });
+      }
+    });
+  }
+
+  var navInventoryEl = $('#nav-inventory');
+  if (navInventoryEl) {
+    navInventoryEl.addEventListener('click', function() {
+      showPanel('inventory', true);
+      collapseSidebar();
+      if (typeof window.requestAnimationFrame === 'function') {
+        window.requestAnimationFrame(function() {
+          var inventorySearchInput = $('#inventory-search-input');
+          if (inventorySearchInput) inventorySearchInput.focus();
         });
       }
     });

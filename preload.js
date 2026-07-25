@@ -1,5 +1,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+function subscribe(channel, callback) {
+  if (typeof callback !== 'function') return () => {};
+  var listener = (_event, payload) => callback(payload);
+  ipcRenderer.on(channel, listener);
+  return () => ipcRenderer.removeListener(channel, listener);
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('window-minimize'),
   maximize: () => ipcRenderer.send('window-maximize'),
@@ -24,8 +31,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getWarframeLogConfig: () => ipcRenderer.invoke('get-warframe-log-config'),
   selectWarframeLogFile: () => ipcRenderer.invoke('select-warframe-log-file'),
   resetWarframeLogPath: () => ipcRenderer.invoke('reset-warframe-log-path'),
+  setManualProfileAccountId: (accountId) => ipcRenderer.invoke('set-manual-profile-account-id', String(accountId || '')),
+  clearManualProfileAccountId: () => ipcRenderer.invoke('clear-manual-profile-account-id'),
   fetchWarframeProfile: () => ipcRenderer.invoke('fetch-warframe-profile'),
   scanImageForItems: (imageDataUrl) => ipcRenderer.invoke('scan-image-for-items', String(imageDataUrl || '')),
+  overwolfInventory: Object.freeze({
+    getStatus: () => ipcRenderer.invoke('overwolf-inventory-get-status'),
+    getSnapshot: () => ipcRenderer.invoke('overwolf-inventory-get-snapshot'),
+    onStatus: (callback) => subscribe('overwolf-inventory-status', callback),
+    onSnapshot: (callback) => subscribe('overwolf-inventory-snapshot', callback)
+  }),
   onAppUpdateEvent: (callback) => {
     if (typeof callback !== 'function') return () => {};
     var listener = (_event, payload) => callback(payload || {});

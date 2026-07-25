@@ -1,10 +1,12 @@
 const { app, BrowserWindow, ipcMain, shell, dialog, desktopCapturer, screen } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const fs = require('fs/promises');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 const { createWorker, PSM } = require('tesseract.js');
+const { createOverwolfInventoryAdapter } = require('./overwolf-inventory');
 
 let mainWindow;
 let relicOverlayWindow;
@@ -49,6 +51,12 @@ const JUNCTION_MASTERY_XP = 1000;
 let regionMasteryCache = null;
 let regionMasteryCacheFetchedAt = 0;
 const REGION_MASTERY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const MAIN_WINDOW_URL = pathToFileURL(path.join(__dirname, 'index.html')).toString();
+const overwolfInventory = createOverwolfInventoryAdapter({
+  app: app,
+  onStatus: (status) => sendOverwolfInventoryEvent('overwolf-inventory-status', status),
+  onSnapshot: (snapshot) => sendOverwolfInventoryEvent('overwolf-inventory-snapshot', snapshot)
+});
 
 function sendUpdaterEvent(type, payload) {
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -67,6 +75,26 @@ function sendOcrProgress(payload) {
 function sendRelicOverlayEvent(type, payload) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('relic-overlay-event', Object.assign({ type }, payload || {}));
+}
+
+function sendOverwolfInventoryEvent(channel, payload) {
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed() ||
+    mainWindow.webContents.getURL() !== MAIN_WINDOW_URL
+  ) return;
+  mainWindow.webContents.send(channel, payload);
+}
+
+function isTrustedMainWindowSender(event) {
+  return !!(
+    mainWindow &&
+    !mainWindow.isDestroyed() &&
+    event &&
+    event.sender === mainWindow.webContents &&
+    event.senderFrame &&
+    event.senderFrame.url === MAIN_WINDOW_URL
+  );
 }
 
 function sanitizeForInlineScript(payload) {
@@ -761,16 +789,36 @@ function normalizeConfiguredLogPath(value) {
   return rawPath ? path.normalize(rawPath) : '';
 }
 
+function normalizeManualAccountId(value) {
+  const accountId = String(value || '').trim();
+  if (!accountId) return '';
+  if (!/^(?:[a-f0-9]{16,32}|[0-9]{8,})$/i.test(accountId)) {
+    throw new Error('Enter a valid Warframe account ID (at least 8 digits, or a 16–32 character hexadecimal ID).');
+  }
+  return accountId;
+}
+
 async function readProfileLogConfig() {
   const config = await readJsonFile(getProfileLogConfigPath(), {});
   return {
-    customPath: normalizeConfiguredLogPath(config && config.customPath)
+    customPath: normalizeConfiguredLogPath(config && config.customPath),
+    manualAccountId: normalizeManualAccountId(config && config.manualAccountId)
   };
 }
 
 async function getConfiguredWarframeLogPath() {
   const config = await readProfileLogConfig();
   return config.customPath || '';
+}
+
+async function writeProfileLogConfig(patch) {
+  const current = await readProfileLogConfig();
+  const next = Object.assign({}, current, patch || {});
+  await writeJsonFile(getProfileLogConfigPath(), {
+    customPath: normalizeConfiguredLogPath(next.customPath),
+    manualAccountId: normalizeManualAccountId(next.manualAccountId),
+    updatedAt: Date.now()
+  });
 }
 
 async function setConfiguredWarframeLogPath(filePath) {
@@ -784,19 +832,22 @@ async function setConfiguredWarframeLogPath(filePath) {
     throw new Error('Selected path is not a file.');
   }
 
-  await writeJsonFile(getProfileLogConfigPath(), {
-    customPath,
-    updatedAt: Date.now()
-  });
+  await writeProfileLogConfig({ customPath });
   return getWarframeLogConfigSummary();
 }
 
 async function clearConfiguredWarframeLogPath() {
-  try {
-    await fs.unlink(getProfileLogConfigPath());
-  } catch (err) {
-    if (!err || err.code !== 'ENOENT') throw err;
-  }
+  await writeProfileLogConfig({ customPath: '' });
+  return getWarframeLogConfigSummary();
+}
+
+async function setManualProfileAccountId(accountId) {
+  await writeProfileLogConfig({ manualAccountId: accountId });
+  return getWarframeLogConfigSummary();
+}
+
+async function clearManualProfileAccountId() {
+  await writeProfileLogConfig({ manualAccountId: '' });
   return getWarframeLogConfigSummary();
 }
 
@@ -811,8 +862,9 @@ async function pathExistsAsFile(filePath) {
 }
 
 async function getWarframeLogConfigSummary() {
+  const config = await readProfileLogConfig();
   const defaultPath = getDefaultWarframeLogPath();
-  const configuredPath = await getConfiguredWarframeLogPath();
+  const configuredPath = config.customPath || '';
   const activePath = configuredPath || defaultPath;
 
   return {
@@ -821,6 +873,8 @@ async function getWarframeLogConfigSummary() {
     configuredPath,
     activePath,
     usingCustomPath: !!configuredPath,
+    manualAccountId: config.manualAccountId,
+    usingManualAccountId: !!config.manualAccountId,
     exists: await pathExistsAsFile(activePath)
   };
 }
@@ -1340,8 +1394,10 @@ async function fetchProfileJson(accountId) {
 }
 
 async function fetchWarframeProfileFromLog() {
+  const profileConfig = await readProfileLogConfig();
+  const manualAccountId = profileConfig.manualAccountId;
   const processInfo = await detectWarframeProcess();
-  if (!processInfo.running) {
+  if (!manualAccountId && !processInfo.running) {
     return {
       ok: false,
       reason: 'process-not-running',
@@ -1350,8 +1406,8 @@ async function fetchWarframeProfileFromLog() {
     };
   }
 
-  const logInfo = await findWarframeLog();
-  if (!logInfo) {
+  const logInfo = manualAccountId ? null : await findWarframeLog();
+  if (!manualAccountId && !logInfo) {
     return {
       ok: false,
       reason: 'log-not-found',
@@ -1360,17 +1416,18 @@ async function fetchWarframeProfileFromLog() {
     };
   }
 
-  const logText = await readWarframeLogText(logInfo);
-  const accountId = extractAccountIdFromLog(logText);
+  const logText = logInfo ? await readWarframeLogText(logInfo) : '';
+  const accountId = manualAccountId || extractAccountIdFromLog(logText);
   const fallbackDisplayName = extractDisplayNameFromLog(logText);
+  const accountIdSource = manualAccountId ? 'manual' : 'ee-log';
 
   if (!accountId) {
     return {
       ok: false,
       reason: 'account-id-not-found',
       process: processInfo,
-      logPath: logInfo.path,
-      logUpdatedAt: logInfo.mtimeMs,
+      logPath: logInfo && logInfo.path,
+      logUpdatedAt: logInfo && logInfo.mtimeMs,
       message: 'Warframe was detected, but the account id is not in EE.log yet. Log in fully, then enter and leave a Relay or Dojo to refresh profile data.'
     };
   }
@@ -1384,8 +1441,9 @@ async function fetchWarframeProfileFromLog() {
     return Object.assign({}, cacheEntry.result, {
       ok: true,
       process: processInfo,
-      logPath: logInfo.path,
-      logUpdatedAt: logInfo.mtimeMs,
+      logPath: logInfo && logInfo.path,
+      logUpdatedAt: logInfo && logInfo.mtimeMs,
+      accountIdSource,
       cached: true,
       cacheAgeMs,
       fetchedAt: cachedFetchedAt,
@@ -1402,8 +1460,9 @@ async function fetchWarframeProfileFromLog() {
       ok: false,
       reason: 'profile-cooldown',
       process: processInfo,
-      logPath: logInfo.path,
-      logUpdatedAt: logInfo.mtimeMs,
+      logPath: logInfo && logInfo.path,
+      logUpdatedAt: logInfo && logInfo.mtimeMs,
+      accountIdSource,
       cooldownMs: remainingMs,
       message: 'Profile fetch is cooling down for about ' + formatCooldownMs(remainingMs) + ' to protect you from Warframe rate limits.'
     };
@@ -1418,8 +1477,9 @@ async function fetchWarframeProfileFromLog() {
       ok: false,
       reason: 'profile-fetch-failed',
       process: processInfo,
-      logPath: logInfo.path,
-      logUpdatedAt: logInfo.mtimeMs,
+      logPath: logInfo && logInfo.path,
+      logUpdatedAt: logInfo && logInfo.mtimeMs,
+      accountIdSource,
       message: profileResponse.message || 'Profile data could not be fetched.'
     };
   }
@@ -1435,8 +1495,9 @@ async function fetchWarframeProfileFromLog() {
       ok: false,
       reason: 'profile-empty',
       process: processInfo,
-      logPath: logInfo.path,
-      logUpdatedAt: logInfo.mtimeMs,
+      logPath: logInfo && logInfo.path,
+      logUpdatedAt: logInfo && logInfo.mtimeMs,
+      accountIdSource,
       displayName: summary.displayName,
       masteryRank: summary.masteryRank,
       message: 'Profile data was fetched, but no mastery XP entries were found. Enter and leave a Relay or Dojo, then try again.'
@@ -1446,8 +1507,9 @@ async function fetchWarframeProfileFromLog() {
   const result = {
     ok: true,
     process: processInfo,
-    logPath: logInfo.path,
-    logUpdatedAt: logInfo.mtimeMs,
+    logPath: logInfo && logInfo.path,
+    logUpdatedAt: logInfo && logInfo.mtimeMs,
+    accountIdSource,
     displayName: summary.displayName,
     masteryRank: summary.masteryRank,
     xpInfo,
@@ -1546,6 +1608,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  overwolfInventory.initialize();
   createWindow();
   setupAutoUpdater();
 });
@@ -1686,6 +1749,25 @@ ipcMain.handle('get-app-version', () => {
   }
 });
 
+ipcMain.handle('overwolf-inventory-get-status', (event) => {
+  if (!isTrustedMainWindowSender(event)) {
+    return {
+      runtime: 'electron',
+      gepAvailable: false,
+      state: 'unavailable',
+      gameId: null,
+      message: 'Inventory status is unavailable to this window.',
+      error: ''
+    };
+  }
+  return overwolfInventory.getStatus();
+});
+
+ipcMain.handle('overwolf-inventory-get-snapshot', (event) => {
+  if (!isTrustedMainWindowSender(event)) return null;
+  return overwolfInventory.getSnapshot();
+});
+
 ipcMain.handle('check-for-app-update', async () => {
   if (isDev) {
     return { ok: false, reason: 'dev-mode' };
@@ -1783,6 +1865,28 @@ ipcMain.handle('reset-warframe-log-path', async () => {
   }
 });
 
+ipcMain.handle('set-manual-profile-account-id', async (event, accountId) => {
+  try {
+    return await setManualProfileAccountId(accountId);
+  } catch (err) {
+    return {
+      ok: false,
+      message: err && err.message ? err.message : 'Could not save the manual account ID.'
+    };
+  }
+});
+
+ipcMain.handle('clear-manual-profile-account-id', async () => {
+  try {
+    return await clearManualProfileAccountId();
+  } catch (err) {
+    return {
+      ok: false,
+      message: err && err.message ? err.message : 'Could not clear the manual account ID.'
+    };
+  }
+});
+
 ipcMain.handle('fetch-warframe-profile', async () => {
   try {
     return await fetchWarframeProfileFromLog();
@@ -1823,6 +1927,7 @@ ipcMain.handle('scan-image-for-items', async (event, imageDataUrl) => {
 });
 
 app.on('before-quit', () => {
+  overwolfInventory.stop();
   if (relicOverlayTimer) {
     clearTimeout(relicOverlayTimer);
     relicOverlayTimer = null;
